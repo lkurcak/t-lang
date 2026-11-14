@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.89.0 (2026-11-14)
+
+Step 74: what a generic call gives back. See
+[docs/74-refined-instantiation.md](docs/74-refined-instantiation.md).
+
+### Added
+
+- A place lent `&mut` to a generic function keeps its own refinement, not
+  only its type arguments': `core::mem::swap`, `replace` and a `set<T:
+  Discard>` of two `{ v: u32 | v > 0 }`s, or of a struct's fields whose
+  refinements name its other fields, leave values that have it.
+- What a closure written in a call gives back comes back through a
+  generic `R`: `call(|| five())`, `Mutex::lock`, a thread's `join`,
+  `unwrap_or_else`, `Option::map`. It's what the closure's body knows
+  where it returns, of new values for what it made each run.
+
+### Fixed
+
+- A closure that changes what it captured by value was checked as if
+  each run saw the value it was made with (since 0.84.0): an index proved
+  in range on the first run wasn't on the third.
+- A closure given straight to a call was checked with what it captured by
+  value as it was after the call's later arguments, not as it was made
+  (since 0.84.0).
+- `_` can name more than one parameter of a function or a closure.
+
 ## 0.88.0 (2026-11-13)
 
 Step 73: `for` over collections. See

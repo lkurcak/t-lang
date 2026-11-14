@@ -30,7 +30,12 @@
 //!   must have what's declared there (`Walk::bind_ref`).
 //! - A closure is walked where it's made, from what's known there, or, if
 //!   it's given straight to a function, at the call, after the other
-//!   arguments, counting on what they say of its parameters.
+//!   arguments, counting on what they say of its parameters. Either way
+//!   what it captured by value is what it was made with, but what its body
+//!   changes, which each run reads as the runs before left it (lemma S3 of
+//!   docs/69-loans.md, as restated in step 74). What it gives where its
+//!   body returns is its summary, which the call it's given to counts on
+//!   (`summary.rs`).
 
 use super::*;
 use crate::mir::{
@@ -1146,18 +1151,21 @@ impl Walk<'_> {
         };
         let span_of = |i: usize| spans.get(i).copied().unwrap_or(span);
         if let Agg::Closure(l) = agg {
+            // What it captures, as it is now: what it captured by value is
+            // that, whenever it's walked (lemma S3 of docs/69-loans.md).
+            let mut captured = Vec::new();
+            for (i, o) in ops.iter().enumerate() {
+                captured.push(self.operand(fr, o, span_of(i))?);
+            }
             // Given to a function: walked at the call.
             if dest.proj.is_empty()
                 && let Some((call, _)) = fr.operand_of.get(&dest.local)
                 && let Some((Operand::Const(Const::Fn(..)), _)) = fr.call_at(*call)
             {
-                self.deferred.insert(dest.local, (l, ty.clone()));
+                self.deferred.insert(dest.local, (l, ty.clone(), captured));
                 return Ok(Val::Other);
             }
-            for (i, o) in ops.iter().enumerate() {
-                self.operand(fr, o, span_of(i))?;
-            }
-            self.walk_closure(bodies, l, ty)?;
+            self.walk_closure(bodies, l, ty, &captured)?;
             return Ok(Val::Other);
         }
         let mut vals = Vec::new();
@@ -1213,12 +1221,29 @@ impl Walk<'_> {
         }
     }
 
-    /// Walks closure `l`, of type `ty`, from what's known here: then goes
-    /// back to what's known here, as making one runs nothing.
-    fn walk_closure(&mut self, bodies: &Bodies, l: NodeId, ty: &Type) -> Result<(), Error> {
+    /// Walks closure `l`, of type `ty`, from what's known here, what it
+    /// captured being `captured`, as it was made: then goes back to what's
+    /// known here, as making one runs nothing.
+    ///
+    /// The walk is of every run of its body (lemma S3 of docs/69-loans.md):
+    /// what it captured by value is the value it was made with, unless the
+    /// body changes it, when each run reads what the runs before left
+    /// there, which nothing's known of but its refinements; what it
+    /// captured `&mut` was forgotten by the capture's loan; what it
+    /// captured by `&` can't change while it lives.
+    ///
+    /// Gives back what every run of it gives (its summary): what was known
+    /// where its body returned.
+    fn walk_closure(
+        &mut self,
+        bodies: &Bodies,
+        l: NodeId,
+        ty: &Type,
+        captured: &[Val],
+    ) -> Result<Option<std::rc::Rc<summary::Summary>>, Error> {
         let key = Key::Closure(l);
         let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) else {
-            return Ok(());
+            return Ok(None);
         };
         let fr = Frame::new(body, notes);
         let here = self.take_state();
@@ -1227,6 +1252,23 @@ impl Walk<'_> {
         start.slots = HashMap::new();
         start.pinned = Vec::new();
         self.put_state(start);
+        let made_from = self.summary_start();
+        let blocks = fr.rpo.clone();
+        let (changed, _) = self.changes_in(&fr, bodies, &blocks);
+        for (i, var) in body.env.iter().enumerate() {
+            if var.capture != Capture::Value {
+                continue;
+            }
+            let p = Place::local(var.id);
+            if changed
+                .iter()
+                .any(|c| c.place().within(&p) || p.within(c.place()))
+            {
+                self.write(&p, None, None);
+            } else if let Some(v) = captured.get(i) {
+                self.write(&p, Some(v.clone()), None);
+            }
+        }
         self.closures += 1;
         let assumed = self.closure_params.remove(&l).unwrap_or_default();
         if let Type::Adt(symbol, ..) = ty {
@@ -1241,11 +1283,15 @@ impl Walk<'_> {
             }
             self.bind(id, None);
         }
+        self.returns.push(Vec::new());
         let result = self.walk_cfg(&fr, bodies, false);
+        let rets = self.returns.pop().unwrap_or_default();
         self.closures -= 1;
         self.put_state(here);
         self.declared.truncate(declared);
-        result
+        result?;
+        let rt = self.cx.solved(&body.locals[crate::mir::RETURN.0].ty);
+        Ok(Some(std::rc::Rc::new(self.summary(made_from, rt, rets))))
     }
 
     /// A `&` or `&mut` (`m`) of `q`, made into `dest` (`borrow_mir`): if
@@ -1846,9 +1892,9 @@ impl Walk<'_> {
         let mut closures = Vec::new();
         for (i, o) in args.iter().enumerate() {
             let local = o.place().filter(|p| p.proj.is_empty()).map(|p| p.local);
-            if let Some((l, cty)) = local.and_then(|l| self.deferred.remove(&l)) {
+            if let Some((l, cty, captured)) = local.and_then(|l| self.deferred.remove(&l)) {
                 vals.push(Val::Other);
-                closures.push((i, l, cty));
+                closures.push((i, l, cty, captured));
                 continue;
             }
             vals.push(self.operand(fr, o, spans[i])?);
@@ -1871,11 +1917,13 @@ impl Walk<'_> {
                 }
                 None => HashMap::new(),
             };
-            for (i, l, cty) in closures {
+            for (i, l, cty, captured) in closures {
                 if let Some(t) = trees.get(&i) {
                     self.closure_params.insert(l, t.clone());
                 }
-                self.walk_closure(bodies, l, &cty)?;
+                if let Some(s) = self.walk_closure(bodies, l, &cty, &captured)? {
+                    self.call_summaries.insert(i, s);
+                }
             }
         }
         let site = CallAt {
@@ -1887,7 +1935,9 @@ impl Walk<'_> {
             coerced: vec![None; args.len()],
             span,
         };
-        let (result, post) = self.call_at(&site, vals, places.clone())?;
+        let called = self.call_at(&site, vals, places.clone());
+        self.call_summaries.clear();
+        let (result, post) = called?;
         // What it lent `&mut` may have changed.
         for p in places.iter().flatten() {
             self.invalidate(p, span, "mutable lending");
@@ -1958,6 +2008,15 @@ impl Walk<'_> {
                 Ok(out)
             }
             Some(Term::Return) => {
+                // A closure's body: what it gives here, and what's known.
+                if self.closures > 0 && self.reachable {
+                    let val =
+                        (self.slots.get(&crate::mir::RETURN)).map_or(Val::Other, |s| s.val.clone());
+                    let facts = self.facts.clone();
+                    if let Some(rets) = self.returns.last_mut() {
+                        rets.push(summary::Ret { val, facts });
+                    }
+                }
                 if self.closures == 0 {
                     let v =
                         (self.slots.get(&crate::mir::RETURN)).map_or(Val::Other, |s| s.val.clone());

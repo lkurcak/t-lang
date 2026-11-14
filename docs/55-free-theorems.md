@@ -14,7 +14,9 @@ fn small(n: usize) -> Option<{ v: usize | v < 4 }> {
     if n < 4 { Some(n) } else { None }
 }
 
-fn at(a: [u8; 4], n: usize) -> u8 with panic { a[small(n).map(|i| i).unwrap()] }
+fn same(i: usize) -> usize { i }
+
+fn at(a: [u8; 4], n: usize) -> u8 with panic { a[small(n).map(same).unwrap()] }
 // error: can't prove `i < self.len()` for argument `i` of `index`
 ```
 
@@ -196,7 +198,9 @@ fn at(a: [u8; 4], i: { v: usize | v < 4 }) -> u8 { a[nine(i)] }
 
 - Nothing goes through a closure: `map`, `and_then` and `unwrap_or_else`
   give what the closure gives, which a free theorem can't say anything of
-  (its `T` is in the closure's bound).
+  (its `T` is in the closure's bound). Since step 74, a closure written in
+  the call says what it gives by its summary, as one case of the
+  instantiation (docs/74-refined-instantiation.md).
 - Nor behind a reference: `copied`, `as_ref` and `take` say nothing; nor
   in a struct: `Cell::into_inner`, a `List`'s `pop`.
 - `?` on an `Option<T>` in generic code: which impl it is can't be known

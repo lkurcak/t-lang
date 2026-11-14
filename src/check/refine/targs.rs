@@ -39,17 +39,20 @@ pub(super) type Pos = Vec<usize>;
 /// values, as objects never change.
 #[derive(Debug)]
 pub(super) struct Closed {
-    pred: Expr,
-    names: HashMap<NodeId, Val>,
+    pub(super) pred: Expr,
+    pub(super) names: HashMap<NodeId, Val>,
 }
 
 /// What a value is: one value; one a predicate is true of; one each of
-/// some `Disj`s is true of; or one nothing's known of.
+/// some `Disj`s is true of; one a closure gave (`summary::Made`), of which
+/// what's known is what its body knew where it returned, of new values for
+/// what it made; or one nothing's known of.
 #[derive(Debug, Clone)]
 pub(super) enum Cand {
     Exact(Val),
     Pred(Rc<Closed>),
     All(Vec<Disj>),
+    Made(Rc<super::summary::Made>),
     Any,
 }
 
@@ -65,6 +68,7 @@ impl PartialEq for Cand {
             (Cand::Exact(a), Cand::Exact(b)) => a == b,
             (Cand::Pred(a), Cand::Pred(b)) => Rc::ptr_eq(a, b),
             (Cand::All(a), Cand::All(b)) => a == b,
+            (Cand::Made(a), Cand::Made(b)) => Rc::ptr_eq(a, b),
             (Cand::Any, Cand::Any) => true,
             _ => false,
         }
@@ -173,11 +177,13 @@ pub(super) type Tree = Vec<(Pos, Disj)>;
 const DEPTH: usize = 6;
 
 /// Where a candidate of an instantiation comes from, for messages: which
-/// argument, and whether it's what a `&mut` argument's place may hold.
+/// argument, and whether it's what a `&mut` argument's place may hold, or
+/// what a closure argument gives.
 #[derive(Debug, Clone)]
 struct Source {
     arg: usize,
     behind: bool,
+    gives: bool,
 }
 
 /// One case of an instantiation's at a position: the argument it's of, its
@@ -783,6 +789,12 @@ impl Walk<'_> {
                     _ => Some(Formula::True),
                 }
             }
+            // What's said to exist can be assumed of a value, not proved.
+            Cand::Made(_) if strict => None,
+            Cand::Made(made) => {
+                let made = made.clone();
+                Some(self.made_formula(&made, v).unwrap_or(Formula::True))
+            }
             Cand::All(ds) => {
                 let mut all = Vec::new();
                 for d in ds {
@@ -994,6 +1006,39 @@ impl Walk<'_> {
         self.place_decl_depth(p, true)
     }
 
+    /// What's declared of place `p`, lent `&mut` straight to a call, as of
+    /// the reference: what `place_decl` says, and the place's own
+    /// refinement, of the whole value too (a refined local's, a field's of
+    /// the struct's fields now), which the call must keep, and which is
+    /// proved again after it (`Walk::post_now`).
+    pub(super) fn lent_decl(&mut self, p: &Place) -> Tree {
+        let mut tree = self.place_decl(p);
+        if p.path.is_empty() {
+            if let Some((r, _)) = self.invariants.get(&p.root).cloned() {
+                for part in r.parts.iter().filter(|q| !q.carried) {
+                    if let Some(c) = self.close(&part.pred, Env::Here) {
+                        tree.push((part.path.clone(), Disj::one(Cand::Pred(c))));
+                    }
+                }
+            }
+        } else if let Some((q, j)) = p.field_of() {
+            let qt = self.place_ty(&q);
+            if let Some(fields) = self.refined_fields(&qt).cloned()
+                && let Some(Some(r)) = fields.refs.get(j)
+                && !fields.alone(j)
+                && let Some(vals) = self.fields_of(&q, &qt)
+            {
+                let args = self.adt_args(&qt);
+                for part in r.parts.iter().filter(|q| !q.carried) {
+                    if let Some(c) = self.close(&part.pred, Env::Fields(&vals, &args)) {
+                        tree.push((part.path.clone(), Disj::one(Cand::Pred(c))));
+                    }
+                }
+            }
+        }
+        under(&tree, 0)
+    }
+
     /// What's said of a value read at place `p` that's new: what's
     /// declared there, but for its own struct field refinements, which
     /// `assume_fields` says of all the fields' values (as reading them here
@@ -1197,7 +1242,7 @@ pub(super) fn under(tree: &Tree, k: usize) -> Tree {
 pub(super) fn widen(tree: &Tree) -> Tree {
     fn cand(c: &Cand) -> Cand {
         match c {
-            Cand::Exact(_) | Cand::Any => Cand::Any,
+            Cand::Exact(_) | Cand::Made(_) | Cand::Any => Cand::Any,
             Cand::Pred(p) => Cand::Pred(p.clone()),
             Cand::All(ds) => Cand::all(ds.iter().map(disj).collect()),
         }
@@ -1444,12 +1489,15 @@ pub(super) fn writable_inside(cx: &Checker, t: &Type) -> bool {
 
 /// Where a type parameter's values come from that a call can't follow: a
 /// bound on it that makes values (`consumer`), or another that might,
-/// or a closure's result. `None` if there's none (lemma A2).
+/// or a closure's result, but of a closure given for a type parameter
+/// `given` says the call can follow, by its summary (lemma C2 of
+/// docs/74-refined-instantiation.md). `None` if there's none (lemma A2).
 pub(super) fn makes(
     cx: &Checker,
     s: &crate::types::Scheme,
     x: &str,
     ty: Option<&Type>,
+    given: &dyn Fn(&str) -> bool,
 ) -> Option<String> {
     let traits = &cx.traits;
     let this = s.params.ty(x);
@@ -1485,8 +1533,11 @@ pub(super) fn makes(
             continue;
         }
         if crate::traits::is_sig(a) {
+            let followed = matches!(a, Type::Proj(base, ..)
+                if matches!(&**base, Type::Param(f, _) if given(f)));
             if let Type::Fn(f) = b
                 && free::mentions(&f.ret, x)
+                && !followed
             {
                 return Some(format!("a closure's result, `{}`", f.ret));
             }
@@ -1578,9 +1629,17 @@ impl Walk<'_> {
         let cx = self.cx;
         let at_call = |t: &Type| Some(cx.solved(&targs.apply(t)));
         let changed = changes(cx, s, x, &at_call).map(|why| (why, self.inv_positions(&ty)));
+        // The closures given straight to the call, for type parameters the
+        // callee calls, by their argument: what they give is summarized.
+        let given: Vec<usize> = self.call_summaries.keys().copied().collect();
+        let summarized = |f: &str| {
+            (sig.params.iter().enumerate())
+                .find(|(j, p)| matches!(p, Type::Param(g, _) if g == f) && given.contains(j))
+                .map(|(j, _)| j)
+        };
         let mut inst = Inst {
             at: all.iter().map(|p| (p.clone(), Vec::new())).collect(),
-            any: makes(self.cx, s, x, Some(&ty)),
+            any: makes(self.cx, s, x, Some(&ty), &|f| summarized(f).is_some()),
             changed,
         };
         let push = |inst: &mut Inst, pos: &[usize], c: (Source, Vec<Formula>, Cand)| {
@@ -1642,6 +1701,7 @@ impl Walk<'_> {
                                 let src = Source {
                                     arg: j,
                                     behind: true,
+                                    gives: false,
                                 };
                                 push(&mut inst, pos, (src, Vec::new(), c));
                                 continue;
@@ -1650,6 +1710,7 @@ impl Walk<'_> {
                                 let src = Source {
                                     arg: j,
                                     behind: false,
+                                    gives: false,
                                 };
                                 push(&mut inst, pos, (src, g, c));
                             }
@@ -1693,6 +1754,7 @@ impl Walk<'_> {
                                     Source {
                                         arg: j,
                                         behind: true,
+                                        gives: false,
                                     },
                                     Vec::new(),
                                     c,
@@ -1705,6 +1767,62 @@ impl Walk<'_> {
                         behind.push(Behind { arg: j, declared });
                     }
                     Variance::Contra => {}
+                }
+            }
+        }
+        // What each closure given straight to the call gives, where `x` is
+        // in its result: of every run, what its body knew where it returned
+        // (lemmas C1, C2 of docs/74-refined-instantiation.md).
+        for (a, b) in &s.eqs {
+            let (Type::Proj(base, _, n), Type::Fn(fs)) = (a, b) else {
+                continue;
+            };
+            let Type::Param(f, _) = &**base else {
+                continue;
+            };
+            if n != crate::traits::SIG {
+                continue;
+            }
+            let Some(j) = summarized(f) else {
+                continue;
+            };
+            let Some(summary) = self.call_summaries.get(&j).cloned() else {
+                continue;
+            };
+            let (occ, hidden) = self.occurrences(&fs.ret, x);
+            if hidden && inst.any.is_none() {
+                inst.any = Some(format!("a closure's result, `{}`", fs.ret));
+            }
+            for (rho, var) in occ {
+                if !matches!(var, Variance::Co | Variance::Bi) {
+                    if inst.any.is_none() {
+                        inst.any = Some(format!("a closure's result, `{}`", fs.ret));
+                    }
+                    continue;
+                }
+                for pos in &all {
+                    let mut p = rho.clone();
+                    p.extend_from_slice(pos);
+                    // Where what it is can be written through an alias, what
+                    // was known of it when the closure gave it isn't what's
+                    // there (lemma A4).
+                    let inv = matches!(self.type_at(&ty, pos), Some((_, Variance::Inv)));
+                    for k in 0..summary.rets.len() {
+                        let c = match inv {
+                            true => Cand::Any,
+                            false => Cand::Made(Rc::new(super::summary::Made {
+                                summary: summary.clone(),
+                                ret: k,
+                                pos: p.clone(),
+                            })),
+                        };
+                        let src = Source {
+                            arg: j,
+                            behind: false,
+                            gives: true,
+                        };
+                        push(&mut inst, pos, (src, Vec::new(), c));
+                    }
                 }
             }
         }
@@ -1921,7 +2039,7 @@ impl Walk<'_> {
         // What's declared of each place lent `&mut`, as of the argument.
         let mut written: Vec<Option<Tree>> = Vec::new();
         for (j, p) in places.iter().take(vals.len()).enumerate() {
-            let w = p.as_ref().map(|p| under(&self.place_decl(p), 0));
+            let w = p.as_ref().map(|p| self.lent_decl(p));
             written.push(w.map(|w| self.arg_tree(j, w)));
         }
         written.resize(vals.len(), None);
@@ -1979,11 +2097,15 @@ impl Walk<'_> {
                 pname(j)
             )
         };
-        let arg_text = |text: &str, j: usize| {
-            format!(
+        let arg_text = |text: &str, j: usize, gives: bool| match gives {
+            true => format!(
+                "can't prove `{text}` of what argument `{}` of `{fname}` gives",
+                pname(j)
+            ),
+            false => format!(
                 "can't prove `{text}` for argument `{}` of `{fname}`",
                 pname(j)
-            )
+            ),
         };
         self.check_behind(&s, &subst, &insts, spans, at, &behind_text, &arg_text);
         // Where a parameter's type is invariant but not as a type
@@ -2119,7 +2241,7 @@ impl Walk<'_> {
         spans: &[Span],
         at: Span,
         behind_text: &dyn Fn(&str, usize) -> String,
-        arg_text: &dyn Fn(&str, usize) -> String,
+        arg_text: &dyn Fn(&str, usize, bool) -> String,
     ) {
         for (x, inst, behind) in insts {
             let xt = self.cx.solved(&subst.apply(&s.params.ty(x)));
@@ -2153,7 +2275,7 @@ impl Walk<'_> {
                             let span = spans.get(src.arg).copied().unwrap_or(at);
                             let msg = match src.behind {
                                 true => behind_msg.clone(),
-                                false => arg_text(&text, src.arg),
+                                false => arg_text(&text, src.arg, src.gives),
                             };
                             self.failed(Error::ty(span, msg));
                             break;
@@ -2263,8 +2385,9 @@ impl Walk<'_> {
                 "can't prove `{text}` of what may be written through the result of `{name}`, `{ret}`"
             )
         };
-        let arg_text =
-            |text: &str, _: usize| format!("can't prove `{text}` of the result of `{name}`");
+        let arg_text = |text: &str, _: usize, _: bool| {
+            format!("can't prove `{text}` of the result of `{name}`")
+        };
         self.check_behind(
             &scheme,
             &subst,
@@ -2751,7 +2874,7 @@ impl Walk<'_> {
                     continue;
                 }
                 let arg = impl_args.get(k).cloned();
-                if makes(self.cx, &as_scheme, p, arg.as_ref()).is_some() {
+                if makes(self.cx, &as_scheme, p, arg.as_ref(), &|_| false).is_some() {
                     unsaid.push(p.clone());
                     continue;
                 }
@@ -2853,7 +2976,7 @@ impl Walk<'_> {
         let subst = crate::types::Subst::new(&names, targs);
         let mut written: Vec<Option<Tree>> = Vec::new();
         for p in places.iter().take(vals.len()) {
-            written.push(p.as_ref().map(|p| under(&self.place_decl(p), 0)));
+            written.push(p.as_ref().map(|p| self.lent_decl(p)));
         }
         written.resize(vals.len(), None);
         let mut insts = Vec::new();

@@ -89,6 +89,14 @@ returns, when what the callee ensures is learned (step 30).
 > change while it lives, so what's known of it where it's made holds at
 > every run; what it captured by value is the value it was made with.
 
+*Wrong as stated, fixed in step 74* (docs/74-refined-instantiation.md):
+what it captured by value is the value it was made with only if its body
+doesn't change it, and the walk at the call read it as it was at the
+call, after the arguments after the closure, not as it was made. Both
+were holes since this step. Now the walk takes the captures where the
+closure is made, and forgets those its body changes, which each run
+reads as the runs before left them.
+
 > **Lemma S4 (parts the walk doesn't name).** The walk names places
 > through fields and `*`s, but not a variant's field or an array's
 > element. A loan of one forgets the place it's in that the walk does

@@ -112,12 +112,19 @@
 //! result is one of those in the arguments, of the variants they're of
 //! (`Walk::free_theorems`): it can't make one (parametricity, lemma P1 of
 //! docs/55-free-theorems.md), which the interpreter checks at each call.
+//! More generally (`targs`), what a call gives back, and leaves behind a
+//! `&mut`, of a type parameter only markers and consumers bound is one of
+//! the cases of what it was given: what its arguments have, what's
+//! declared of each place it's lent, the place's own refinement too, and
+//! what each closure written in the call gives, by its summary
+//! (`summary.rs`, docs/74-refined-instantiation.md).
 
 mod diagnostics;
 mod free;
 mod logic;
 pub use logic::{Work, work};
 mod mir;
+mod summary;
 mod targs;
 
 use super::Checker;
@@ -2276,6 +2283,8 @@ impl Checker {
             slots: HashMap::new(),
             pinned: Vec::new(),
             deferred: HashMap::new(),
+            returns: Vec::new(),
+            call_summaries: HashMap::new(),
             known: None,
             dead: HashSet::new(),
         }
@@ -2858,8 +2867,16 @@ struct Walk<'c> {
     pinned: Vec<(crate::mir::Place, Val)>,
     /// On MIR, the closures made into locals for a call to give to a
     /// function, walked at the call (`Walk::mir_call`): by local, the
-    /// lambda's node and the closure's type.
-    deferred: HashMap<crate::mir::Local, (NodeId, Type)>,
+    /// lambda's node, the closure's type, and what it captured, as it was
+    /// when it was made (lemma S3 of docs/69-loans.md).
+    deferred: HashMap<crate::mir::Local, (NodeId, Type, Vec<Val>)>,
+    /// For each closure being walked, innermost last: each place its body
+    /// returned, with what was known there (`summary::Ret`).
+    returns: Vec<Vec<summary::Ret>>,
+    /// For each argument of the call being checked that's a closure given
+    /// straight to it, what every run of it gives (`summary::Summary`), by
+    /// the argument's index.
+    call_summaries: HashMap<usize, std::rc::Rc<summary::Summary>>,
     /// On MIR, the value of the const being walked, if its body is known
     /// to give a constant.
     known: Option<Known>,

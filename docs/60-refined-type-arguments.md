@@ -429,6 +429,9 @@ The adversarial tests are `tests/t/err_soundness_targ_*.t` and
 - `map`'s and `filter`'s closures can't count on what the iterator holds:
   those adapters give the closure back, inside them, and the checker
   doesn't look at whether anything can get it out again. `fold`'s can.
+- What's declared of a place lent `&mut` was only of its type arguments,
+  not the place's own refinement: `swap` of two `{ v: u32 | v > 0 }`s
+  forgot it. Step 74 adds it (docs/74-refined-instantiation.md).
 - A `let mut` without a refinement doesn't declare what's only known of
   its value now: `let mut l = List::new(); l.push(1);` is a list of any
   numbers, not of 1s.

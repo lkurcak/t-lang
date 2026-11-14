@@ -414,6 +414,9 @@ const FREE_FORMS: &[&str] = &[
     "{ let o = small(n); let i = o.unwrap(); i }",
     "match Some(small(n).unwrap()) { Some(i) => i, None => 0 }",
     "match left(small(n).unwrap()) { Either::Left(i) => i, Either::Right(_) => 0 }",
+    // Not a free theorem, but a closure written in the call: its summary
+    // (docs/74-refined-instantiation.md).
+    "small(n).map(|x| x).unwrap()",
 ];
 
 /// The same with `?`, in a function giving back an `Option`.
@@ -425,8 +428,8 @@ const FREE_TRY_FORMS: &[&str] = &[
     "sorted(n).ok()?",
 ];
 
-/// And what could be something else: a default, a value a closure or an
-/// `Int` makes, a refinement the argument doesn't have.
+/// And what could be something else: a default, a value a function given
+/// as a value or an `Int` makes, a refinement the argument doesn't have.
 const NOT_FREE_FORMS: &[&str] = &[
     "small(n).unwrap_or(4)",
     "plain(n).unwrap()",
@@ -435,7 +438,7 @@ const NOT_FREE_FORMS: &[&str] = &[
     "pick(c, small(n).unwrap_or(1), 4)",
     "pick(c, small(n), plain(1)).unwrap()",
     "either(small(n), plain(1)).unwrap()",
-    "small(n).map(|x| x).unwrap()",
+    "small(n).map(same).unwrap()",
     "sorted(n).err().unwrap() as usize",
     "match right(small(n).unwrap()) { Either::Left(i) => i, Either::Right(_) => 9 }",
 ];
@@ -452,6 +455,7 @@ fn free_program(head: &str, body: &str) -> String {
          fn plain(n: usize) -> Option<usize> {{ Some(n) }}\n\
          fn pick<T: Copy>(c: bool, a: T, b: T) -> T {{ if c {{ a }} else {{ b }} }}\n\
          fn id<T>(x: T) -> T {{ x }}\n\
+         fn same(x: usize) -> usize {{ x }}\n\
          fn either<T: Copy>(a: Option<T>, b: Option<T>) -> Option<T> {{\n\
          match a {{ Some(_) => a, None => b }}\n}}\n\
          fn nine<T: Int>(x: T) -> T {{\nlet _ = x;\n9\n}}\n\

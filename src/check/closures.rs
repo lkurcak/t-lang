@@ -131,7 +131,7 @@ impl Checker {
         self.typed.captures.insert(l.id, captured.clone());
         for (i, p) in l.params.iter().enumerate() {
             let name = &p.name.name;
-            if l.params[..i].iter().any(|q| q.name.name == *name) {
+            if name != "_" && l.params[..i].iter().any(|q| q.name.name == *name) {
                 return Err(Error::ty(
                     p.name.span,
                     format!("parameter `{name}` is declared twice"),

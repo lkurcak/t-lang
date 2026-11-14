@@ -243,6 +243,15 @@ impl Lin {
         self.terms.iter().map(|&(v, _)| v)
     }
 
+    /// It, with each variable `v` renamed `to(v)`: each to one no other
+    /// is, so no two terms become one.
+    pub(crate) fn rename(&self, to: &mut impl FnMut(Var) -> Var) -> Lin {
+        Lin {
+            terms: self.terms.iter().map(|&(v, c)| (to(v), c)).collect(),
+            k: self.k,
+        }
+    }
+
     /// `self + other`, or `None` if a number gets too big.
     pub(crate) fn add(&self, other: &Lin) -> Option<Lin> {
         let mut terms: BTreeMap<Var, i128> = self.terms.iter().copied().collect();
@@ -416,6 +425,19 @@ impl Formula {
             Formula::and([a.clone(), b.clone()]),
             Formula::and([a.not(), b.not()]),
         ])
+    }
+
+    /// It, with each variable `v` renamed `to(v)` (`Lin::rename`).
+    pub(crate) fn rename(&self, to: &mut impl FnMut(Var) -> Var) -> Formula {
+        match self {
+            Formula::True => Formula::True,
+            Formula::False => Formula::False,
+            Formula::Le(l) => Formula::Le(l.rename(to)),
+            Formula::Eq(l) => Formula::Eq(l.rename(to)),
+            Formula::Not(f) => Formula::Not(Box::new(f.rename(to))),
+            Formula::And(fs) => Formula::And(fs.iter().map(|f| f.rename(to)).collect()),
+            Formula::Or(fs) => Formula::Or(fs.iter().map(|f| f.rename(to)).collect()),
+        }
     }
 
     pub(crate) fn vars(&self, out: &mut Vec<Var>) {
