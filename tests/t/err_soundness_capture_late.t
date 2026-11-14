@@ -7,6 +7,8 @@ fn call2<F: Fn() -> u32 + Discard>(f: F, _x: ()) -> u32 { f() }
 fn main() {
     let a: [u32; 3] = [1, 2, 3];
     let mut n: usize = 7;
-    let _ = call2(move || a[n], { n = 1; });
+    let _ = call2(move || a[n], {
+        n = 1;
+    });
 }
 // error: can't prove `i < self.len()` for argument `i` of `index`

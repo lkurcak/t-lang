@@ -118,6 +118,7 @@ mod free;
 mod logic;
 pub use logic::{Work, work};
 mod mir;
+mod summary;
 mod targs;
 
 use super::Checker;
@@ -2276,6 +2277,8 @@ impl Checker {
             slots: HashMap::new(),
             pinned: Vec::new(),
             deferred: HashMap::new(),
+            returns: Vec::new(),
+            call_summaries: HashMap::new(),
             known: None,
             dead: HashSet::new(),
         }
@@ -2861,6 +2864,13 @@ struct Walk<'c> {
     /// lambda's node, the closure's type, and what it captured, as it was
     /// when it was made (lemma S3 of docs/69-loans.md).
     deferred: HashMap<crate::mir::Local, (NodeId, Type, Vec<Val>)>,
+    /// For each closure being walked, innermost last: each place its body
+    /// returned, with what was known there (`summary::Ret`).
+    returns: Vec<Vec<summary::Ret>>,
+    /// For each argument of the call being checked that's a closure given
+    /// straight to it, what every run of it gives (`summary::Summary`), by
+    /// the argument's index.
+    call_summaries: HashMap<usize, std::rc::Rc<summary::Summary>>,
     /// On MIR, the value of the const being walked, if its body is known
     /// to give a constant.
     known: Option<Known>,

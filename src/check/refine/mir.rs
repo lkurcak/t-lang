@@ -1226,16 +1226,19 @@ impl Walk<'_> {
     /// there, which nothing's known of but its refinements; what it
     /// captured `&mut` was forgotten by the capture's loan; what it
     /// captured by `&` can't change while it lives.
+    ///
+    /// Gives back what every run of it gives (its summary): what was known
+    /// where its body returned.
     fn walk_closure(
         &mut self,
         bodies: &Bodies,
         l: NodeId,
         ty: &Type,
         captured: &[Val],
-    ) -> Result<(), Error> {
+    ) -> Result<Option<std::rc::Rc<summary::Summary>>, Error> {
         let key = Key::Closure(l);
         let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) else {
-            return Ok(());
+            return Ok(None);
         };
         let fr = Frame::new(body, notes);
         let here = self.take_state();
@@ -1244,6 +1247,7 @@ impl Walk<'_> {
         start.slots = HashMap::new();
         start.pinned = Vec::new();
         self.put_state(start);
+        let made_from = self.summary_start();
         let blocks = fr.rpo.clone();
         let (changed, _) = self.changes_in(&fr, bodies, &blocks);
         for (i, var) in body.env.iter().enumerate() {
@@ -1274,11 +1278,15 @@ impl Walk<'_> {
             }
             self.bind(id, None);
         }
+        self.returns.push(Vec::new());
         let result = self.walk_cfg(&fr, bodies, false);
+        let rets = self.returns.pop().unwrap_or_default();
         self.closures -= 1;
         self.put_state(here);
         self.declared.truncate(declared);
-        result
+        result?;
+        let rt = self.cx.solved(&body.locals[crate::mir::RETURN.0].ty);
+        Ok(Some(std::rc::Rc::new(self.summary(made_from, rt, rets))))
     }
 
     /// A `&` or `&mut` (`m`) of `q`, made into `dest` (`borrow_mir`): if
@@ -1908,7 +1916,9 @@ impl Walk<'_> {
                 if let Some(t) = trees.get(&i) {
                     self.closure_params.insert(l, t.clone());
                 }
-                self.walk_closure(bodies, l, &cty, &captured)?;
+                if let Some(s) = self.walk_closure(bodies, l, &cty, &captured)? {
+                    self.call_summaries.insert(i, s);
+                }
             }
         }
         let site = CallAt {
@@ -1920,7 +1930,9 @@ impl Walk<'_> {
             coerced: vec![None; args.len()],
             span,
         };
-        let (result, post) = self.call_at(&site, vals, places.clone())?;
+        let called = self.call_at(&site, vals, places.clone());
+        self.call_summaries.clear();
+        let (result, post) = called?;
         // What it lent `&mut` may have changed.
         for p in places.iter().flatten() {
             self.invalidate(p, span, "mutable lending");
@@ -1991,6 +2003,15 @@ impl Walk<'_> {
                 Ok(out)
             }
             Some(Term::Return) => {
+                // A closure's body: what it gives here, and what's known.
+                if self.closures > 0 && self.reachable {
+                    let val =
+                        (self.slots.get(&crate::mir::RETURN)).map_or(Val::Other, |s| s.val.clone());
+                    let facts = self.facts.clone();
+                    if let Some(rets) = self.returns.last_mut() {
+                        rets.push(summary::Ret { val, facts });
+                    }
+                }
                 if self.closures == 0 {
                     let v =
                         (self.slots.get(&crate::mir::RETURN)).map_or(Val::Other, |s| s.val.clone());

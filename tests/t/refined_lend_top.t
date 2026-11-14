@@ -5,7 +5,9 @@
 use alloc::list::List;
 use core::mem::{replace, swap};
 
-fn set<T: Discard>(a: &mut T, v: T) { *a = v; }
+fn set<T: Discard>(a: &mut T, v: T) {
+    *a = v;
+}
 
 fn with_mut<T, F: FnOnce(&mut T) + Discard>(a: &mut T, f: F) { f(a) }
 
@@ -25,9 +27,7 @@ fn flip(b: &mut Band) {
 
 // A field's refinement about it alone.
 #[derive(Copy, Discard)]
-struct Pos {
-    n: { v: i64 | v > 0 },
-}
+struct Pos { n: { v: i64 | v > 0 } }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;

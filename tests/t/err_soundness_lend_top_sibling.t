@@ -3,13 +3,12 @@
 // which the struct's being proved again after the call finds.
 use alloc::list::List;
 
-fn put<T, U: Discard>(_a: &mut T, b: &mut U, x: U) { *b = x; }
+fn put<T, U: Discard>(_a: &mut T, b: &mut U, x: U) {
+    *b = x;
+}
 
 #[derive(Discard)]
-struct Band {
-    rows: usize,
-    now: { l: List<u8> | l.len() == rows },
-}
+struct Band { rows: usize, now: { l: List<u8> | l.len() == rows } }
 
 fn main() with alloc {
     let mut band = Band { rows: 2, now: List::filled(2, 0) };

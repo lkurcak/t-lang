@@ -7,7 +7,9 @@ impl Mk for u32 {
     fn mk() -> u32 { 0 }
 }
 
-fn reset<T: Mk + Discard>(a: &mut T) { *a = T::mk(); }
+fn reset<T: Mk + Discard>(a: &mut T) {
+    *a = T::mk();
+}
 
 fn main() {
     let mut a: { v: u32 | v > 0 } = 1;

@@ -2,7 +2,9 @@
 // count on writing back only values it was given.
 use core::num::{Int, least};
 
-fn zero<T: Int>(a: &mut T) { *a = least::<T>(); }
+fn zero<T: Int>(a: &mut T) {
+    *a = least::<T>();
+}
 
 fn main() {
     let mut a: { v: u32 | v > 0 } = 1;

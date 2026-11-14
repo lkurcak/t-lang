@@ -1,5 +1,7 @@
 // Changed through a `&mut` the body lends, too.
-fn bump(n: &mut usize) { *n = 5; }
+fn bump(n: &mut usize) {
+    *n = 5;
+}
 
 fn twice<F: FnMut() -> u32 + Discard>(mut f: F) -> u32 {
     let _ = f();
