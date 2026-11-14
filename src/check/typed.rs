@@ -9,11 +9,27 @@
 //! checker for their solutions. Those of effects may still be variables
 //! then, which it has no use for (see `Checker::keep_mir`).
 
-use crate::ast::{Capture, NodeId};
+use crate::ast::{Capture, Expr, ExprKind, NodeId, UnOp};
 use crate::error::Span;
+use crate::mir::Proj;
 use crate::traits::FnKind;
 use crate::types::Type;
 use std::collections::HashMap;
+
+/// A place a closure captures, and how (docs/76-widths-and-captures.md): a
+/// variable around it, and the fields and `*`s from the variable to the
+/// place, as the MIR's place for it has them (`Typed::place_path`).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Captured {
+    /// The variable, by id.
+    pub(crate) var: NodeId,
+    pub(crate) path: Vec<Proj>,
+    /// How it's written: `p`, `p.x`, `r.x` for `(*r).x`, or `*r`.
+    pub(crate) name: String,
+    /// The place's type.
+    pub(crate) ty: Type,
+    pub(crate) mode: Capture,
+}
 
 #[derive(Clone, Default)]
 pub(crate) struct Typed {
@@ -53,9 +69,9 @@ pub(crate) struct Typed {
     pub(crate) fields: HashMap<NodeId, (usize, usize)>,
     /// The variables each closure captures, by id.
     pub(crate) captures: HashMap<NodeId, Vec<NodeId>>,
-    /// How each closure that captures captures each of those, once worked
-    /// out (`Checker::settle_closures`), with its type's symbol.
-    pub(crate) modes: HashMap<NodeId, Vec<(NodeId, Capture)>>,
+    /// The places each closure that captures captures, and how, once
+    /// worked out (`Checker::settle_closures`): its fields, in order.
+    pub(crate) modes: HashMap<NodeId, Vec<Captured>>,
     /// For each call of what isn't a function type, how it gets at what it
     /// calls: through how many `*`s, and by which `Fn` trait. Through any,
     /// it borrows what's at the end, `&` for `Fn` and `&mut` for `FnMut`;
@@ -98,4 +114,32 @@ pub(crate) struct Bind {
     pub(crate) mut_span: Option<Span>,
     /// Bound by reference (match ergonomics), and if so, `&mut`?
     pub(crate) by_ref: Option<bool>,
+}
+
+impl Typed {
+    /// The variable place expression `e` is in, and the fields and `*`s
+    /// from it to `e`, as `Builder::place` makes them: a field through
+    /// references or boxes looks through each first. `None` if `e` isn't a
+    /// variable, or a field of one, or what one points to.
+    pub(crate) fn place_path(&self, e: &Expr) -> Option<(NodeId, Vec<Proj>)> {
+        match &e.kind {
+            ExprKind::Var(..) => match self.vars.get(&e.id) {
+                Some(Res::Local(id)) => Some((*id, Vec::new())),
+                _ => None,
+            },
+            ExprKind::Field(x, _) => {
+                let &(derefs, i) = self.fields.get(&e.id)?;
+                let (id, mut path) = self.place_path(x)?;
+                path.extend(std::iter::repeat_n(Proj::Deref, derefs));
+                path.push(Proj::Field(i));
+                Some((id, path))
+            }
+            ExprKind::Unary(UnOp::Deref, x) => {
+                let (id, mut path) = self.place_path(x)?;
+                path.push(Proj::Deref);
+                Some((id, path))
+            }
+            _ => None,
+        }
+    }
 }

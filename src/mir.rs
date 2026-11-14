@@ -160,14 +160,19 @@ pub(crate) enum LocalKind {
     Temp,
 }
 
-/// A variable a closure captured: how, and as what it's declared where the
-/// closure is, which says if it may be changed.
+/// A place a closure captured, in a variable: how, and as what the
+/// variable is declared where the closure is, which says if it may be
+/// changed.
 #[derive(Debug, Clone)]
 pub(crate) struct EnvVar {
+    /// How the place is written: `p`, `p.x`, `*r`.
     pub(crate) name: String,
     pub(crate) capture: crate::ast::Capture,
-    /// Its id (see `check/typed.rs`).
+    /// The variable's id (see `check/typed.rs`).
     pub(crate) id: crate::ast::NodeId,
+    /// The fields and `*`s from the variable to the place
+    /// (`Typed::place_path`).
+    pub(crate) path: Vec<Proj>,
     /// Where it's declared.
     pub(crate) span: Span,
     pub(crate) mutable: bool,

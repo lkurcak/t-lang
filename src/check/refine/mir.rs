@@ -1246,6 +1246,7 @@ impl Walk<'_> {
             return Ok(None);
         };
         let fr = Frame::new(body, notes);
+        self.captures_apart(body)?;
         let here = self.take_state();
         let declared = self.declared.len();
         let mut start = here.clone();
@@ -1259,7 +1260,7 @@ impl Walk<'_> {
             if var.capture != Capture::Value {
                 continue;
             }
-            let p = Place::local(var.id);
+            let p = self.captured_root(var);
             if changed
                 .iter()
                 .any(|c| c.place().within(&p) || p.within(c.place()))
@@ -2291,7 +2292,58 @@ impl Walk<'_> {
             }
             k += 1;
         }
-        Some((Place::local(var.id), k))
+        Some((self.captured_root(var), k))
+    }
+
+    /// Checks, as the checker's capture rules promise, that what closure
+    /// `body` changes or owns of a variable is all of it, or fields of it
+    /// none of whose refinements relate them to the rest of it (lemma C4
+    /// of docs/76-widths-and-captures.md): otherwise the walk would check
+    /// what it changes against the rest as it was when the closure was
+    /// made, which the function may have changed since. Fails closed.
+    fn captures_apart(&self, body: &crate::mir::Body) -> Result<(), Error> {
+        for var in &body.env {
+            if var.capture == Capture::Ref || var.path.is_empty() {
+                continue;
+            }
+            let mut p = Place::local(var.id);
+            let mut apart = !self.invariants.contains_key(&var.id);
+            for proj in &var.path {
+                let crate::mir::Proj::Field(i) = proj else {
+                    apart = false;
+                    break;
+                };
+                apart &= self.refined_fields(&self.place_ty(&p)).is_none();
+                p = p.then(Proj::Field(*i));
+            }
+            if !apart {
+                return Err(Error::ty(
+                    var.span,
+                    format!(
+                        "internal error: a closure captures `{}` apart from what a refinement \
+                         relates it to (docs/76-widths-and-captures.md)",
+                        var.name
+                    ),
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// The place closure capture `var` captured, in its variable: the walk
+    /// of a closure's body sees each place in it as the place it is in the
+    /// variable, as it did when closures captured whole variables (lemma C1
+    /// of docs/76-widths-and-captures.md).
+    fn captured_root(&self, var: &crate::mir::EnvVar) -> Place {
+        let mut p = Place::local(var.id);
+        for proj in &var.path {
+            p = match proj {
+                crate::mir::Proj::Deref => self.deref(p),
+                crate::mir::Proj::Field(i) => p.then(Proj::Field(*i)),
+                crate::mir::Proj::Variant(..) => unreachable!("a capture is never in a variant"),
+            };
+        }
+        p
     }
 
     /// Where the value at MIR place `mp` is (see `Loc`), reading what it

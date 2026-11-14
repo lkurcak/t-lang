@@ -159,8 +159,9 @@ as a reborrow `&mut *r` anywhere doesn't (`closure_reborrow.t`).
 
 `move |x| ..` captures everything by value. Then the closure owns what it
 captured, and can outlive the variables, but not what they borrow. A whole
-variable is captured, not the fields the body uses: `|| p.x` borrows all of
-`p` (`closure_capture_modes.t`).
+variable was captured, not the fields the body uses: `|| p.x` borrowed all
+of `p`. Since 0.91.0 a closure captures the places its body names, `p.x`
+(docs/76-widths-and-captures.md).
 
 Which trait a closure implements follows from what its body does:
 
@@ -296,7 +297,9 @@ function can't go wrong where the function didn't.
 - **Capture by the least that works.** As in Rust, so closures borrow by
   default and `move` is the exception.
 - **Whole variables, not paths.** Capturing `p.x` rather than `p` would
-  accept more programs, and can be done later without breaking any.
+  accept more programs, and can be done later without breaking any. Done
+  in 0.91.0 (docs/76-widths-and-captures.md), but for the order things
+  are dropped in, which it changes.
 - **Function types stay.** Every closure has a type of its own (since
   0.52.0), and functions keep their function types: a function type is
   still a code address, and a closure capturing nothing still fits in one,
@@ -315,7 +318,7 @@ function can't go wrong where the function didn't.
 | a closure's type generic over lifetimes, `\|x: &i64\| -> &i64 { x }` called at two | higher-ranked closure types | 6e.1 |
 | `dyn Fn(i64) -> i64` | no trait objects | — |
 | `Box<F>` callable | only useful with `dyn` | — |
-| capturing fields, `p.x`, not `p` | path rules; relaxes compatibly | — |
+| capturing fields, `p.x`, not `p` | path rules; relaxes compatibly | 76 |
 | the result of `F` as `F::Output` | the bound always says it | — |
 | implementing `Fn` for a struct | needs a call method taking any arguments | — |
 

@@ -31,10 +31,11 @@
 
 use super::generics::Lifetimes;
 use super::scope::Binding;
-use super::typed::Res;
+use super::typed::Captured;
 use super::{Checker, Local, Target, result_span};
 use crate::ast::*;
 use crate::error::{Error, Span};
+use crate::mir::Proj;
 use crate::traits::FN_ONCE;
 use crate::traits::{FnKind, Pred};
 use crate::types::{FnType, Region, Type};
@@ -187,6 +188,11 @@ impl Checker {
             let mut local = Local::param(&p.name, t);
             local.mutable = p.mutable.is_some();
             local.mut_span = p.mutable.map(|m| Span::new(m.start, p.name.span.start));
+            if let Some(t) = &p.ty
+                && !self.written_out(t).refinements().is_empty()
+            {
+                self.refined_params.insert(local.id());
+            }
             self.note_binds(std::slice::from_ref(&local), p.ty.is_none());
             self.bind(&local);
             self.locals.push(local);
@@ -404,44 +410,73 @@ impl Checker {
 
     fn settle_closure(&mut self, symbol: &String, p: &Pending) -> Result<(), Error> {
         let l = &*p.lambda;
-        let mut uses: HashMap<NodeId, Use> = HashMap::new();
+        let mut uses: Uses = HashMap::new();
         self.uses_in(&l.body, Use::Read, true, &p.captured, &mut uses);
+        // What a predicate in it names, it reads whole, as checking the
+        // predicate, and the interpreter, need the variable's place.
+        let mut named = Vec::new();
+        predicate_names(&l.body, &mut named);
+        for p in (l.params.iter()).filter_map(|p| p.ty.as_ref()) {
+            p.refinements()
+                .into_iter()
+                .for_each(|(_, _, pred)| names_in(pred, &mut named));
+        }
+        for id in &p.captured {
+            if named.contains(&self.typed.binds[id].name) {
+                note(&mut uses, *id, Vec::new(), Use::Read);
+            }
+        }
         let mut fields = Vec::new();
-        let mut modes = Vec::new();
+        let mut captures = Vec::new();
         let mut kind = FnKind::Fn;
         let mut why = String::new();
         for id in &p.captured {
             let bind = &self.typed.binds[id];
-            let (name, t) = (bind.name.clone(), self.solved(&bind.ty));
-            let used = uses.get(id).copied().unwrap_or(Use::Read);
-            let mode = match (l.moves, used) {
-                (Some(_), _) | (None, Use::Move) => Capture::Value,
-                (None, Use::Mutate) => Capture::Mut,
-                (None, Use::Unique) => Capture::Unique,
-                (None, Use::Read) => Capture::Ref,
-            };
-            // What the body does with it, and what the closure is then.
-            let (k, reason) = match (mode, used) {
-                (Capture::Value, Use::Move) => (FnKind::FnOnce, format!("it moves `{name}` out")),
-                (Capture::Value, _) if !self.is_discard(&t) => (
-                    FnKind::FnOnce,
-                    format!("it owns `{name}`, which must be used up"),
-                ),
-                (_, Use::Mutate) => (FnKind::FnMut, format!("it changes `{name}`")),
-                (_, Use::Unique) => (FnKind::FnMut, format!("it changes what `{name}` points to")),
-                _ => (FnKind::Fn, String::new()),
-            };
-            if k > kind {
-                kind = k;
-                why = reason;
+            let (var, t) = (bind.name.clone(), self.solved(&bind.ty));
+            let used = uses.remove(id).unwrap_or_else(|| vec![(Vec::new(), Use::Read)]);
+            for (path, used) in self.capture_places(*id, &t, used, l.moves.is_some()) {
+                let (name, t) = self.capture_name(&var, &t, &path);
+                let mode = match (l.moves, used) {
+                    (Some(_), _) | (None, Use::Move) => Capture::Value,
+                    (None, Use::Mutate) => Capture::Mut,
+                    (None, Use::Unique) => Capture::Unique,
+                    (None, Use::Read) => Capture::Ref,
+                };
+                // What the body does with it, and what the closure is then.
+                let (k, reason) = match (mode, used) {
+                    (Capture::Value, Use::Move) => {
+                        (FnKind::FnOnce, format!("it moves `{name}` out"))
+                    }
+                    (Capture::Value, _) if !self.is_discard(&t) => (
+                        FnKind::FnOnce,
+                        format!("it owns `{name}`, which must be used up"),
+                    ),
+                    (_, Use::Mutate) => (FnKind::FnMut, format!("it changes `{name}`")),
+                    (_, Use::Unique) => {
+                        (FnKind::FnMut, format!("it changes what `{name}` points to"))
+                    }
+                    _ => (FnKind::Fn, String::new()),
+                };
+                if k > kind {
+                    kind = k;
+                    why = reason;
+                }
+                let field = match mode {
+                    Capture::Ref => Type::Ref(Region::Erased, false, Box::new(t.clone())),
+                    Capture::Mut | Capture::Unique => {
+                        Type::Ref(Region::Erased, true, Box::new(t.clone()))
+                    }
+                    Capture::Value => t.clone(),
+                };
+                fields.push((name.clone(), field));
+                captures.push(Captured {
+                    var: *id,
+                    path,
+                    name,
+                    ty: t,
+                    mode,
+                });
             }
-            let field = match mode {
-                Capture::Ref => Type::Ref(Region::Erased, false, Box::new(t)),
-                Capture::Mut | Capture::Unique => Type::Ref(Region::Erased, true, Box::new(t)),
-                Capture::Value => t,
-            };
-            fields.push((name.clone(), field));
-            modes.push((*id, mode));
         }
         // Each region in its fields' types and its signature is a lifetime
         // parameter of its own, but for those of its result still to work
@@ -476,13 +511,155 @@ impl Checker {
         self.define_closure(symbol, &def);
         self.info.captures.insert(
             l.id,
-            modes
-                .iter()
-                .map(|(id, m)| (self.typed.binds[id].name.clone(), *m))
-                .collect(),
+            (captures.iter()).map(|c| (c.name.clone(), c.mode)).collect(),
         );
-        self.typed.modes.insert(p.lambda.id, modes);
+        self.typed.modes.insert(p.lambda.id, captures);
         Ok(())
+    }
+
+    /// The places in variable `id`, of type `var_ty`, a closure captures,
+    /// from what its body does with each it names, `uses`, as the fields and
+    /// `*`s from the variable, and how; all by value if it's `move` (lemmas
+    /// K1 to K4 of docs/76-widths-and-captures.md):
+    ///
+    /// - K1. By `&`, it's the place the body names, through references and
+    ///   boxes too: nothing changes it while the closure lives.
+    /// - K2. By `&mut`, uniquely, or by value, it's no more than fields of
+    ///   the variable: not through a reference or box, nor into a variable
+    ///   declared with a refinement, nor a field of a struct whose fields
+    ///   have refinements. Those relate the place to the rest, which the
+    ///   function could change while the closure lives; what the closure
+    ///   changes must keep them, and the rest is checked as it was when the
+    ///   closure was made.
+    /// - K3. By value, a place that isn't `Copy` is moved out: not out of a
+    ///   struct that can't be taken apart here, which is taken whole.
+    /// - K4. Where one place is in another, the other is captured, the
+    ///   most either needs; which may cut it again.
+    ///
+    /// So the places are apart, and each the body names is in one.
+    fn capture_places(
+        &self,
+        id: NodeId,
+        var_ty: &Type,
+        uses: Vec<(Vec<Proj>, Use)>,
+        moves: bool,
+    ) -> Vec<(Vec<Proj>, Use)> {
+        let refined = self.refined_var(id);
+        let cut = |(path, used): (Vec<Proj>, Use)| self.cut(var_ty, path, used, moves, refined);
+        let mut places: Vec<(Vec<Proj>, Use)> = uses.into_iter().map(cut).collect();
+        loop {
+            // In order, a place comes right before those in it.
+            places.sort_by(|a, b| a.0.cmp(&b.0));
+            let mut merged: Vec<(Vec<Proj>, Use)> = Vec::new();
+            for (path, used) in places {
+                match merged.last_mut() {
+                    Some((q, u)) if path.starts_with(q) => *u = (*u).max(used),
+                    _ => merged.push((path, used)),
+                }
+            }
+            let cut_again: Vec<(Vec<Proj>, Use)> = merged.iter().cloned().map(cut).collect();
+            if cut_again == merged {
+                return merged;
+            }
+            places = cut_again;
+        }
+    }
+
+    /// Where a capture of place `path` in a variable of type `var_ty`, used
+    /// `used`, stops (`capture_places`), and how it's used then: changing
+    /// what's through a reference only needs the reference to be unique,
+    /// not `mut`.
+    fn cut(
+        &self,
+        var_ty: &Type,
+        path: Vec<Proj>,
+        used: Use,
+        moves: bool,
+        refined: bool,
+    ) -> (Vec<Proj>, Use) {
+        let by_value = moves || used == Use::Move;
+        if !by_value && used == Use::Read {
+            return (path, used);
+        }
+        // The type of what each projection is of.
+        let mut tys = vec![var_ty.clone()];
+        for p in &path {
+            let t = crate::borrowck::project(&self.adts, &tys[tys.len() - 1], *p);
+            tys.push(self.solved(&t));
+        }
+        let stop = |k: usize| {
+            let through = (k..path.len())
+                .any(|j| path[j] == Proj::Deref && matches!(tys[j], Type::Ref(..)));
+            let used = match used {
+                Use::Mutate if through && !moves => Use::Unique,
+                used => used,
+            };
+            (path[..k].to_vec(), used)
+        };
+        if refined && !path.is_empty() {
+            return stop(0);
+        }
+        let mut end = path.len();
+        for (k, p) in path.iter().enumerate() {
+            let refined_fields =
+                matches!(&tys[k], Type::Adt(s, ..) if self.field_refined.contains_key(s));
+            if *p == Proj::Deref || refined_fields {
+                end = k;
+                break;
+            }
+        }
+        // Moved out, it can't take apart what only its module may.
+        if by_value && !self.is_copy(&tys[end]) {
+            for k in 0..end {
+                if let Type::Adt(s, ..) = &tys[k]
+                    && !self.may_take_apart(s, &tys[k])
+                {
+                    end = k;
+                    break;
+                }
+            }
+        }
+        match end == path.len() {
+            true => (path, used),
+            false => stop(end),
+        }
+    }
+
+    /// May the function being checked take a value of struct `s`, of type
+    /// `t`, apart, as `moves::abstraction` says?
+    fn may_take_apart(&self, s: &str, t: &Type) -> bool {
+        let own_discard = self.traits.own_discard(s) && !self.within_module_of(s);
+        let abstract_ = self.is_abstract(s) && !self.is_discard(t);
+        !own_discard && !abstract_
+    }
+
+    /// Is variable `id` declared with a refinement: a `let`'s, or a
+    /// parameter's?
+    fn refined_var(&self, id: NodeId) -> bool {
+        self.refined_params.contains(&id)
+            || (self.refined_lets.keys())
+                .any(|pat| self.typed.sites.get(pat).copied().unwrap_or(*pat) == id)
+    }
+
+    /// How place `path` in variable `var`, of type `t`, is written, and its
+    /// type: `p.x`, `r.x` for `(*r).x`, `*r`.
+    fn capture_name(&self, var: &str, t: &Type, path: &[Proj]) -> (String, Type) {
+        let mut name = var.to_string();
+        let mut t = t.clone();
+        let mut derefs = 0;
+        for p in path {
+            match p {
+                Proj::Field(i) => {
+                    let fields = crate::types::struct_fields(&self.adts, &t).expect("a struct");
+                    name = format!("{name}.{}", fields[*i].0);
+                    derefs = 0;
+                }
+                Proj::Deref => derefs += 1,
+                Proj::Variant(..) => unreachable!("a capture is never in a variant"),
+            }
+            t = self.solved(&crate::borrowck::project(&self.adts, &t, *p));
+        }
+        ("*".repeat(derefs) + &name, t)
     }
 
     /// Works out the lifetimes of closure `p`'s result left to work out,
@@ -540,7 +717,7 @@ impl Checker {
         how: Use,
         value: bool,
         captured: &[NodeId],
-        uses: &mut HashMap<NodeId, Use>,
+        uses: &mut Uses,
     ) {
         // Using a value of `e`'s type: moving it, unless it's `Copy`.
         let ty = |e: &Expr| self.typed.exprs.get(&e.id).map(|t| self.solved(t));
@@ -626,24 +803,24 @@ impl Checker {
                 tail.iter().for_each(|t| go(t, Use::Read, true));
             }
             // An inner closure captures what it does from here: the same
-            // way, but a copy of a `Copy` value only needs a `&`.
+            // places, the same way, but a copy of a `Copy` value only needs
+            // a `&`.
             ExprKind::Lambda(l) => {
-                let Some(modes) = self.typed.modes.get(&l.id) else {
+                let Some(captures) = self.typed.modes.get(&l.id) else {
                     return;
                 };
-                for (id, mode) in modes {
-                    if !captured.contains(id) {
+                for c in captures {
+                    if !captured.contains(&c.var) {
                         continue;
                     }
-                    let t = self.solved(&self.typed.binds[id].ty);
-                    let used = match mode {
+                    let used = match c.mode {
                         Capture::Ref => Use::Read,
                         Capture::Mut => Use::Mutate,
                         Capture::Unique => Use::Unique,
-                        Capture::Value if self.is_copy(&t) => Use::Read,
+                        Capture::Value if self.is_copy(&c.ty) => Use::Read,
                         Capture::Value => Use::Move,
                     };
-                    note(uses, *id, used);
+                    note(uses, c.var, c.path.clone(), used);
                 }
             }
             _ => e
@@ -654,36 +831,20 @@ impl Checker {
     }
 
     /// `uses_in` for an expression used as a place, `how`: a variable,
-    /// what's at a field of one, or what one points to.
-    fn place_uses(&self, e: &Expr, how: Use, captured: &[NodeId], uses: &mut HashMap<NodeId, Use>) {
-        match &e.kind {
-            ExprKind::Var(..) => {
-                if let Some(Res::Local(id)) = self.typed.vars.get(&e.id)
-                    && captured.contains(id)
-                {
-                    note(uses, *id, how);
-                }
+    /// what's at a field of one, or what one points to, which is a use of
+    /// that place in it (`Typed::place_path`); or a place in a value that
+    /// isn't a variable's, `f().x`, which uses what it's made of.
+    fn place_uses(&self, e: &Expr, how: Use, captured: &[NodeId], uses: &mut Uses) {
+        if let Some((id, path)) = self.typed.place_path(e) {
+            if captured.contains(&id) {
+                note(uses, id, path, how);
             }
-            // Changing what's through a reference only needs the reference
-            // to be unique, not `mut`: a field through one, or `*r`.
+            return;
+        }
+        match &e.kind {
+            // A function, a static or a const: nothing captured.
+            ExprKind::Var(..) => {}
             ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) => {
-                let through = match &e.kind {
-                    ExprKind::Field(..) => self
-                        .typed
-                        .fields
-                        .get(&e.id)
-                        .is_some_and(|(derefs, _)| *derefs > 0),
-                    _ => true,
-                };
-                let reference = self
-                    .typed
-                    .exprs
-                    .get(&x.id)
-                    .is_some_and(|t| matches!(self.solved(t), Type::Ref(..)));
-                let how = match how {
-                    Use::Mutate if through && reference => Use::Unique,
-                    how => how,
-                };
                 self.place_uses(x, how, captured, uses)
             }
             _ => self.uses_in(e, how, false, captured, uses),
@@ -785,10 +946,57 @@ impl Checker {
     }
 }
 
-/// Notes that the variable `id` is used `how`, if that's more than it was.
-fn note(uses: &mut HashMap<NodeId, Use>, id: NodeId, how: Use) {
-    let u = uses.entry(id).or_insert(how);
-    *u = (*u).max(how);
+/// What a closure's body does with the places in the variables it
+/// captures: for each, by id, each place it names in it, as the fields and
+/// `*`s from the variable, and how, in the order the body names them.
+type Uses = HashMap<NodeId, Vec<(Vec<Proj>, Use)>>;
+
+/// Notes that place `path` in variable `id` is used `how`, if that's more
+/// than it was.
+fn note(uses: &mut Uses, id: NodeId, path: Vec<Proj>, how: Use) {
+    let places = uses.entry(id).or_default();
+    match places.iter_mut().find(|(p, _)| *p == path) {
+        Some((_, u)) => *u = (*u).max(how),
+        None => places.push((path, how)),
+    }
+}
+
+/// Adds to `out` the names the predicates in `e` name: its loops'
+/// invariants and its `let`s' refinements, and its closures' parameters'.
+fn predicate_names(e: &Expr, out: &mut Vec<String>) {
+    let invariant = match &e.kind {
+        ExprKind::While(_, _, inv, _) | ExprKind::WhileLet(_, _, inv, _) => inv.as_deref(),
+        ExprKind::Loop(_, inv, _) => inv.as_deref(),
+        ExprKind::For(f) => f.invariant.as_deref(),
+        _ => None,
+    };
+    invariant.into_iter().for_each(|p| names_in(p, out));
+    match &e.kind {
+        ExprKind::Block(stmts, _) => {
+            for s in stmts {
+                if let Stmt::Let { ty: Some(t), .. } = s {
+                    (t.refinements().into_iter()).for_each(|(_, _, p)| names_in(p, out));
+                }
+            }
+        }
+        ExprKind::Lambda(l) => {
+            for t in l.params.iter().filter_map(|p| p.ty.as_ref()) {
+                (t.refinements().into_iter()).for_each(|(_, _, p)| names_in(p, out));
+            }
+        }
+        _ => {}
+    }
+    e.children().into_iter().for_each(|c| predicate_names(c, out));
+}
+
+/// Adds to `out` the names of variables `e` names.
+fn names_in(e: &Expr, out: &mut Vec<String>) {
+    if let ExprKind::Var(name, _) = &e.kind
+        && !out.contains(name)
+    {
+        out.push(name.clone());
+    }
+    e.children().into_iter().for_each(|c| names_in(c, out));
 }
 
 /// Calls `f` with where each variable `p` binds is bound.
