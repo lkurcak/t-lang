@@ -614,14 +614,10 @@ impl Checker {
         }
         // Moved out, it can't take apart what only its module may.
         if by_value && !self.is_copy(&tys[end]) {
-            for k in 0..end {
-                if let Type::Adt(s, ..) = &tys[k]
-                    && !self.may_take_apart(s, &tys[k])
-                {
-                    end = k;
-                    break;
-                }
-            }
+            let whole = tys[..end]
+                .iter()
+                .position(|t| matches!(t, Type::Adt(s, ..) if !self.may_take_apart(s, t)));
+            end = whole.unwrap_or(end);
         }
         match end == path.len() {
             true => (path, used),
