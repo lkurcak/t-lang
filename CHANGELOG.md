@@ -1,5 +1,33 @@
 # Changelog
 
+## 0.94.1 (2026-11-15)
+
+No change to the language: checking is faster, `t check` of `fn main()
+{}` (most of which is checking core, alloc and std) by about a third
+(~280 ms to ~195 ms), and of t-chess by a fifth (~545 ms to ~435 ms). No
+program is accepted or refused that wasn't before.
+
+### Changed
+
+- How each struct and enum varies with its parameters, and what its
+  parameters must outlive, is worked out once for as long as no struct or
+  enum changes, rather than again for every function body the borrow
+  checker checks; and with no bounds in scope, as it's what their
+  declarations say (a bound on a projection is normalised where it's
+  used, as before). The refinement checker's copy, kept for as many
+  structs and enums as there were, missed a closure's lifetimes and
+  captures being filled in later; now it's the same one.
+- Impls are found by their trait, rather than by looking through every
+  impl; and choosing one passes over an impl whose type can't be the one
+  asked about, by its shape alone, without renaming it apart to unify.
+- The polymorphic-recursion check finds each edge's ends once rather
+  than in every round, and functions are looked up by symbol in a map.
+- Release builds are one codegen unit with fat LTO, so the checker's hot
+  loops are inlined across modules whichever way the code is split:
+  without it, this release's other changes made t-chess's own checking
+  slower, as the borrow checker's move analysis stopped being inlined.
+  Release builds take longer.
+
 ## 0.94.0 (2026-11-15)
 
 Step 79: what a capture splits. See
