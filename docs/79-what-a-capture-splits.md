@@ -151,10 +151,12 @@ every way something comes to be declared. There are six:
 > nothing is declared of the whole of any place a changing capture is
 > strictly in. By cases: (1) the variable is captured whole; (2) a
 > widened tree has `Pred`s only, from types, and a type's refinements
-> are at its type arguments' places, which a path from the variable
-> reaches only through a tuple's element or a field declared as a type
-> parameter or a projection (through a field of another type, the next
-> struct's fields are reached the same way), where K2a stops; (3) and (6)
+> are at its type arguments' places, which a capture's path (fields, and
+> E1's one `*`) reaches only through a tuple's element or a field
+> declared as a type parameter or a projection, where K2a stops (through
+> a field of another type the next struct's fields are reached the same
+> way; through a `*`, an element or a variant's field a capture doesn't
+> go at all); (3) and (6)
 > are behind a `*`, where K2 stops, but for E1's; (4) is the closure's
 > parameter, where K2b stops; (5) is lemmas E2 and E3, and K2a.
 

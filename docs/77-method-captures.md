@@ -188,7 +188,9 @@ since. Three lemmas say the new K2 keeps that.
 > argument's refinement in its type, about each element of a list.
 > Captured whole, everything it relates is in the capture.
 
-So C4 holds of the new K2, and so do C1 to C3: a capture through a
+So C4 holds of the new K2 (but for what a type argument's refinement
+relates, which docs/79-what-a-capture-splits.md found C4 had wrongly set
+aside, and cuts), and so do C1 to C3: a capture through a
 parameter is the borrow `&mut (*r).x`, whose loan the borrow checker
 treats as it does any reborrow, and which the refinement checker forgets
 as it does any loan (docs/69-loans.md); every capture is a place in
