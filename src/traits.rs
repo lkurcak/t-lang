@@ -399,11 +399,90 @@ impl ImplDef {
     }
 }
 
+/// Impls, in order, and which of them are of each trait, once that's
+/// asked: forgotten whenever they change, which goes through `deref_mut`.
+#[derive(Debug, Clone, Default)]
+pub struct Impls {
+    list: Vec<ImplDef>,
+    by_trait: std::sync::OnceLock<ByTrait>,
+}
+
+/// The indices of the impls of each trait, in order, and of the inherent
+/// ones.
+#[derive(Debug, Clone, Default)]
+struct ByTrait {
+    of: HashMap<String, Vec<usize>>,
+    inherent: Vec<usize>,
+}
+
+impl Impls {
+    /// The indices of the impls of `tr`, or of the inherent ones for
+    /// `None`, in order.
+    pub fn of(&self, tr: Option<&str>) -> &[usize] {
+        let by_trait = self.by_trait.get_or_init(|| {
+            let mut by = ByTrait::default();
+            for (i, d) in self.list.iter().enumerate() {
+                match &d.trait_name {
+                    Some(t) => by.of.entry(t.clone()).or_default().push(i),
+                    None => by.inherent.push(i),
+                }
+            }
+            by
+        });
+        match tr {
+            Some(t) => by_trait.of.get(t).map_or(&[], Vec::as_slice),
+            None => &by_trait.inherent,
+        }
+    }
+
+    /// The impls of `tr`, or the inherent ones for `None`, in order, with
+    /// their indices.
+    pub fn of_trait<'a>(
+        &'a self,
+        tr: Option<&str>,
+    ) -> impl Iterator<Item = (usize, &'a ImplDef)> + 'a {
+        self.of(tr).iter().map(|&i| (i, &self.list[i]))
+    }
+}
+
+impl std::ops::Deref for Impls {
+    type Target = Vec<ImplDef>;
+
+    fn deref(&self) -> &Vec<ImplDef> {
+        &self.list
+    }
+}
+
+impl std::ops::DerefMut for Impls {
+    fn deref_mut(&mut self) -> &mut Vec<ImplDef> {
+        self.by_trait.take();
+        &mut self.list
+    }
+}
+
+impl<'a> IntoIterator for &'a Impls {
+    type Item = &'a ImplDef;
+    type IntoIter = std::slice::Iter<'a, ImplDef>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.list.iter()
+    }
+}
+
+impl FromIterator<ImplDef> for Impls {
+    fn from_iter<I: IntoIterator<Item = ImplDef>>(iter: I) -> Impls {
+        Impls {
+            list: iter.into_iter().collect(),
+            by_trait: std::sync::OnceLock::new(),
+        }
+    }
+}
+
 /// Every trait and impl in a program, the built-in ones too.
 #[derive(Debug, Clone, Default)]
 pub struct Traits {
     pub traits: HashMap<String, TraitDef>,
-    pub impls: Vec<ImplDef>,
+    pub impls: Impls,
     /// Every closure that captures, by its symbol.
     pub closures: HashMap<String, ClosureDef>,
     /// Every opaque type, by its symbol.
@@ -466,7 +545,7 @@ impl Traits {
         let traits = HashMap::new();
         Traits {
             traits,
-            impls: Vec::new(),
+            impls: Impls::default(),
             closures: HashMap::new(),
             opaques: HashMap::new(),
             sealed: HashSet::new(),
@@ -631,14 +710,13 @@ pub fn implied(defs: &HashMap<String, TraitDef>, name: &str) -> Vec<String> {
 /// that's a bare parameter, a blanket impl's, of which a trait has one at
 /// most: two always overlap, at a parameter, which nothing is known of.
 pub fn select(
-    impls: &[ImplDef],
+    impls: &Impls,
     anon: &Anon,
     ty: &Type,
     tr: Option<&str>,
     local: &[(Type, Type)],
 ) -> Option<(usize, Vec<Type>)> {
-    let mut found: Vec<(usize, Vec<Type>)> = (impls.iter().enumerate())
-        .filter(|(_, d)| d.trait_name.as_deref() == tr)
+    let mut found: Vec<(usize, Vec<Type>)> = (impls.of_trait(tr))
         .filter_map(|(i, d)| {
             let mut found = HashMap::new();
             if !matches(&d.self_ty, ty, &d.params, &mut found) {
@@ -667,29 +745,32 @@ pub fn select(
 /// bounds hold or not; else only where they hold (lemma R1 of
 /// docs/73-for-over-collections.md): before step 73, when bounds never
 /// kept two impls apart but for sealed ones, a match was always alone.
-fn alone(impls: &[ImplDef], anon: &Anon, i: usize, ty: &Type) -> bool {
+fn alone(impls: &Impls, anon: &Anon, i: usize, ty: &Type) -> bool {
     let mut vars = Vec::new();
     let general = generalised(ty, &mut vars);
     if vars.is_empty() {
         return true;
     }
     let tr = impls[i].trait_name.as_deref();
-    (impls.iter().enumerate())
-        .filter(|(j, d)| *j != i && d.trait_name.as_deref() == tr)
-        .all(|(_, d)| {
-            let renamed: Vec<Type> = d.params.tys_renamed(|p| format!("{p}~"));
-            let sub = Subst::new(&d.params, &renamed);
-            let header = sub.apply(&d.self_ty);
-            let mut params = vars.clone();
-            params.extend(d.params.iter().map(|p| format!("{p}~")));
-            let Some(mgu) = unifier(&header, &general, &params) else {
-                return true;
-            };
-            d.preds.iter().any(|p| {
-                let t = unified(&sub.apply(&p.ty), &mgu);
-                refuted(impls, anon.sealed, &Knowable::Closed, &t, &p.trait_name, 0)
-            })
+    (impls.of_trait(tr)).filter(|(j, _)| *j != i).all(|(_, d)| {
+        // Most impls' types are apart from it at a glance, which spares
+        // renaming them to see.
+        if !may_unify(&d.self_ty, &general) {
+            return true;
+        }
+        let renamed: Vec<Type> = d.params.tys_renamed(|p| format!("{p}~"));
+        let sub = Subst::new(&d.params, &renamed);
+        let header = sub.apply(&d.self_ty);
+        let mut params = vars.clone();
+        params.extend(d.params.iter().map(|p| format!("{p}~")));
+        let Some(mgu) = unifier(&header, &general, &params) else {
+            return true;
+        };
+        d.preds.iter().any(|p| {
+            let t = unified(&sub.apply(&p.ty), &mgu);
+            refuted(impls, anon.sealed, &Knowable::Closed, &t, &p.trait_name, 0)
         })
+    })
 }
 
 /// Has `t` a type variable in it, of the checker's, not yet worked out?
@@ -719,13 +800,7 @@ fn generalised(t: &Type, vars: &mut Vec<String>) -> Type {
 
 /// Does impl `d` at type arguments `args` need what no impl could give
 /// (`refuted`)? Then it's not for that type.
-fn refutes(
-    d: &ImplDef,
-    args: &[Type],
-    impls: &[ImplDef],
-    anon: &Anon,
-    local: &[(Type, Type)],
-) -> bool {
+fn refutes(d: &ImplDef, args: &[Type], impls: &Impls, anon: &Anon, local: &[(Type, Type)]) -> bool {
     let s = Subst::new(&d.params, args);
     d.preds.iter().any(|p| {
         let t = normalise(impls, anon, local, &s.apply(&p.ty));
@@ -757,7 +832,7 @@ fn assumed(anon: &Anon, ty: &Type, tr: &str) -> bool {
 /// `Traits::implements`, with the bounds in scope in `anon.env`: also
 /// what `project` asks of a blanket impl's bounds at a rigid type.
 pub(crate) fn implements_at(
-    impls: &[ImplDef],
+    impls: &Impls,
     anon: &Anon,
     eqs: &[(Type, Type)],
     ty: &Type,
@@ -1009,7 +1084,7 @@ pub fn subset(a: &Type, b: &Type) -> bool {
 fn impl_args(
     d: &ImplDef,
     found: &HashMap<String, Type>,
-    impls: &[ImplDef],
+    impls: &Impls,
     anon: &Anon,
     local: &[(Type, Type)],
 ) -> Option<Vec<Type>> {
@@ -1192,7 +1267,7 @@ pub struct Anon<'a> {
 #[derive(Debug, Clone, Default)]
 pub struct Projections {
     /// Every trait impl.
-    impls: Arc<Vec<ImplDef>>,
+    impls: Arc<Impls>,
     /// Every closure that captures, by symbol: what it takes and gives is
     /// what `<C as FnOnce>::(signature)` is.
     pub closures: HashMap<String, ClosureDef>,
@@ -1224,6 +1299,15 @@ impl Projections {
             env: Vec::new(),
             sealed: traits.sealed.clone(),
             defs: Arc::new(traits.traits.clone()),
+        }
+    }
+
+    /// These, outside any function, impl or type: with no bounds in scope.
+    pub fn outside(&self) -> Projections {
+        Projections {
+            local: Vec::new(),
+            env: Vec::new(),
+            ..self.clone()
         }
     }
 
@@ -1259,7 +1343,7 @@ impl Projections {
 
 /// `t`, with every projection in it worked out that can be: by the impl of
 /// `impls` its type matches, or what `local` says of a rigid one.
-pub fn normalise(impls: &[ImplDef], anon: &Anon, local: &[(Type, Type)], t: &Type) -> Type {
+pub fn normalise(impls: &Impls, anon: &Anon, local: &[(Type, Type)], t: &Type) -> Type {
     let t = t.map(|p| normalise(impls, anon, local, p));
     let Type::Proj(s, tr, name) = &t else {
         return t;
@@ -1277,7 +1361,7 @@ pub fn normalise(impls: &[ImplDef], anon: &Anon, local: &[(Type, Type)], t: &Typ
 /// is: the type it says, with the parts of `s` its parameters match, and
 /// the regions of `s` where its lifetimes are.
 pub fn project(
-    impls: &[ImplDef],
+    impls: &Impls,
     anon: &Anon,
     local: &[(Type, Type)],
     s: &Type,
@@ -1549,7 +1633,7 @@ const REFUTE_DEPTH: usize = 8;
 /// every instance of `ty` (lemma N2): the impls that could be for it are
 /// fewer, and their bounds instances of these.
 pub fn refuted(
-    impls: &[ImplDef],
+    impls: &Impls,
     sealed: &HashSet<String>,
     knowable: &Knowable,
     ty: &Type,
@@ -1593,34 +1677,31 @@ pub fn refuted(
     // coherence, or renamed at a shallower depth: no written name has a
     // `~`.
     let rename = |p: &str| format!("{p}~{depth}");
-    !impls
-        .iter()
-        .filter(|d| d.trait_name.as_deref() == Some(tr))
-        .any(|d| {
-            let renamed: Vec<Type> = d.params.tys_renamed(|p| rename(p));
-            let sub = Subst::new(&d.params, &renamed);
-            let header = sub.apply(&d.self_ty);
-            let mut params = vars.clone();
-            params.extend(d.params.iter().map(|p| rename(p)));
-            let Some(mgu) = unifier(&header, ty, &params) else {
-                return false;
-            };
-            // It could be for `ty`, unless what it needs can't hold there.
-            !d.preds.iter().any(|p| {
-                let t = unified(&sub.apply(&p.ty), &mgu);
-                refuted(impls, sealed, knowable, &t, &p.trait_name, depth + 1)
-            })
+    !(impls.of_trait(Some(tr))).any(|(_, d)| {
+        // Most impls' types are apart from it at a glance, which spares
+        // renaming them to see.
+        if !may_unify(&d.self_ty, ty) {
+            return false;
+        }
+        let renamed: Vec<Type> = d.params.tys_renamed(|p| rename(p));
+        let sub = Subst::new(&d.params, &renamed);
+        let header = sub.apply(&d.self_ty);
+        let mut params = vars.clone();
+        params.extend(d.params.iter().map(|p| rename(p)));
+        let Some(mgu) = unifier(&header, ty, &params) else {
+            return false;
+        };
+        // It could be for `ty`, unless what it needs can't hold there.
+        !d.preds.iter().any(|p| {
+            let t = unified(&sub.apply(&p.ty), &mgu);
+            refuted(impls, sealed, knowable, &t, &p.trait_name, depth + 1)
         })
+    })
 }
 
 /// Does impl `d` at type arguments `args` need a sealed trait of a type
 /// that can't implement it (`refuted`)? Then it's not for that type.
-pub fn sealed_refutes(
-    d: &ImplDef,
-    args: &[Type],
-    impls: &[ImplDef],
-    sealed: &HashSet<String>,
-) -> bool {
+pub fn sealed_refutes(d: &ImplDef, args: &[Type], impls: &Impls, sealed: &HashSet<String>) -> bool {
     let s = Subst::new(&d.params, args);
     (d.preds.iter())
         .filter(|p| sealed.contains(&p.trait_name))
@@ -1681,6 +1762,20 @@ fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -
             .all(|(p, q)| unify(p, q, params, s)),
         _ => false,
     }
+}
+
+/// Could `a` and `b` be the same type, for some choice of the type
+/// parameters in them, taking each to be a variable? Not if, where neither
+/// is a parameter, a length or a const, they're of different shapes: so
+/// `unify` fails, wherever this does. It may succeed where this doesn't
+/// fail, as this sees neither what a parameter was already said to be, nor
+/// whether it can be `unsized`.
+fn may_unify(a: &Type, b: &Type) -> bool {
+    let any = |t: &Type| matches!(t, Type::Param(..) | Type::Nat(_) | Type::Const(_));
+    if any(a) || any(b) {
+        return true;
+    }
+    a.same_shape(b) && a.parts().zip(b.parts()).all(|(p, q)| may_unify(p, q))
 }
 
 fn occurs(p: &str, t: &Type, s: &HashMap<String, Type>) -> bool {

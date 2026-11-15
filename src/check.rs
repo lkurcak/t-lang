@@ -400,20 +400,6 @@ fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
 }
 
-/// `Checker::adt_info`'s: how many structs and enums there were, and how
-/// each varies with its parameters then.
-#[derive(Default)]
-struct AdtInfoCache(
-    std::sync::Mutex<Option<(usize, std::sync::Arc<crate::borrowck::regions::AdtInfo>)>>,
-);
-
-impl Clone for AdtInfoCache {
-    fn clone(&self) -> AdtInfoCache {
-        let inner = self.0.lock().expect("not poisoned").clone();
-        AdtInfoCache(std::sync::Mutex::new(inner))
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct Checker {
     /// `Program::next_id`, while checking: the nodes the checker makes up
@@ -456,6 +442,8 @@ pub(crate) struct Checker {
     fn_symbols: Vec<String>,
     /// Every function, top-level and nested, by `FnId`.
     fns: Vec<FnDef>,
+    /// The `FnId` of each function in `fns`, by its symbol.
+    fn_index: HashMap<String, usize>,
     /// Each nested function's id, by the node of its name.
     nested_ids: HashMap<NodeId, FnId>,
     /// The functions in scope, as a stack: those of each block around what's
@@ -652,10 +640,6 @@ pub(crate) struct Checker {
     /// knows, so a closure in its body that changes a place in it captures
     /// it whole (K2b of docs/79-what-a-capture-splits.md).
     lambda_params: HashSet<NodeId>,
-    /// How each struct and enum varies with its parameters, as the borrow
-    /// checker says, once asked, for as many as there were then
-    /// (`Checker::adt_info`).
-    adt_info: AdtInfoCache,
     /// What each name in a refinement's predicate is, by node.
     pred_names: HashMap<NodeId, refine::PredName>,
     /// The predicates written out of an alias, by node: which alias, whose
@@ -983,6 +967,7 @@ impl Checker {
             imports_from: 0,
             refs_from: 0,
             fns: Vec::new(),
+            fn_index: HashMap::new(),
             nested_ids: HashMap::new(),
             scopes: Vec::new(),
             current: None,
@@ -1044,7 +1029,6 @@ impl Checker {
             refined_params: HashSet::new(),
             fn_params: HashMap::new(),
             lambda_params: HashSet::new(),
-            adt_info: AdtInfoCache::default(),
             field_refined: HashMap::new(),
             variant_refined: HashMap::new(),
             pred_names: HashMap::new(),
@@ -1407,6 +1391,9 @@ impl Checker {
                 self.nested_ids.insert(f.name.id, FnId(i));
             }
             self.info.symbols.insert(f.name.id, symbol.clone());
+            self.fn_index
+                .entry(symbol.clone())
+                .or_insert(self.fns.len());
             self.fns.push(FnDef {
                 name: f.name.clone(),
                 params: f.params.iter().map(|p| p.name.name.clone()).collect(),
@@ -1873,24 +1860,25 @@ impl Checker {
         &self.traits
     }
 
-    /// The type of function `symbol`, which may be a method of a trait.
     /// How each struct and enum varies with its parameters (see
-    /// `borrowck::regions::AdtInfo`): worked out again once there are more.
+    /// `borrowck::regions::AdtInfo`).
     pub(crate) fn adt_info(&self) -> std::sync::Arc<crate::borrowck::regions::AdtInfo> {
-        let n = self.adts.keys().count();
-        let mut cache = self.adt_info.0.lock().expect("not poisoned");
-        if let Some((m, info)) = &*cache
-            && *m == n
-        {
-            return info.clone();
-        }
-        let info = std::sync::Arc::new(crate::borrowck::regions::AdtInfo::new(&self.adts));
-        *cache = Some((n, info.clone()));
-        info
+        self.adts.info()
     }
 
+    /// The `FnId` of function `symbol`, if it's one of `fns`.
+    fn fn_position(&self, symbol: &str) -> Option<usize> {
+        self.fn_index.get(symbol).copied()
+    }
+
+    /// Function `symbol`, if it's one of `fns`.
+    fn fn_def(&self, symbol: &str) -> Option<&FnDef> {
+        self.fn_position(symbol).map(|i| &self.fns[i])
+    }
+
+    /// The type of function `symbol`, which may be a method of a trait.
     pub(crate) fn scheme(&self, symbol: &str) -> &Scheme {
-        if let Some(f) = self.fns.iter().find(|f| f.symbol == symbol) {
+        if let Some(f) = self.fn_def(symbol) {
             return &f.scheme;
         }
         let methods = self.traits.traits.values().flat_map(|t| &t.methods);

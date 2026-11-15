@@ -75,6 +75,7 @@ impl Variance {
 /// What the borrow checker needs to know about each struct and enum: how it
 /// varies with each parameter, and what its parameters must outlive for it
 /// to make sense (*well-formedness*).
+#[derive(Debug)]
 pub(crate) struct AdtInfo {
     /// For each, the variance of each lifetime parameter, then each type
     /// parameter.

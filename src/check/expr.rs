@@ -452,7 +452,7 @@ impl Checker {
                 (symbol.clone(), args)
             })
         })?;
-        let id = self.fns.iter().position(|f| f.symbol == found.0)?;
+        let id = self.fn_position(&found.0)?;
         self.uses().fns.insert(crate::check::scope::FnId(id));
         Some(found)
     }
