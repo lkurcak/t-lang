@@ -1481,7 +1481,6 @@ impl Rewrite<'_> {
         Err(Error::ty(at, format!("{interface} `{name}`, {why}")))
     }
 
-    /// A reference to a trait, which from here on names it by its symbol.
     /// `impl Discard for { v: T | p } { fn discard(self) { .. } }`, impl
     /// `d` once its trait is a symbol: an impl of `DiscardWhen` for `T`,
     /// whose `discard`'s `self` has the refinement, `self: { v: Self | p
@@ -1550,6 +1549,7 @@ impl Rewrite<'_> {
         Ok(())
     }
 
+    /// A reference to a trait, which from here on names it by its symbol.
     fn trait_ref(&mut self, name: &mut Ident) -> Result<(), Error> {
         if name.name.contains("::") {
             let b = self.path(name, Ns::Types)?;

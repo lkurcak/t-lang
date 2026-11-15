@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.95.0 (2026-11-15)
 
 Step 80: values that may be dropped when a refinement holds. See
 [docs/80-discard-when.md](docs/80-discard-when.md).
