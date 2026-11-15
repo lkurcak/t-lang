@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.93.0 (2026-11-15)
 
 Step 78: callable values. See
 [docs/78-callable-values.md](docs/78-callable-values.md).
