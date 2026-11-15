@@ -106,7 +106,9 @@ ensures
     self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
 ```
 
-So once it gives `None`, `len()` is `0`. A `for` is a `loop` that calls
+So once it gives `None`, `len()` is `0`. And `into_iter` says the
+iterator has as many as the list had, so that of an empty list may be
+dropped at once. A `for` is a `loop` that calls
 `next` until it gives `None`, and then drops its iterator (docs/42), which
 is now proved empty there:
 
@@ -261,13 +263,37 @@ first applies, at a type the bounds hold of, it's what a drop calls.
 > `it.len()` is `0`: `it` may be dropped. Both are checked of `next`'s
 > body, as any function's are.
 
+> **Lemma W6 (what its `discard` uses).** A drop that may call an impl
+> of `DiscardWhen`'s `discard` uses the value, as one that may call a
+> `discard` of its own does (lemma D1 of docs/20): what it borrows must
+> still be there, so the regions in its type hold to the drop
+> (`moves::drop_uses`). And what it may write where its type is invariant
+> is what lemma A9 of docs/68 says of a `discard` that isn't parametric.
+
 The interpreter checks a refined parameter's refinement at each call, so
 a drop the checker let through wrongly stops a run there; it also
 reports a value that isn't `Discard` dropped by anything but its type's
 impl of `DiscardWhen`. The adversarial tests are
-`tests/t/err_soundness_discard_when_*.t`, with mutation tests of W1 (the
-refinement checker skipping the drop), W3 (the impl's `discard` not
-knowing `p`) and W5 (`next` ensuring less).
+`tests/t/err_soundness_discard_when_*.t`, and the generated family
+`tests/generated_discard_when.rs`: a list of 0 to 3 values, made and used
+up in one function in eleven ways (a `for` to its end, one that
+`continue`s, `break`s or `return`s, `while let` and `pop`, one or two
+`pop`s, nothing, its iterator dropped, its iterator partly by `while let`
+and the rest by a `for`, `free_with` unless it's empty), of `Fd`s and of
+`i64`s: each is accepted exactly when what's known says nothing's left,
+and runs under the interpreter's oracle. Switching off W1 (the refinement
+checker skipping the drop), W3 (the impl's `discard` not knowing `p`), W5
+(`next` ensuring less), or making the glue call the refined impl where
+the type is `Discard` (W2), each fails tests.
+
+Writing the step found two ways it failed open, neither released. When
+an impl of `DiscardWhen`'s `discard` had no refined `self`, the
+refinement checker let its drops through; that can't be written, but
+it's an internal error now, rather than a pass. And the borrow checker
+didn't count a drop that calls such a `discard` as a use (W6), so a
+value whose `discard` reads what it borrows could outlive that, which
+the interpreter's oracle caught as a dangling reference
+(`err_soundness_discard_when_borrow.t`).
 
 ## What it doesn't do
 

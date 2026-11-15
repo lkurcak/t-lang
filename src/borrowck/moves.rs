@@ -856,7 +856,11 @@ pub(crate) fn drop_uses(b: &Builder) -> HashSet<Point> {
 /// hold itself.
 fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
     match t {
-        Type::Adt(symbol, ..) if b.cx.traits().own_discard(symbol) => true,
+        Type::Adt(symbol, ..)
+            if b.cx.traits().own_discard(symbol) || b.cx.traits().when_discard(symbol) =>
+        {
+            true
+        }
         Type::Adt(symbol, ..) if crate::types::is_closure(symbol) => {
             let c = &b.cx.traits().closures;
             c.get(symbol).is_some_and(|c| {
@@ -909,7 +913,7 @@ fn gone(
     b: &Builder,
     state: &mut Gone,
     s: &Statement,
-    mut check: Option<&mut Vec<Place>>,
+    check: Option<&mut Vec<Place>>,
 ) -> Result<(), Error> {
     let away = |state: &mut Gone, p: Place| {
         state.may.retain(|m, _| !m.within(&p));
@@ -923,7 +927,7 @@ fn gone(
                     away(state, owned(b, p).0);
                 }
             }
-            if let Some(when) = check.as_deref_mut() {
+            if let Some(when) = check {
                 dropped(b, state, place, Dropped::Assign, s.span, when)?;
             }
             let (owned, behind) = owned(b, place);
@@ -933,13 +937,13 @@ fn gone(
             }
         }
         StmtKind::Consume(p, variant) => {
-            if let Some(when) = check.as_deref_mut() {
+            if let Some(when) = check {
                 dropped(b, state, p, Dropped::Consume(*variant), s.span, when)?;
             }
             away(state, p.clone());
         }
         StmtKind::Dead(l) => {
-            if let Some(when) = check.as_deref_mut() {
+            if let Some(when) = check {
                 dropped(b, state, &Place::local(*l), Dropped::Dead, s.span, when)?;
             }
             away(state, Place::local(*l));

@@ -1,5 +1,35 @@
 # Changelog
 
+## Unreleased
+
+Step 80: values that may be dropped when a refinement holds. See
+[docs/80-discard-when.md](docs/80-discard-when.md).
+
+### Added
+
+- `impl Discard for { v: T | p } { fn discard(self) { .. } }`: a value of
+  `T`, which isn't `Discard`, may be dropped where the checker proves `p`
+  of it, by that impl's `discard`, which is checked knowing `p` of
+  `self`. Where it can't be proved, the drop is an error that says what
+  was needed. Only `Discard` can be implemented for a refined type; it's
+  never a bound, nor can its `discard` be called by name; a type has one
+  at most, beside an impl of `Discard` with bounds, which a drop prefers.
+- `alloc` has two: an empty `List<T>` may be dropped, whatever `T` is,
+  and so may a list's `IntoIter<T>` that's given all its values. So a
+  `for` over a list of values that aren't `Discard` uses its iterator up
+  when it runs to its end (`for h in handles { h.join(); }`), and a list
+  emptied by `pop`, or known empty any other way, may be dropped. A `for`
+  over one that a `break`, `return` or `?` may stop early is an error.
+- `alloc::list::IntoIter::len`, a measure: how many values it has left.
+  Its `next` says it gives `Some` when that's more than `0`, and leaves it
+  one less, or `0`; a list's `into_iter` says it starts as the list's
+  `len()`.
+
+### Changed
+
+- The interpreter checks a refined variable's refinement each time it's
+  used only while it's whole: not once part of it's been moved out.
+
 ## 0.94.2 (2026-11-15)
 
 No change to the language: `t check` is faster, by checking the bodies of

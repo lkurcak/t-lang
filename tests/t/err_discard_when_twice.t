@@ -7,11 +7,15 @@ impl S {
 }
 
 impl Discard for { s: S | s.n() == 0 } {
-    fn discard(self) { let S { n: _ } = self; }
+    fn discard(self) {
+        let S { n: _ } = self;
+    }
 }
 
 impl Discard for { s: S | s.n() == 1 } {
-    fn discard(self) { let S { n: _ } = self; }
+    fn discard(self) {
+        let S { n: _ } = self;
+    }
 }
 
 fn main() {}

@@ -1442,8 +1442,16 @@ fn drop_changes_seen(cx: &Checker, t: &Type, seen: &mut Vec<Type>) -> Option<Str
     }
     seen.push(t.clone());
     let out = match t {
-        Type::Adt(symbol, _, args) if cx.traits.own_discard(symbol) => {
-            match parametric_impl_seen(cx, t, DISCARD, seen) {
+        // An impl of `Discard` for a refined type runs a `discard` too
+        // (lemma W6 of docs/80-discard-when.md): parametric only if both
+        // are.
+        Type::Adt(symbol, _, args)
+            if cx.traits.own_discard(symbol) || cx.traits.when_discard(symbol) =>
+        {
+            let own = !cx.traits.own_discard(symbol) || parametric_impl_seen(cx, t, DISCARD, seen);
+            let when = !cx.traits.when_discard(symbol)
+                || parametric_impl_seen(cx, t, crate::traits::DISCARD_WHEN, seen);
+            match own && when {
                 true => None,
                 // The `discard` it comes to, if it's one of what's in it:
                 // `List<W>`'s drops each `W`.

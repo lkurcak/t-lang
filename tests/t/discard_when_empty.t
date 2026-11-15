@@ -30,12 +30,14 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     m.push(Fd { n: 1 });
     match m.pop() {
         Some(fd) => out.line(&close(fd))?, // expect: 1
-        None => {}
+        None => {},
     }
     if m.is_empty() {
         out.line(&"empty")?; // expect: empty
         return Ok(());
     }
-    m.free_with(|fd| { close(fd); });
+    m.free_with(|fd| {
+        close(fd);
+    });
     Ok(())
 }

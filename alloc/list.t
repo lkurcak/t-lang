@@ -203,7 +203,7 @@ impl<'a, T> IntoIterator for &'a mut List<T> {
 impl<T> IntoIterator for List<T> {
     type IntoIter = IntoIter<T>;
 
-    fn into_iter(self) -> IntoIter<T> {
+    fn into_iter(self) -> { it: IntoIter<T> | it.len() == self.len() } {
         let List { buf, len } = self;
         IntoIter { buf, len, next: 0 }
     }

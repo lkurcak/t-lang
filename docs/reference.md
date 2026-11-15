@@ -256,6 +256,12 @@ wherever a value of it is made, and aren't asked again.
 `impl Discard for T` can define `fn discard(self)`; that method must return
 `()` and have no effects. Variables drop in reverse declaration order;
 fields drop in declaration order, after a custom `discard` has run.
+`impl Discard for { v: T | p }` lets a value of `T` that isn't `Discard`
+be dropped where `p` can be proved of it, by that impl's `discard`, which
+knows `p` of `self`: an empty `List<T>` may be dropped whatever `T` is, and
+a `for` over one uses its iterator up when it runs to its end. It's never a
+bound, and only `Discard` can be implemented for a refined type. See
+[docs/80](80-discard-when.md).
 
 Bindings are immutable unless declared `mut`. A shared reference `&T`
 permits reading, of everything reached through it: a `&mut` behind a `&`

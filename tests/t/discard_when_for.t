@@ -26,7 +26,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     }
     for n in &seen {
         out.line(n)?; // expect: 1
-    } // expect: 3
+    }                 // expect: 3
     let mut m: List<Fd> = List::new();
     m.push(Fd { n: 4 });
     let mut total = 0;

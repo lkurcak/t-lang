@@ -3,7 +3,9 @@
 #[derive(Discard)]
 struct S { n: i64 }
 
-trait Tr { fn f(&self) -> i64; }
+trait Tr {
+    fn f(&self) -> i64;
+}
 
 impl Tr for { s: S | s.n > 0 } {
     fn f(&self) -> i64 { self.n }

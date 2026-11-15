@@ -523,6 +523,17 @@ impl Traits {
         })
     }
 
+    /// Does struct or enum `symbol` have an impl of `Discard` for a
+    /// refined type (`DiscardWhen`)? Then dropping a value of it may call
+    /// that impl's `discard`, which may do what any of its own may: read
+    /// what its references point to, or write behind a `&mut` in it
+    /// (lemma W6 of docs/80-discard-when.md).
+    pub fn when_discard(&self, symbol: &str) -> bool {
+        self.impls
+            .of_trait(Some(DISCARD_WHEN))
+            .any(|(_, d)| matches!(&d.self_ty, Type::Adt(s, ..) if s == symbol))
+    }
+
     /// `text`, a message, with each trait the prelude brings in named by
     /// its name, as a program writes it, rather than by its symbol:
     /// `Discard`, not `core::mem::Discard`. Not if another trait has that
