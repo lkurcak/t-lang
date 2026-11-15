@@ -663,7 +663,7 @@ impl Walk<'_> {
             {
                 continue;
             }
-            let text = d.text().unwrap_or_default();
+            let text = d.condition();
             let what = match (place.proj.is_empty(), fr.id(place.local)) {
                 (true, Some(id)) => match self.cx.typed.binds.get(&id) {
                     Some(b) => format!("`{}`", b.name),
@@ -674,7 +674,7 @@ impl Walk<'_> {
             self.failed(Error::ty(
                 span,
                 format!(
-                    "can't prove `{text}` of what dropping {what} may write: {why} can change a \
+                    "can't prove {text} of what dropping {what} may write: {why} can change a \
                      value of it"
                 ),
             ));

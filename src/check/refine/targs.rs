@@ -102,6 +102,32 @@ impl Disj {
         self.0.iter().find_map(|(_, c)| c.text())
     }
 
+    /// What it says, for a message's note: its predicate's text; `false`,
+    /// if there are no values there (as there are none of a type
+    /// parameter a call has none of); or else, as it says only which
+    /// values they are, that.
+    pub(super) fn said(&self) -> String {
+        match self.text() {
+            Some(text) => text,
+            None if self.no_values() => "false".to_string(),
+            None => "one of the values the call has of its type".to_string(),
+        }
+    }
+
+    /// What it says, for a message: `said`, a predicate in backticks.
+    pub(super) fn condition(&self) -> String {
+        match self.text() {
+            Some(text) => format!("`{text}`"),
+            None if self.no_values() => "`false`".to_string(),
+            None => format!("what's declared ({})", self.said()),
+        }
+    }
+
+    /// Are there no values there?
+    pub(super) fn no_values(&self) -> bool {
+        self.0.iter().all(|(_, c)| c.is_none())
+    }
+
     /// How many cases and conditions it has, at every depth.
     fn size(&self) -> u64 {
         let cand = |c: &Cand| match c {
@@ -946,11 +972,15 @@ impl Walk<'_> {
             };
             let cases = self.values_at(v, t, pos);
             if let Err(reason) = self.implies(&cases, d, &pt) {
-                let text = d.text().unwrap_or_default();
-                let failure = self.proof_failure(reason, None, None, &text);
-                self.failed(
-                    failure.attach(Error::ty(span, format!("can't prove `{text}` for {what}"))),
-                );
+                let text = d.condition();
+                let error = Error::ty(span, format!("can't prove {text} for {what}"));
+                // With no values there, there's nothing to find in the facts.
+                let error = match d.no_values() {
+                    true => error
+                        .with_note(span, "no value may be there: the call has none of its type"),
+                    false => (self.proof_failure(reason, None, None, &d.said())).attach(error),
+                };
+                self.failed(error);
                 // Assumed from here on, as if it had been proved.
                 self.assume_tree(v, t, tree);
                 return Ok(());
@@ -963,10 +993,10 @@ impl Walk<'_> {
                 for want in declared {
                     let cases = d.0.clone();
                     if self.implies(&cases, &want, &pt).is_err() {
-                        let text = want.text().unwrap_or_default();
+                        let text = want.condition();
                         self.failed(Error::ty(
                             span,
-                            format!("can't prove `{text}` of what may be written through {what}"),
+                            format!("can't prove {text} of what may be written through {what}"),
                         ));
                         return Ok(());
                     }
@@ -983,10 +1013,10 @@ impl Walk<'_> {
                 continue;
             };
             if self.implies(&[(Vec::new(), Cand::Any)], want, &pt).is_err() {
-                let text = want.text().unwrap_or_default();
+                let text = want.condition();
                 self.failed(Error::ty(
                     span,
-                    format!("can't prove `{text}` of what may be written through {what}"),
+                    format!("can't prove {text} of what may be written through {what}"),
                 ));
                 return Ok(());
             }
@@ -2001,11 +2031,11 @@ impl Walk<'_> {
                     let given = [(Vec::new(), Cand::all(vec![d.clone()]))];
                     let reads = here.iter().all(|h| self.implies(&given, h, &t).is_ok());
                     if !(writes && reads) {
-                        let text = d.text().unwrap_or_default();
+                        let text = d.condition();
                         self.failed(Error::ty(
                             span,
                             format!(
-                                "can't prove `{text}` of what this may write: `{fname}` gives \
+                                "can't prove {text} of what this may write: `{fname}` gives \
                                  it a `&mut` to what's declared so, and only a closure written \
                                  in the call, which `{fname}` doesn't keep, is checked with what \
                                  it's given"
@@ -2135,17 +2165,17 @@ impl Walk<'_> {
         }
         let behind_text = |text: &str, j: usize| {
             format!(
-                "can't prove `{text}` of what `{fname}` may write behind argument `{}`",
+                "can't prove {text} of what `{fname}` may write behind argument `{}`",
                 pname(j)
             )
         };
         let arg_text = |text: &str, j: usize, gives: bool| match gives {
             true => format!(
-                "can't prove `{text}` of what argument `{}` of `{fname}` gives",
+                "can't prove {text} of what argument `{}` of `{fname}` gives",
                 pname(j)
             ),
             false => format!(
-                "can't prove `{text}` for argument `{}` of `{fname}`",
+                "can't prove {text} for argument `{}` of `{fname}`",
                 pname(j)
             ),
         };
@@ -2199,12 +2229,12 @@ impl Walk<'_> {
                     false => have,
                 };
                 if self.implies(&have, want, &pt).is_err() {
-                    let text = want.text().unwrap_or_default();
+                    let text = want.condition();
                     let span = spans.get(j).copied().unwrap_or(at);
                     self.failed(Error::ty(
                         span,
                         format!(
-                            "can't prove `{text}` of what `{fname}` may write behind argument `{}`",
+                            "can't prove {text} of what `{fname}` may write behind argument `{}`",
                             pname(j)
                         ),
                     ));
@@ -2298,7 +2328,7 @@ impl Walk<'_> {
                         continue;
                     };
                     let span = spans.get(b.arg).copied().unwrap_or(at);
-                    let text = want.text().unwrap_or_default();
+                    let text = want.condition();
                     let behind_msg = behind_text(&text, b.arg);
                     if let Some(why) = inst.unknown_at(pos) {
                         self.failed(Error::ty(
@@ -2424,12 +2454,11 @@ impl Walk<'_> {
         }
         let behind_text = |text: &str, _: usize| {
             format!(
-                "can't prove `{text}` of what may be written through the result of `{name}`, `{ret}`"
+                "can't prove {text} of what may be written through the result of `{name}`, `{ret}`"
             )
         };
-        let arg_text = |text: &str, _: usize, _: bool| {
-            format!("can't prove `{text}` of the result of `{name}`")
-        };
+        let arg_text =
+            |text: &str, _: usize, _: bool| format!("can't prove {text} of the result of `{name}`");
         self.check_behind(
             &scheme,
             &subst,
@@ -2532,16 +2561,16 @@ impl Walk<'_> {
                     false => vec![(Vec::new(), Cand::all(have.clone()))],
                 };
                 if let Some(d) = (want.iter()).find(|d| self.implies(&have, d, pt).is_err()) {
-                    let text = d.text().unwrap_or_default();
+                    let text = d.condition();
                     let (mine, theirs) = (&srcs[*i], &srcs[*j]);
                     let msg = match mine.what == theirs.what {
                         true => format!(
-                            "can't prove `{text}` of what may be written through {}: it's of one \
+                            "can't prove {text} of what may be written through {}: it's of one \
                              type in two places, and one has it",
                             mine.what
                         ),
                         false => format!(
-                            "can't prove `{text}` of what may be written through {}: it's of the \
+                            "can't prove {text} of what may be written through {}: it's of the \
                              same type as {}, which has it",
                             mine.what, theirs.what
                         ),
@@ -2685,10 +2714,10 @@ impl Walk<'_> {
                 false => have,
             };
             if self.implies(&have, want, &pt).is_err() {
-                let text = want.text().unwrap_or_default();
+                let text = want.condition();
                 self.failed(Error::ty(
                     span,
-                    format!("can't prove `{text}` of what may be written through {what}"),
+                    format!("can't prove {text} of what may be written through {what}"),
                 ));
             }
         }
