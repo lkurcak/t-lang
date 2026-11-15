@@ -738,9 +738,10 @@ impl Walk<'_> {
                     "the `for` may stop before its iterator is used up, and drops it then: \
                      `{short}` isn't `Discard`, only {only}"
                 ),
-                Some(n) => {
-                    format!("`{n}` is dropped here, and `{short}` isn't `Discard`: only {only}")
-                }
+                Some(n) => format!(
+                    "`{}` is dropped here, and `{short}` isn't `Discard`: only {only}",
+                    super::diagnostics::bare(n)
+                ),
                 None => format!(
                     "this value is dropped here, and `{short}` isn't `Discard`: only {only}"
                 ),
@@ -1504,6 +1505,7 @@ impl Walk<'_> {
             && !p.path.is_empty()
             && let Some(name) = self.in_refined_place(p)
         {
+            let name = super::diagnostics::bare(&name);
             return Some(format!("it's in `{name}`, whose type has a refinement"));
         }
         let why = match (scoped, &place) {
@@ -1523,7 +1525,10 @@ impl Walk<'_> {
         let (e, n, _) = self.wholes_around(fr, q).into_iter().next()?;
         let name = self.level_text(fr, &e, text, n);
         Some(match name {
-            Some(name) => format!("it's in `{name}`, whose type has a refinement"),
+            Some(name) => format!(
+                "it's in `{}`, whose type has a refinement",
+                super::diagnostics::bare(&name)
+            ),
             None => "what it's in has a refinement".to_string(),
         })
     }
@@ -1739,7 +1744,10 @@ impl Walk<'_> {
             };
             if !whole.is_empty() {
                 let what = match self.level_text(fr, &e, text, n) {
-                    Some(name) if !text.is_empty() => format!("`{name}`, once `{text}` is written"),
+                    Some(name) if !text.is_empty() => format!(
+                        "`{}`, once `{text}` is written",
+                        super::diagnostics::bare(&name)
+                    ),
                     _ => "the value it's written in".to_string(),
                 };
                 self.need_tree(&part, &t, &whole, None, span, &what)?;

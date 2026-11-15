@@ -523,9 +523,11 @@ impl Checker {
                     });
                 }
                 (Some(tr), t)
-                    if crate::traits::BUILTIN_TRAITS.contains(&tr.as_str())
+                    if (crate::traits::BUILTIN_TRAITS.contains(&tr.as_str())
+                        || tr == crate::traits::DISCARD_WHEN)
                         && !matches!(t, Type::Adt(..)) =>
                 {
+                    let tr = crate::traits::shown_trait(tr);
                     return Err(Error::ty(
                         d.self_ty.span,
                         format!(
@@ -575,6 +577,16 @@ impl Checker {
                         ));
                     }
                 }
+            }
+            if let Some(bad) = mixed_effects(&self_ty, &params) {
+                return Err(Error::ty(
+                    d.self_ty.span,
+                    format!(
+                        "a set of effects in an impl's type is written out in full, or is one \
+                         effect parameter alone, not `{bad}`: so that matching a type to it \
+                         says what each parameter is (see docs/81-contradictions-and-fn-types.md)"
+                    ),
+                ));
             }
             if trait_name.is_some() {
                 parametric(d, &self_ty, &params, &bounds)?;
@@ -1108,6 +1120,23 @@ fn in_fn_bound(g: &Generics, p: &str) -> bool {
         .flat_map(|b| &b.effects)
         .flat_map(|e| &e.items)
         .any(|e| matches!(&e.kind, EffectKind::Named(n) if n.name == p))
+}
+
+/// A set of effects in impl type `t`, of parameters `params`, that's
+/// neither effects alone nor one parameter alone, if there is one: one
+/// with a parameter and more, as `{panic, e}`, could be a set at more than
+/// one `e`, and `traits::matches` decides each parameter by the type (lemma
+/// F2a of docs/81-contradictions-and-fn-types.md).
+fn mixed_effects<'t>(t: &'t Type, params: &crate::types::Params) -> Option<&'t Type> {
+    match t {
+        Type::Effects(items) => {
+            let concrete = (items.iter())
+                .all(|e| matches!(e, Type::Alloc | Type::Panic | Type::Global | Type::Unsafe));
+            let lone = matches!(items.as_slice(), [Type::Param(p, _)] if params.contains(p));
+            (!concrete && !lone).then_some(t)
+        }
+        t => t.parts().find_map(|p| mixed_effects(p, params)),
+    }
 }
 
 /// Rejects an impl's associated effect `t` with an effect parameter in it

@@ -131,6 +131,8 @@ impl Walk<'_> {
         }
     }
 
+    /// Place `p`'s name, as a predicate says it: `(*r).len()` has the
+    /// parentheses, which `bare` takes off where the name stands alone.
     pub(super) fn place_name(&self, p: &Place) -> Option<String> {
         let bind = self.cx.typed.binds.get(&p.root)?;
         let mut name = bind.name.clone();
@@ -353,4 +355,25 @@ impl Walk<'_> {
             invalidated,
         }
     }
+}
+
+/// A place's name where it stands alone in a message: `*r`, not the `(*r)`
+/// a predicate needs before a field or method.
+pub(super) fn bare(name: &str) -> &str {
+    let Some(inner) = name.strip_prefix('(').and_then(|n| n.strip_suffix(')')) else {
+        return name;
+    };
+    // The first `(` must close at the end: not `(*a).b + (*c)`.
+    let mut depth = 0;
+    for (i, c) in name.char_indices() {
+        match c {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            _ => {}
+        }
+        if depth == 0 && i + 1 < name.len() {
+            return name;
+        }
+    }
+    inner
 }

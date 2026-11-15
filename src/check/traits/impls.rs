@@ -270,6 +270,7 @@ impl Checker {
         let m = &self.modules;
         let package = m.package_root(d.module);
         let trait_package = self.trait_package(prog, tr);
+        let tr = crate::traits::shown_trait(tr);
         let head_package = self.head_package(self_ty, package);
         let tr_name = tr.rsplit("::").next().unwrap_or(tr);
         if self.traits.sealed.contains(tr) && trait_package != package {
@@ -483,7 +484,7 @@ impl Checker {
                     "`{0}` {1}, but `{2}`'s `{0}` can't, so its impls can't either",
                     f.name.name,
                     crate::check::effects::does(&more),
-                    crate::check::source_name(tr),
+                    crate::check::source_name(crate::traits::shown_trait(tr)),
                 ),
             );
             // Unless what's more is the impl's own, the trait's can say it;

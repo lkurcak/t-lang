@@ -13,4 +13,4 @@ fn main() {
     let mut s: { s: S | s.a < s.b } = S { a: 1, b: 2 };
     f(&mut s);
 }
-// error: can't prove `s.a < s.b` for `(*o)`, once `(*o).a` is written
+// error: can't prove `s.a < s.b` for `*o`, once `(*o).a` is written

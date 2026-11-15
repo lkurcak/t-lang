@@ -941,6 +941,13 @@ impl<'a> Builder<'a> {
                     }
                     Arg::Borrow(p, m, None, a.span, None)
                 }
+                // A `&mut` at a place is reborrowed, `&mut *g` (`use_place`):
+                // that borrow waits too, as it does written (lemma A4 of
+                // docs/81-contradictions-and-fn-types.md).
+                (_, None) if self.is_mut_ref_place(a) => {
+                    let p = self.place(a).project(Proj::Deref);
+                    Arg::Borrow(p, true, None, a.span, None)
+                }
                 (_, None) => {
                     let (o, t) = self.operand(a);
                     Arg::Value(o, t, a.span)
@@ -1136,11 +1143,12 @@ impl<'a> Builder<'a> {
         (Operand::Move(Place::local(tmp)), ft)
     }
 
-    fn operand_unreified(&mut self, e: &'a Expr) -> (Operand, Type) {
-        let coerced = self.cx.typed().coerced.get(&e.id).copied();
-        let local_var = |b: &Self| match &e.kind {
+    /// Is `e` a place, which `operand` uses as one (`use_place`), rather
+    /// than a value it works out?
+    fn is_operand_place(&self, e: &Expr) -> bool {
+        let local_var = match &e.kind {
             ExprKind::Var(..) => matches!(
-                b.cx.typed().vars.get(&e.id),
+                self.cx.typed().vars.get(&e.id),
                 Some(Res::Local(_) | Res::Static(_))
             ),
             _ => true,
@@ -1149,7 +1157,20 @@ impl<'a> Builder<'a> {
             e.kind,
             ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _)
         );
-        if place || (e.is_place() && local_var(self)) {
+        place || (e.is_place() && local_var)
+    }
+
+    /// Is `e`, an argument the checker didn't coerce, a `&mut` at a place,
+    /// which `operand` would reborrow there and then?
+    fn is_mut_ref_place(&self, e: &Expr) -> bool {
+        !self.cx.typed().reified.contains_key(&e.id)
+            && self.is_operand_place(e)
+            && matches!(self.erased_ty(e), Type::Ref(_, true, _))
+    }
+
+    fn operand_unreified(&mut self, e: &'a Expr) -> (Operand, Type) {
+        let coerced = self.cx.typed().coerced.get(&e.id).copied();
+        if self.is_operand_place(e) {
             let p = self.place(e);
             return match coerced {
                 Some((derefs, m)) => {
