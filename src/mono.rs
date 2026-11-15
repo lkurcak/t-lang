@@ -1461,9 +1461,19 @@ impl Cx<'_, '_, '_> {
             }
             Type::Box(inner) => format!("Box<{}>", self.copy_name(inner)),
             Type::Slice(inner) => format!("[{}]", self.copy_name(inner)),
+            // With its effects: impls for `fn(u32) -> u32` and for
+            // `fn(u32) -> u32 with panic` are two (docs/81).
             Type::Fn(sig) => {
                 let params: Vec<String> = sig.params.iter().map(|p| self.copy_name(p)).collect();
-                format!("fn({}) -> {}", params.join(", "), self.copy_name(&sig.ret))
+                let effects = match sig.effects.is_no_effects() {
+                    true => String::new(),
+                    false => format!(" with {}", crate::types::effects_text(&sig.effects)),
+                };
+                format!(
+                    "fn({}) -> {}{effects}",
+                    params.join(", "),
+                    self.copy_name(&sig.ret)
+                )
             }
             t => t.to_string(),
         }

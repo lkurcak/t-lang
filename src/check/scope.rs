@@ -142,7 +142,10 @@ pub fn source_name(symbol: &str) -> String {
             return name;
         }
         return match header.split_once(" as ") {
-            Some((ty, tr)) => format!("<{} as {tr}>::{name}", source_name(ty)),
+            Some((ty, tr)) => {
+                let tr = crate::traits::shown_trait(tr);
+                format!("<{} as {tr}>::{name}", source_name(ty))
+            }
             None => format!("{}::{name}", source_name(header)),
         };
     }

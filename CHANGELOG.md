@@ -1,5 +1,40 @@
 # Changelog
 
+## 0.96.0 (2026-11-15)
+
+Step 81: contradictions, impls on function types, argument reborrows
+(retrospective 12's batch). See
+[docs/81-contradictions-and-fn-types.md](docs/81-contradictions-and-fn-types.md).
+
+### Added
+
+- What's known on a path that can't all be true proves anything there:
+  a branch `if x < 3 { .. }` where `x > 5` is known is one no run takes,
+  so a call there of a function whose argument's type has no values
+  (`fn absurd(_u: { u: () | false }) -> !`), or an index out of bounds,
+  is accepted. Before, a goal saw only the facts sharing variables with
+  it, so `false`, `1 != 1` or `a[10]` on such a branch was refused. A
+  generic enum's refined `Discard` can now say its other variants can't
+  be there.
+- Impls for function types apply: `impl Tr for fn(u32) -> u32` is found
+  for a `fn(u32) -> u32`, and `impl<effect e> Tr for fn(u32) -> u32 with
+  e` for one with any effects. Since 0.14.0 such impls were accepted and
+  never found. Two impls for function types that could be one type
+  overlap, and are refused as any two that overlap are.
+
+### Changed
+
+- The reborrow of a `&mut` passed as an argument, `put(g, 0, at(g, 1))`
+  with `g: &mut Game`, is taken just before the call, after the other
+  arguments, as `&mut *g` written is: so that call is accepted. A borrow
+  an earlier argument keeps alive is still a clash.
+- An impl's type may say a set of effects in full, or as one effect
+  parameter alone, not both (`with {panic, e}`): an error.
+- Messages say `Discard` of an impl of `Discard` for a refined type, not
+  `DiscardWhen`, and `impl<T> Discard for { t: T | true }` gets the
+  message an impl of `Discard` for a type parameter gets. A place behind a
+  reference is `*r` where it stands alone, not `(*r)`.
+
 ## 0.95.0 (2026-11-15)
 
 Step 80: values that may be dropped when a refinement holds. See

@@ -466,6 +466,20 @@ fn could_match_in(
                 true
             }
         },
+        // As `traits::matches`: an impl's effect parameter alone is any
+        // set, and other sets are the same if equal; one with a variable
+        // or effects not inferred yet in it could be any.
+        (Type::Effects(xs), Type::Effects(ys)) => match xs.as_slice() {
+            [p @ Type::Param(name, _)] if params.contains(name) => {
+                could_match_in(p, t, params, found)
+            }
+            _ => {
+                xs == ys
+                    || ys
+                        .iter()
+                        .any(|y| matches!(y, Type::Var(_) | Type::Inferred(..)))
+            }
+        },
         _ if pat.same_shape(t) => pat
             .parts()
             .zip(t.parts())
@@ -482,6 +496,11 @@ fn bind_params(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<Stri
             found.entry(p.clone()).or_insert_with(|| t.clone());
         }
         (_, Type::Var(_)) => {}
+        (Type::Effects(xs), Type::Effects(_)) => {
+            if let [p @ Type::Param(..)] = xs.as_slice() {
+                bind_params(p, t, params, found);
+            }
+        }
         _ if pat.same_shape(t) => {
             for (p, q) in pat.parts().zip(t.parts()) {
                 bind_params(p, q, params, found);

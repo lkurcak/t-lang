@@ -14,4 +14,4 @@ fn main() {
     let mut w: { w: W | w.x.a < w.y } = W { x: S { a: 1, b: 2 }, y: 3 };
     f(&mut w);
 }
-// error: can't prove `w.x.a < w.y` for `(*o)`, once `(*o).x.a` is written
+// error: can't prove `w.x.a < w.y` for `*o`, once `(*o).x.a` is written

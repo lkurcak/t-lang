@@ -46,6 +46,15 @@ pub const DISCARD: &str = "core::mem::Discard";
 /// impl of. Its values that the refinement holds of may be dropped where
 /// that's proved (see docs/80-discard-when.md). Never a bound.
 pub const DISCARD_WHEN: &str = "core::mem::DiscardWhen";
+
+/// Trait `tr` as messages name it: `DiscardWhen`, which no program can
+/// write, is `Discard`, of a refined type.
+pub fn shown_trait(tr: &str) -> &str {
+    match tr == DISCARD_WHEN {
+        true => DISCARD,
+        false => tr,
+    }
+}
 /// `core::mem::Copy`: a type's values are copied rather than moved, which
 /// needs `Discard`.
 pub const COPY: &str = "core::mem::Copy";
@@ -1548,6 +1557,13 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 ///   for &[i64]` don't overlap, and the checker and monomorphisation find
 ///   the same one. An `unsized` parameter matches any type (lemma U5 of
 ///   docs/57-unsized-parameters.md).
+/// - A set of effects matches one with the same effects, as sets
+///   (`Type::effects` keeps them sorted, without repeats); an impl's
+///   effect parameter alone matches any set, and an impl's type has no
+///   other kind of set (`mixed_effects`), so what the parameter is is a
+///   function of the type too (lemma F2a of
+///   docs/81-contradictions-and-fn-types.md). A set in generic code with
+///   one of its own parameters in it is matched only by such a parameter.
 /// - A const parameter only ever meets a length, a `Type::Nat`, a const
 ///   item (`Type::Const`) or another const parameter, as kinds keep types
 ///   and lengths apart
@@ -1573,6 +1589,16 @@ pub fn matches(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<Stri
                 found.insert(p.clone(), t.clone());
                 true
             }
+        },
+        // A set of effects is the same as another with the same effects,
+        // whatever order they're written in: `Type::effects` sorts them.
+        // One that's an impl's effect parameter alone stands for any set;
+        // an impl's type has no others (`check_header_effects`), so which
+        // set the parameter is is a function of the type (lemma F2a of
+        // docs/81-contradictions-and-fn-types.md).
+        Type::Effects(items) => match items.as_slice() {
+            [p @ Type::Param(name, _)] if params.contains(name) => matches(p, t, params, found),
+            _ => pat == t,
         },
         _ if !pat.same_shape(t) => false,
         _ => pat
@@ -1771,12 +1797,45 @@ fn unify(a: &Type, b: &Type, params: &[String], s: &mut HashMap<String, Type>) -
             s.insert(p.clone(), t.clone());
             true
         }
+        (Type::Effects(xs), Type::Effects(ys)) => unify_effects(xs, ys, params, s),
         _ if a.same_shape(&b) => a
             .parts()
             .zip(b.parts())
             .all(|(p, q)| unify(p, q, params, s)),
         _ => false,
     }
+}
+
+/// `unify` of two sets of effects, `xs` and `ys`: one that's a variable
+/// alone is the other set, and two sets of the effects there are, or of
+/// parameters that aren't variables, are the same only if equal. Any other
+/// two may be the same, as far as this says: so it never says two can't
+/// be when they can (lemma F2b of docs/81-contradictions-and-fn-types.md), only fails
+/// to say what each variable is then.
+fn unify_effects(
+    xs: &[Type],
+    ys: &[Type],
+    params: &[String],
+    s: &mut HashMap<String, Type>,
+) -> bool {
+    let var = |t: &Type| matches!(t, Type::Param(p, _) if params.contains(p));
+    match (xs, ys) {
+        ([x], _) if var(x) => unify(x, &Type::Effects(ys.to_vec()), params, s),
+        (_, [y]) if var(y) => unify(&Type::Effects(xs.to_vec()), y, params, s),
+        _ if known_effects(xs, params) && known_effects(ys, params) => xs == ys,
+        _ => true,
+    }
+}
+
+/// Is each of `items` an effect, or a type parameter that isn't one of the
+/// variables `params`: so a set of them is the same as another only if
+/// they're equal?
+fn known_effects(items: &[Type], params: &[String]) -> bool {
+    items.iter().all(|t| match t {
+        Type::Alloc | Type::Panic | Type::Global | Type::Unsafe => true,
+        Type::Param(p, _) => !params.contains(p),
+        _ => false,
+    })
 }
 
 /// Could `a` and `b` be the same type, for some choice of the type
@@ -1789,6 +1848,15 @@ fn may_unify(a: &Type, b: &Type) -> bool {
     let any = |t: &Type| matches!(t, Type::Param(..) | Type::Nat(_) | Type::Const(_));
     if any(a) || any(b) {
         return true;
+    }
+    if let (Type::Effects(xs), Type::Effects(ys)) = (a, b) {
+        // As `unify_effects`, with every parameter a variable: only two
+        // sets of effects alone are apart, if they differ.
+        let concrete = |items: &[Type]| {
+            (items.iter())
+                .all(|t| matches!(t, Type::Alloc | Type::Panic | Type::Global | Type::Unsafe))
+        };
+        return !(concrete(xs) && concrete(ys)) || xs == ys;
     }
     a.same_shape(b) && a.parts().zip(b.parts()).all(|(p, q)| may_unify(p, q))
 }

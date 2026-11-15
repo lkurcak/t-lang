@@ -12,4 +12,4 @@ fn main() {
     let mut s: { s: S | s.a < s.b } = S { a: 1, b: 2 };
     f(&mut s);
 }
-// error: can't bind `a` by `&mut`: it's in `(*o)`, whose type has a refinement, which a write through the reference could break
+// error: can't bind `a` by `&mut`: it's in `*o`, whose type has a refinement, which a write through the reference could break

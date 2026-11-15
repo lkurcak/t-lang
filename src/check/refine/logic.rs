@@ -658,7 +658,110 @@ const MAX_CONSTRAINTS: usize = 400;
 /// Proves `goal` from `facts`, where variable `v` is of kind `kinds[v]`.
 /// Only `Ok(())` establishes it; an error never establishes its negation.
 pub(crate) fn valid(facts: &[Formula], goal: &Formula, kinds: &[Kind]) -> Result<(), Failure> {
-    let (parts, layer) = connected(facts, goal, kinds);
+    let (parts, layer, taken) = connected_taken(facts, goal, kinds);
+    let failed = match from_connected(parts, layer, goal, kinds) {
+        Ok(()) => return Ok(()),
+        Err(failed) => failed,
+    };
+    // The facts left out can be made true on their own, unless they're
+    // contradictory: then no run gets here, and every goal holds here
+    // (lemma P3a of docs/81-contradictions-and-fn-types.md). Each group of them that
+    // shares variables can be made true apart from the others, so they're
+    // contradictory if one group is (P3b), and each is tried on its own.
+    // Only once the goal's own facts fail: a proof is the same as before
+    // wherever it was found then.
+    let rest: Vec<&Formula> = (facts.iter().zip(&taken))
+        .filter(|&(_, &t)| !t)
+        .map(|(f, _)| f)
+        .collect();
+    for group in components(&rest, kinds) {
+        if contradictory(&group, kinds) {
+            return Ok(());
+        }
+    }
+    Err(failed)
+}
+
+/// Is the conjunction of `facts` false, whatever its variables are? Only
+/// `true` establishes it: running out of cases or arithmetic says `false`.
+fn contradictory(facts: &[&Formula], kinds: &[Kind]) -> bool {
+    let Some(known) = Formula::and(facts.iter().map(|&f| f.clone())).nnf(false) else {
+        return false;
+    };
+    let mut todo: Vec<(Formula, Deps)> = match known {
+        Formula::And(fs) => fs.into_iter().map(|f| (f, 0)).collect(),
+        f => vec![(f, 0)],
+    };
+    let mut cases = 0;
+    let mut kinds = kinds.to_vec();
+    matches!(
+        refuted(&mut todo, &mut Vec::new(), &mut kinds, &mut cases, 0, false),
+        Ok(Some(_))
+    )
+}
+
+/// `facts` in groups that share no variable, a product sharing its
+/// factors' (as in `connected`), each in their original order, the groups
+/// in the order of their first facts.
+fn components<'a>(facts: &[&'a Formula], kinds: &[Kind]) -> Vec<Vec<&'a Formula>> {
+    // Union–find over the facts: two are in one group if they share a
+    // variable.
+    let mut parent: Vec<usize> = (0..facts.len()).collect();
+    fn root(parent: &mut [usize], mut i: usize) -> usize {
+        while parent[i] != i {
+            parent[i] = parent[parent[i]];
+            i = parent[i];
+        }
+        i
+    }
+    let mut owner: HashMap<Var, usize> = HashMap::new();
+    for (i, f) in facts.iter().enumerate() {
+        let mut vs = Vec::new();
+        f.vars(&mut vs);
+        with_factors(&mut vs, kinds);
+        for v in vs {
+            match owner.get(&v) {
+                Some(&j) => {
+                    let (a, b) = (root(&mut parent, i), root(&mut parent, j));
+                    parent[a.max(b)] = a.min(b);
+                }
+                None => {
+                    owner.insert(v, i);
+                }
+            }
+        }
+    }
+    let mut groups: Vec<Vec<&Formula>> = Vec::new();
+    let mut index: HashMap<usize, usize> = HashMap::new();
+    for (i, f) in facts.iter().enumerate() {
+        let r = root(&mut parent, i);
+        let g = *index.entry(r).or_insert_with(|| {
+            groups.push(Vec::new());
+            groups.len() - 1
+        });
+        groups[g].push(f);
+    }
+    groups
+}
+
+/// `vs`, with the factors of each product in it, and theirs, and so on.
+fn with_factors(vs: &mut Vec<Var>, kinds: &[Kind]) {
+    let mut i = 0;
+    while i < vs.len() {
+        if let Some(Kind::Product(u, v)) = kinds.get(vs[i] as usize) {
+            vs.extend([*u, *v]);
+        }
+        i += 1;
+    }
+}
+
+/// `valid`, from the facts `connected` to the goal, `parts`.
+fn from_connected(
+    parts: Vec<&Formula>,
+    layer: HashMap<Var, usize>,
+    goal: &Formula,
+    kinds: &[Kind],
+) -> Result<(), Failure> {
     let known = Formula::and(parts.into_iter().cloned())
         .nnf(false)
         .ok_or(Failure::ArithmeticLimit)?;
@@ -709,29 +812,31 @@ fn connected<'a>(
     goal: &Formula,
     kinds: &[Kind],
 ) -> (Vec<&'a Formula>, HashMap<Var, usize>) {
+    let (facts, layer, _) = connected_taken(facts, goal, kinds);
+    (facts, layer)
+}
+
+/// `connected`, and which of `facts` it took.
+fn connected_taken<'a>(
+    facts: &'a [Formula],
+    goal: &Formula,
+    kinds: &[Kind],
+) -> (Vec<&'a Formula>, HashMap<Var, usize>, Vec<bool>) {
     // Only the facts that share variables with the goal, or with facts that
-    // do, and so on, can matter: the rest can be made true on their own.
-    // A fact with no variables at all, `false` on a path that can't be
-    // taken, matters by itself. A product shares its factors' variables:
-    // what bounds them bounds it (`lemmas`).
-    let with_factors = |vs: &mut Vec<Var>| {
-        let mut i = 0;
-        while i < vs.len() {
-            if let Some(Kind::Product(u, v)) = kinds.get(vs[i] as usize) {
-                vs.extend([*u, *v]);
-            }
-            i += 1;
-        }
-    };
+    // do, and so on, can matter to a proof from them: the rest can be made
+    // true on their own, unless they're contradictory, which `valid` asks
+    // only when this fails. A fact with no variables at all, `false` on a
+    // path that can't be taken, matters by itself. A product shares its
+    // factors' variables: what bounds them bounds it (`lemmas`).
     let mut wanted = Vec::new();
     goal.vars(&mut wanted);
-    with_factors(&mut wanted);
+    with_factors(&mut wanted, kinds);
     let vars_of: Vec<Vec<Var>> = facts
         .iter()
         .map(|f| {
             let mut vs = Vec::new();
             f.vars(&mut vs);
-            with_factors(&mut vs);
+            with_factors(&mut vs, kinds);
             vs
         })
         .collect();
@@ -756,13 +861,13 @@ fn connected<'a>(
             layer.entry(v).or_insert(depth);
         }
     }
-    let facts = facts
+    let kept = facts
         .iter()
         .zip(&taken)
         .filter(|&(_, &t)| t)
         .map(|(f, _)| f)
         .collect();
-    (facts, layer)
+    (kept, layer, taken)
 }
 
 /// The most lemmas `lemmas` adds to one proof.
