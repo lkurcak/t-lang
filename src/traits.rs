@@ -42,6 +42,10 @@ impl fmt::Display for Pred {
 /// `core::mem::Discard`: a type's values may be thrown away rather than
 /// used up (see docs/06a.1-linear-types.md).
 pub const DISCARD: &str = "core::mem::Discard";
+/// `core::mem::DiscardWhen`: what `impl Discard for { v: T | .. }` is an
+/// impl of. Its values that the refinement holds of may be dropped where
+/// that's proved (see docs/80-discard-when.md). Never a bound.
+pub const DISCARD_WHEN: &str = "core::mem::DiscardWhen";
 /// `core::mem::Copy`: a type's values are copied rather than moved, which
 /// needs `Discard`.
 pub const COPY: &str = "core::mem::Copy";
@@ -517,6 +521,17 @@ impl Traits {
                 && d.trait_name.as_deref() == Some(DISCARD)
                 && matches!(&d.self_ty, Type::Adt(s, ..) if s == symbol)
         })
+    }
+
+    /// Does struct or enum `symbol` have an impl of `Discard` for a
+    /// refined type (`DiscardWhen`)? Then dropping a value of it may call
+    /// that impl's `discard`, which may do what any of its own may: read
+    /// what its references point to, or write behind a `&mut` in it
+    /// (lemma W6 of docs/80-discard-when.md).
+    pub fn when_discard(&self, symbol: &str) -> bool {
+        self.impls
+            .of_trait(Some(DISCARD_WHEN))
+            .any(|(_, d)| matches!(&d.self_ty, Type::Adt(s, ..) if s == symbol))
     }
 
     /// `text`, a message, with each trait the prelude brings in named by

@@ -693,12 +693,21 @@ impl Checker {
                     true => (b, a),
                     false => (a, b),
                 };
-                let what = |d: &ImplDef| match d.derived {
-                    true => format!("the `#[derive({tr})]`"),
-                    false => format!("`impl {}`", d.header()),
+                // An impl of `Discard` for a refined type is written as one.
+                let when = tr == crate::traits::DISCARD_WHEN;
+                let what = |d: &ImplDef| match (d.derived, when) {
+                    (true, _) => format!("the `#[derive({tr})]`"),
+                    (false, true) => "the other".to_string(),
+                    (false, false) => format!("`impl {}`", d.header()),
                 };
                 let same = a.self_ty.erased() == b.self_ty.erased();
                 let message = match same {
+                    true if when => format!(
+                        "`{}` implements `Discard` for a refined type twice: here and in {}; say \
+                         both in one refinement, with `||`",
+                        a.self_ty,
+                        what(b)
+                    ),
                     true => format!(
                         "`{}` implements `{tr}` twice: here and in {}",
                         a.self_ty,

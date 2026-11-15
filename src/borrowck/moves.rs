@@ -17,7 +17,7 @@ use crate::error::{Edit, Error, Fix, Span};
 use crate::mir::*;
 use crate::traits::DISCARD;
 use crate::types::{Type, struct_fields, variant_fields};
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 /// The places moved out of, each with where, in order.
 type Moved = BTreeMap<Place, Span>;
@@ -717,25 +717,41 @@ enum Dropped {
 /// parameter, whose fields it must use up, each said by name (`leftover`).
 /// So every closure called by `&` or `&mut` may be dropped, which a call of
 /// it as `FnOnce` does, after.
-pub(crate) fn linear(b: &Builder) -> Result<(), Error> {
+///
+/// A part whose type isn't `Discard`, but has an impl of `Discard` for a
+/// refined type (`DiscardWhen`), may be dropped where that refinement
+/// holds of it: what's returned, by statement, is each such part, which
+/// the refinement checker proves it of there (lemma W1 of
+/// docs/80-discard-when.md). Drop elaboration drops it by that impl's
+/// `discard`, whose `self` the refinement is of.
+pub(crate) fn linear(b: &Builder) -> Result<HashMap<Point, Vec<Place>>, Error> {
     let body = &b.body;
     let ins = gone_states(b);
     let mut first: Option<Error> = None;
+    let mut when: HashMap<Point, Vec<Place>> = HashMap::new();
     for (bb, block) in body.blocks.iter().enumerate() {
         let Some(mut state) = ins[bb].clone() else {
             continue;
         };
-        for s in &block.stmts {
-            if let Err(e) = gone(b, &mut state, s, true)
+        for (index, s) in block.stmts.iter().enumerate() {
+            let mut parts = Vec::new();
+            if let Err(e) = gone(b, &mut state, s, Some(&mut parts))
                 && first.as_ref().is_none_or(|f| e.span.start < f.span.start)
             {
                 first = Some(e);
+            }
+            if !parts.is_empty() {
+                let at = Point {
+                    block: Bb(bb),
+                    index,
+                };
+                when.insert(at, parts);
             }
         }
     }
     match first {
         Some(e) => Err(e),
-        None => Ok(()),
+        None => Ok(when),
     }
 }
 
@@ -759,7 +775,7 @@ fn gone_states(b: &Builder) -> Vec<Option<Gone>> {
     while let Some(bb) = todo.pop() {
         let mut state = ins[bb].clone().expect("reached");
         for s in &body.blocks[bb].stmts {
-            let _ = gone(b, &mut state, s, false);
+            let _ = gone(b, &mut state, s, None);
         }
         for succ in body.successors(Bb(bb)) {
             let new = match &ins[succ.0] {
@@ -828,7 +844,7 @@ pub(crate) fn drop_uses(b: &Builder) -> HashSet<Point> {
                     out.insert(point);
                 }
             }
-            let _ = gone(b, &mut state, s, false);
+            let _ = gone(b, &mut state, s, None);
         }
     }
     out
@@ -840,7 +856,11 @@ pub(crate) fn drop_uses(b: &Builder) -> HashSet<Point> {
 /// hold itself.
 fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
     match t {
-        Type::Adt(symbol, ..) if b.cx.traits().own_discard(symbol) => true,
+        Type::Adt(symbol, ..)
+            if b.cx.traits().own_discard(symbol) || b.cx.traits().when_discard(symbol) =>
+        {
+            true
+        }
         Type::Adt(symbol, ..) if crate::types::is_closure(symbol) => {
             let c = &b.cx.traits().closures;
             c.get(symbol).is_some_and(|c| {
@@ -886,9 +906,15 @@ fn reaches_own_discard(b: &Builder, t: &Type, seen: &mut Vec<Type>) -> bool {
 }
 
 /// What statement `s` does to `state`, and if `check`, the error if it
-/// throws away what it can't. Moving out of a place comes before giving
-/// it a new value: `x = f(x)` throws nothing away.
-fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(), Error> {
+/// throws away what it can't, and in it, the parts it drops that a
+/// refinement must hold of (see `linear`). Moving out of a place comes
+/// before giving it a new value: `x = f(x)` throws nothing away.
+fn gone(
+    b: &Builder,
+    state: &mut Gone,
+    s: &Statement,
+    check: Option<&mut Vec<Place>>,
+) -> Result<(), Error> {
     let away = |state: &mut Gone, p: Place| {
         state.may.retain(|m, _| !m.within(&p));
         state.may.insert(p.clone(), s.span);
@@ -901,8 +927,8 @@ fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(),
                     away(state, owned(b, p).0);
                 }
             }
-            if check {
-                dropped(b, state, place, Dropped::Assign, s.span)?;
+            if let Some(when) = check {
+                dropped(b, state, place, Dropped::Assign, s.span, when)?;
             }
             let (owned, behind) = owned(b, place);
             if !behind {
@@ -911,14 +937,14 @@ fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(),
             }
         }
         StmtKind::Consume(p, variant) => {
-            if check {
-                dropped(b, state, p, Dropped::Consume(*variant), s.span)?;
+            if let Some(when) = check {
+                dropped(b, state, p, Dropped::Consume(*variant), s.span, when)?;
             }
             away(state, p.clone());
         }
         StmtKind::Dead(l) => {
-            if check {
-                dropped(b, state, &Place::local(*l), Dropped::Dead, s.span)?;
+            if let Some(when) = check {
+                dropped(b, state, &Place::local(*l), Dropped::Dead, s.span, when)?;
             }
             away(state, Place::local(*l));
         }
@@ -936,12 +962,14 @@ fn gone(b: &Builder, state: &mut Gone, s: &Statement, check: bool) -> Result<(),
 /// and isn't gone, if there is one: what dropping it would throw away. A
 /// value that's been taken apart, by moving out of some of it, or by
 /// `consumed`, a pattern, of the variant it says if it's an enum, has only
-/// its parts left to check.
+/// its parts left to check. A part of a type with an impl of `Discard`
+/// for a refined type goes in `when`, as it may be dropped if that holds.
 fn leftover(
     b: &Builder,
     must: &BTreeSet<Place>,
     place: &Place,
     consumed: Option<Option<usize>>,
+    when: &mut Vec<Place>,
 ) -> Option<Place> {
     if covered(must, place) {
         return None;
@@ -954,6 +982,13 @@ fn leftover(
         && place == &Place::local(Local(1))
         && b.body.locals[1].name.as_deref() == Some("self");
     if b.cx.is_discard(&t) && !own {
+        return None;
+    }
+    // A whole value, not taken apart, of a type that may be thrown away
+    // where a refinement holds of it: if it does, there.
+    let whole = consumed.is_none() && !must.iter().any(|m| m.within(place) && m != place);
+    if whole && !own && b.cx.is_discard_when(&t) {
+        when.push(place.clone());
         return None;
     }
     let consumed = match own {
@@ -999,7 +1034,15 @@ fn leftover(
         },
         _ => return Some(place.clone()),
     };
-    parts.iter().find_map(|p| leftover(b, must, p, None))
+    let mut found = None;
+    for p in &parts {
+        let mut inner = Vec::new();
+        if let Some(q) = leftover(b, must, p, None, &mut inner) {
+            found = found.or(Some(q));
+        }
+        when.extend(inner);
+    }
+    found
 }
 
 /// Checks that dropping the value at `place`, at `span`, for `why`,
@@ -1010,12 +1053,13 @@ fn dropped(
     place: &Place,
     why: Dropped,
     span: Span,
+    when: &mut Vec<Place>,
 ) -> Result<(), Error> {
     let consumed = match why {
         Dropped::Consume(v) => Some(v),
         _ => None,
     };
-    let Some(q) = leftover(b, &state.must, place, consumed) else {
+    let Some(q) = leftover(b, &state.must, place, consumed, when) else {
         return Ok(());
     };
     let t = b.place_ty(&q);

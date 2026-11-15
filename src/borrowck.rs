@@ -357,8 +357,9 @@ fn analyze(
         }
     }
     // What's used up is only worth asking once what's moved is right.
-    if let Err(e) = moves::moves(b).and_then(|()| moves::linear(b)) {
-        errors.push(e);
+    match moves::moves(b).and_then(|()| moves::linear(b)) {
+        Ok(when) => b.notes.drops_when = when,
+        Err(e) => errors.push(e),
     }
     b.body.drop_uses = moves::drop_uses(b);
     // That a region of an opaque type's can't be one of the function's

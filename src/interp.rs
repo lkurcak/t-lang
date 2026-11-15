@@ -587,9 +587,12 @@ fn int_ty(t: &TypeExpr) -> IntTy {
     }
 }
 
-/// Is function `f` a copy of an impl's `discard`?
+/// Is function `f` a copy of an impl's `discard`: of `Discard`, or of
+/// `Discard` for a refined type (`DiscardWhen`)?
 fn is_discard_fn(f: &str) -> bool {
-    f.ends_with(&format!(" as {}>::discard", crate::traits::DISCARD))
+    [crate::traits::DISCARD, crate::traits::DISCARD_WHEN]
+        .iter()
+        .any(|tr| f.ends_with(&format!(" as {tr}>::discard")))
 }
 
 fn bool(v: Value) -> bool {
@@ -1503,9 +1506,13 @@ impl<'p> Interp<'p, '_> {
         if let Value::RawBuf(_) = v {
             unsound("a `RawBuf` was thrown away, and it isn't `Discard`: a leak");
         }
+        // One that isn't `Discard` may be thrown away by its impl of
+        // `Discard` for a refined type, whose `discard` checks that holds
+        // of it first (lemma W3 of docs/80-discard-when.md).
         if let Value::Struct(ty, _) | Value::Variant(ty, ..) = &v
             && !is_tuple(ty)
             && !self.discard.contains(ty.as_str())
+            && self.discard_when(ty).is_none()
         {
             unsound(&format!(
                 "a `{}` was thrown away, and it isn't `Discard`: a leak",
@@ -1561,6 +1568,13 @@ impl<'p> Interp<'p, '_> {
 
     fn user_discard(&self, ty: &str) -> Option<String> {
         let name = format!("<{ty} as {}>::discard", crate::traits::DISCARD);
+        self.fns.contains_key(name.as_str()).then_some(name)
+    }
+
+    /// The `discard` of an impl of `Discard` for a refined type that's of
+    /// type `ty`, which isn't `Discard`, if it has one.
+    fn discard_when(&self, ty: &str) -> Option<String> {
+        let name = format!("<{ty} as {}>::discard", crate::traits::DISCARD_WHEN);
         self.fns.contains_key(name.as_str()).then_some(name)
     }
 
@@ -1946,8 +1960,11 @@ impl<'p> Interp<'p, '_> {
         // What's in a refined variable can change through a call it's lent
         // to, which no assignment says: its refinement, and what's said of
         // every value at a position of it, is checked again each time it's
-        // used.
-        if let Some(r) = self.refined.get(&(p.slot, p.generation)) {
+        // used. Not once it's been taken apart, as the `self` of a
+        // `discard` is, which is never read whole again.
+        if let Some(r) = self.refined.get(&(p.slot, p.generation))
+            && !self.taken_apart(self.memory.get(&p))
+        {
             r.check(self, self.memory.get(&p), "a refined variable used");
         }
         for proj in &place.proj {

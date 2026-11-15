@@ -110,6 +110,10 @@ pub(crate) struct Notes {
     /// elaboration will drop them (`borrowck::drops::may_drop`): only in
     /// the copy kept for the refinement checker.
     pub(crate) drops: std::collections::HashMap<Point, Vec<Place>>,
+    /// By statement, the places it drops by an impl of `Discard` for a
+    /// refined type, whose refinement must hold of them there
+    /// (`borrowck::moves::linear`, lemma W1 of docs/80-discard-when.md).
+    pub(crate) drops_when: std::collections::HashMap<Point, Vec<Place>>,
 }
 
 /// A loop, as the refinement checker sees it.

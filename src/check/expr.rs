@@ -1898,7 +1898,10 @@ impl Checker {
         }
         let (env, eqs) = (&self.adts.proj.env, &self.adts.proj.local);
         let implements = |tr: &str| self.traits.implements(t, tr, env, eqs).is_ok();
-        if !implements(ITERATOR) || implements(DISCARD) {
+        // One that may be thrown away when it's used up, by an impl of
+        // `Discard` for a refined type, is the refinement checker's to say
+        // of where the loop ends (docs/80-discard-when.md).
+        if !implements(ITERATOR) || implements(DISCARD) || implements(crate::traits::DISCARD_WHEN) {
             return Ok(());
         }
         Err(Error::ty(
