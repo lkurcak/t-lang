@@ -27,7 +27,7 @@ Now:
 #[derive(Discard)]
 struct Run { name: alloc::string::String, ms: u64, clock: u64 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let run = Run { name: alloc::string::String::from("pool"), ms: 1234, clock: 7 };
     let name = run.name;

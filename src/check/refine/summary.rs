@@ -28,7 +28,9 @@ pub(super) struct Ret {
 
 /// What every run of a closure's body gives back: one of `rets`, of type
 /// `ty`, what they name from `vars` and `objs` on made in the run, but
-/// what's in `keep`.
+/// what's in `keep`. Its `params` are the values its parameters were in
+/// the walk, if it took them as any values of their types, as a walk at
+/// its making does: then what it says holds whatever the arguments are.
 #[derive(Debug)]
 pub(super) struct Summary {
     pub(super) rets: Vec<Ret>,
@@ -37,6 +39,17 @@ pub(super) struct Summary {
     objs: Obj,
     keep: HashSet<Var>,
     keep_objs: HashSet<Obj>,
+    params: Option<Vec<Val>>,
+}
+
+/// What calling a value of a closure's or a function's type gives
+/// (docs/78-callable-values.md), kept by the value's object
+/// (`Walk::callables`): a closure's summary, from the walk at its making,
+/// or the function it is, at its type arguments.
+#[derive(Debug, Clone)]
+pub(super) enum Callable {
+    Closure(Rc<Summary>),
+    Fn(String, Vec<Type>),
 }
 
 /// One case of an instantiation, from a closure's summary: a value at
@@ -56,6 +69,29 @@ struct Fresh {
 }
 
 impl Walk<'_> {
+    /// The object that's function `symbol`'s value at type arguments
+    /// `targs` (lemma V3 of docs/78-callable-values.md).
+    pub(super) fn fn_obj(&mut self, symbol: &str, targs: Vec<Type>) -> Obj {
+        let key = (symbol.to_string(), targs);
+        if let Some(&o) = self.fn_objs.get(&key) {
+            return o;
+        }
+        let o = self.new_obj();
+        self.callables
+            .insert(o, Callable::Fn(key.0.clone(), key.1.clone()));
+        self.fn_objs.insert(key, o);
+        o
+    }
+
+    /// What calling value `v` gives, if it's known: a closure's or a
+    /// function's.
+    pub(super) fn callable(&self, v: &Val) -> Option<Callable> {
+        match v {
+            Val::Struct(o, _) | Val::Obj(o) => self.callables.get(o).cloned(),
+            _ => None,
+        }
+    }
+
     /// Where a closure's walk starts: the variables and objects from here
     /// on are made by it.
     pub(super) fn summary_start(&self) -> (Var, Obj) {
@@ -64,8 +100,15 @@ impl Walk<'_> {
 
     /// The summary of a closure whose walk started at `start`, gave back
     /// values of type `ty`, and returned with `rets`, what was known at
-    /// each: of those facts, the ones about what the walk made.
-    pub(super) fn summary(&mut self, start: (Var, Obj), ty: Type, rets: Vec<Ret>) -> Summary {
+    /// each: of those facts, the ones about what the walk made. Its
+    /// parameters were `params`, if it took them as any values.
+    pub(super) fn summary(
+        &mut self,
+        start: (Var, Obj),
+        ty: Type,
+        rets: Vec<Ret>,
+        params: Option<Vec<Val>>,
+    ) -> Summary {
         let (vars, objs) = start;
         let (keep, keep_objs) = self.kept(vars, objs);
         let made = |v: Var| v >= vars && !keep.contains(&v);
@@ -88,6 +131,7 @@ impl Walk<'_> {
             objs,
             keep,
             keep_objs,
+            params,
         }
     }
 
@@ -105,6 +149,9 @@ impl Walk<'_> {
         for v in self.consts.values() {
             val_vars(v, &mut keep);
         }
+        // A function's value is the same in every run (lemma V3 of
+        // docs/78-callable-values.md).
+        keep_objs.extend(self.fn_objs.values());
         // The values that are functions of a value from before.
         let mut todo: Vec<Obj> = Vec::new();
         let outer = |o: Obj| o < objs;
@@ -180,6 +227,55 @@ impl Walk<'_> {
         Some(Formula::and(all))
     }
 
+    /// What a call of a closure whose summary is `s`, with arguments
+    /// `args`, gives, of type `ty`: what one of its returns gave, of new
+    /// variables and objects for what the run made (lemma C1), and, if it
+    /// took its parameters as any values, each of an integer's or a
+    /// `bool`'s being its argument (lemma V2 of docs/78-callable-values.md).
+    pub(super) fn summary_call(&mut self, s: &Rc<Summary>, args: &[Val], ty: &Type) -> Val {
+        let mut cases: Vec<(Val, Vec<Formula>)> = Vec::new();
+        for ret in &s.rets {
+            let mut fresh = Fresh {
+                vars: HashMap::new(),
+                objs: HashMap::new(),
+            };
+            let val = self.freshen_val(s, &mut fresh, &ret.val);
+            let mut facts: Vec<Formula> = (ret.facts.iter())
+                .map(|f| f.rename(&mut |x| self.freshen_var(s, &mut fresh, x)))
+                .collect();
+            for (p, a) in s.params.iter().flatten().zip(args) {
+                if let (Val::Int(_), Val::Int(_)) | (Val::Bool(_), Val::Bool(_)) = (p, a) {
+                    let p = self.freshen_val(s, &mut fresh, p);
+                    facts.extend(equal(&p, a));
+                }
+            }
+            cases.push((val, facts));
+        }
+        match cases.len() {
+            1 => {
+                let (val, facts) = cases.pop().expect("one");
+                if matches!(val, Val::Other) {
+                    let v = self.unknown(ty);
+                    facts.into_iter().for_each(|f| self.fact(f));
+                    return v;
+                }
+                facts.into_iter().for_each(|f| self.fact(f));
+                val
+            }
+            _ => {
+                let v = self.unknown(ty);
+                let mut any = Vec::new();
+                for (w, mut facts) in cases {
+                    facts.extend(self.same(&v, &w));
+                    any.push(Formula::and(facts));
+                }
+                // No return: no run gives anything back.
+                self.fact(Formula::or(any));
+                v
+            }
+        }
+    }
+
     /// Variable `x`, renamed: one the run made, to a new one.
     fn freshen_var(&mut self, s: &Summary, fresh: &mut Fresh, x: Var) -> Var {
         if x < s.vars || s.keep.contains(&x) {
@@ -187,6 +283,18 @@ impl Walk<'_> {
         }
         if let Some(&y) = fresh.vars.get(&x) {
             return y;
+        }
+        // A quotient is of the sum, whichever values it's of: the new
+        // sum's, whose law says what it is (`Walk::divide`).
+        let quotient = (self.quotients.iter())
+            .find(|(_, q)| **q == x)
+            .map(|((a, m), _)| (a.clone(), *m));
+        if let Some((a, m)) = quotient {
+            let a = self.freshen_lin(s, fresh, &a);
+            if let Some(y) = self.divide(BinOp::Div, &a, m).and_then(|q| q.as_var()) {
+                fresh.vars.insert(x, y);
+                return y;
+            }
         }
         let y = match self.kinds[x as usize].clone() {
             // A product is of the two values, whichever they are.

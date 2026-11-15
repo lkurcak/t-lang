@@ -215,6 +215,8 @@ fn main() {
 ```
 
 A refined *result* is fine as a value: forgetting what's known is sound.
+And where the value is known to be that function, a call through it
+keeps what's known (docs/78-callable-values.md).
 
 There's no way to say "trust me": when the checker can't prove something
 true, a branch on it (`if d > 0 { .. } else { .. }`) makes it known, and

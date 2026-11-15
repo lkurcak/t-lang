@@ -634,6 +634,16 @@ other bound, and only whole or in enums' fields in the signature: each in
 the result is one of those (`o.unwrap()` is what's in `o`, and `?` gives
 what's in the `Some` or `Ok`, so a function with a refined result can use
 it). See [free theorems](55-free-theorems.md).
+What a closure gives back is what its body knows where it returns, of
+every run: given for a type parameter `F` that's the only way the callee
+gets an `F`, its results are among what the call gives back
+(`call(|| five())` is above 0), and called, `f(..)`, it gives that, its
+integer and `bool` parameters being the arguments. A closure's value
+keeps this wherever it's moved, copied or captured, and a function's
+value is that function: `p()` is a call of it, and given for `F` it's
+as the closure `|x| g(x)` written in the call. See [refined
+instantiation](74-refined-instantiation.md) and [callable
+values](78-callable-values.md).
 Mutation, mutable lending, and loop iterations can invalidate facts
 about a previous value. Capture a current value and check it again when
 needed. At a loop's head, what the loop changes is forgotten except what
