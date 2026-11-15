@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.94.2 (2026-11-15)
+
+No change to the language: `t check` is faster, by checking the bodies of
+core, alloc and std only as far as checking a program sees them (`t check`
+of `fn main() {}`: ~195 ms to ~90 ms; of t-chess, ~430 ms to ~325 ms). It
+finds the same errors and warnings in every program. A program whose
+const or static calls a library function is checked a little more slowly
+than before, as working that out then has the libraries' bodies checked
+in full.
+
+### Changed
+
+- `t check` types the libraries' function bodies, but doesn't check their
+  borrows, proofs or effects, nor build their MIR, unless a program's
+  checking sees more of them than their types: those whose effects are
+  inferred, consts and statics, measures, and those returning an opaque
+  type are checked in full. What a body's types give, the calls it makes
+  at which type arguments (which polymorphic recursion is about) and its
+  closures' types, is the same as when it's checked in full. That the
+  libraries' bodies check is what the compiler's own tests check, as
+  they're part of it. Working out a const that calls a library function
+  has them checked in full first, as running a program, `t run`, `t test`,
+  `t build`, `t mono` and the language server do.
+
 ## 0.94.1 (2026-11-15)
 
 No change to the language: checking is faster, `t check` of `fn main()
