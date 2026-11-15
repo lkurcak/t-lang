@@ -1,6 +1,6 @@
 // Each closure captures the one before it, which holds the one before that.
 // Each borrows the one before, so each is only one reference big.
-fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let f0 = || 1i64;
     let f1 = || f0() + 1;

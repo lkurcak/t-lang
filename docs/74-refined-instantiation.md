@@ -261,6 +261,7 @@ The adversarial tests are `tests/t/err_soundness_lend_top_*.t`,
 - **Closures made before the call.** `let f = || five(); call(f)` gives
   back any number: the walk follows only a closure written in the call.
   Keeping a summary with the closure's value would follow it further.
+  (Step 78 does, for both: docs/78-callable-values.md.)
 - **An iterator's `map`.** `l.iter().map(|x| ..)` keeps its closure in
   the iterator, and its items come out of `next`, a call it's no longer
   given to.

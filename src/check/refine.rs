@@ -2314,6 +2314,8 @@ impl Checker {
             deferred: HashMap::new(),
             returns: Vec::new(),
             call_summaries: HashMap::new(),
+            callables: HashMap::new(),
+            fn_objs: HashMap::new(),
             known: None,
             dead: HashSet::new(),
         }
@@ -2906,6 +2908,13 @@ struct Walk<'c> {
     /// straight to it, what every run of it gives (`summary::Summary`), by
     /// the argument's index.
     call_summaries: HashMap<usize, std::rc::Rc<summary::Summary>>,
+    /// What calling each value of a closure's or a function's type gives,
+    /// by its object (docs/78-callable-values.md): what's said of a
+    /// value, which never changes.
+    callables: HashMap<Obj, summary::Callable>,
+    /// The object that's each function's value, at its type arguments: one
+    /// value, wherever it's used.
+    fn_objs: HashMap<(String, Vec<Type>), Obj>,
     /// On MIR, the value of the const being walked, if its body is known
     /// to give a constant.
     known: Option<Known>,
@@ -5501,7 +5510,7 @@ fn binary(op: BinOp, a: Val, b: Val, kinds: &mut Vec<Kind>) -> Result<Val, Failu
 fn has_obj(t: &Type) -> bool {
     !matches!(
         t,
-        Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_)
+        Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never
     )
 }
 

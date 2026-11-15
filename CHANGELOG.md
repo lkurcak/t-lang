@@ -1,5 +1,38 @@
 # Changelog
 
+## Unreleased
+
+Step 78: callable values. See
+[docs/78-callable-values.md](docs/78-callable-values.md).
+
+### Changed
+
+- A closure's value carries what every run of it gives: made before a
+  call (`let f = || five(); call(f)`), moved, kept in a field, or
+  captured by another closure, it gives what a closure written in the
+  call does. Called straight, `f()` or `(|| five())()`, it gives what its
+  body returns, with its integer and `bool` parameters the call's
+  arguments.
+- A function's value is that function: a call through it (`let p = five;
+  p()`) has what the function's signature says of its result and of what
+  it was lent, and a function given for a generic call's `F`
+  (`call(five)`, `app(x, half)`) is as the closure calling it written in
+  the call.
+- A call through a function's value known to be one function is checked
+  as a call of it: lending it a `&mut` to something refined names what
+  that function may write, not that "a call through a value" can't be
+  given one.
+
+### Fixed
+
+- Soundness, since 0.89.0: a closure written in a generic call was taken
+  to be the only one the callee could call, though another of its type,
+  made by the same closure expression on a loop's turn before, could be
+  given beside it (`h(move || n, kept)` with `kept: Option<F>`). What the
+  call gave back was then taken to be what the new closure gives. Now a
+  callee's `F` is summarized only if one parameter is `F` and nothing
+  else in its signature can give it another.
+
 ## 0.92.0 (2026-11-14)
 
 Step 77: captures in methods. See

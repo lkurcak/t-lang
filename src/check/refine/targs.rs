@@ -1550,6 +1550,49 @@ pub(super) fn makes(
     None
 }
 
+/// The one parameter of a function of scheme `s` that every value of its
+/// type parameter `f` it can call comes from, if there is one: a parameter
+/// whose type is `f`, with `f` in no other parameter's type, and no bound
+/// that makes one (lemma V5 of docs/78-callable-values.md). What a closure
+/// given there gives is then what every call of `f` gives. Two parameters
+/// of type `F`, or an `Option<F>` or a `&List<F>` beside it, could each be
+/// another closure of the same type, made with other captures.
+pub(super) fn sole_source(cx: &Checker, s: &crate::types::Scheme, f: &str) -> Option<usize> {
+    let Type::Fn(sig) = &s.ty else {
+        return None;
+    };
+    let mut at = None;
+    for (j, p) in sig.params.iter().enumerate() {
+        match p {
+            Type::Param(g, _) if g == f && at.is_none() => at = Some(j),
+            p if free::mentions(p, f) => return None,
+            _ => {}
+        }
+    }
+    let traits = &cx.traits;
+    for p in &s.preds {
+        if free::mentions(&p.ty, f)
+            && !consumer(traits, &p.trait_name, &mut Vec::new())
+            && !crate::traits::FN_TRAITS.contains(&p.trait_name.as_str())
+        {
+            return None;
+        }
+    }
+    for (a, b) in &s.eqs {
+        if !free::mentions(a, f) && !free::mentions(b, f) {
+            continue;
+        }
+        // Its own signature, which gives what calling it gives: not one.
+        let own = matches!(a, Type::Proj(base, _, n)
+            if n == crate::traits::SIG && matches!(&**base, Type::Param(g, _) if g == f));
+        match b {
+            Type::Fn(sig) if own && !free::mentions(&sig.ret, f) => {}
+            _ => return None,
+        }
+    }
+    at
+}
+
 impl Walk<'_> {
     /// What the values of `v` (of type `t`) at each position are, as a
     /// tree: of each of `t`'s positions as deep as `DEPTH`.
@@ -1629,14 +1672,13 @@ impl Walk<'_> {
         let cx = self.cx;
         let at_call = |t: &Type| Some(cx.solved(&targs.apply(t)));
         let changed = changes(cx, s, x, &at_call).map(|why| (why, self.inv_positions(&ty)));
-        // The closures given straight to the call, for type parameters the
-        // callee calls, by their argument: what they give is summarized.
+        // The closures given for type parameters the callee calls, by their
+        // argument, each the only one of its type the callee can call: what
+        // they give is summarized (lemma V5 of docs/78-callable-values.md).
         let given: Vec<usize> = self.call_summaries.keys().copied().collect();
-        let summarized = |f: &str| {
-            (sig.params.iter().enumerate())
-                .find(|(j, p)| matches!(p, Type::Param(g, _) if g == f) && given.contains(j))
-                .map(|(j, _)| j)
-        };
+        let cx = self.cx;
+        let summarized =
+            |f: &str| sole_source(cx, s, f).filter(|j| given.contains(j) && sig.params.len() > *j);
         let mut inst = Inst {
             at: all.iter().map(|p| (p.clone(), Vec::new())).collect(),
             any: makes(self.cx, s, x, Some(&ty), &|f| summarized(f).is_some()),

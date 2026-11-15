@@ -1165,8 +1165,14 @@ impl Walk<'_> {
                 self.deferred.insert(dest.local, (l, ty.clone(), captured));
                 return Ok(Val::Other);
             }
-            self.walk_closure(bodies, l, ty, &captured)?;
-            return Ok(Val::Other);
+            // Its value carries what every run of it gives
+            // (docs/78-callable-values.md).
+            let summary = self.walk_closure(bodies, l, ty, &captured)?;
+            let v = self.unknown(ty);
+            if let (Some(s), Val::Struct(o, _) | Val::Obj(o)) = (summary, &v) {
+                self.callables.insert(*o, summary::Callable::Closure(s));
+            }
+            return Ok(v);
         }
         let mut vals = Vec::new();
         for (i, o) in ops.iter().enumerate() {
@@ -1275,14 +1281,31 @@ impl Walk<'_> {
         if let Type::Adt(symbol, ..) = ty {
             self.closure_decls.insert(symbol.clone(), assumed.clone());
         }
+        // Its parameters, if it takes them as any values of their types:
+        // as a closure not given straight to a call does.
+        let mut params = match assumed.iter().all(|t| t.is_empty()) {
+            true => Some(Vec::new()),
+            false => None,
+        };
         for (i, local) in (2..=body.params).enumerate() {
             let Some(id) = fr.id(Local(local)) else {
+                if let Some(ps) = &mut params {
+                    ps.push(Val::Other);
+                }
                 continue;
             };
             if let Some(tree) = assumed.get(i).filter(|t| !t.is_empty()) {
                 self.decl.insert(id, tree.clone());
             }
             self.bind(id, None);
+            if let Some(ps) = &mut params {
+                let p = Place::local(id);
+                let t = self.place_ty(&p);
+                ps.push(match self.is_scalar(&t) || t == Type::Bool {
+                    true => self.read_place(&p),
+                    false => Val::Other,
+                });
+            }
         }
         self.returns.push(Vec::new());
         let result = self.walk_cfg(&fr, bodies, false);
@@ -1292,7 +1315,9 @@ impl Walk<'_> {
         self.declared.truncate(declared);
         result?;
         let rt = self.cx.solved(&body.locals[crate::mir::RETURN.0].ty);
-        Ok(Some(std::rc::Rc::new(self.summary(made_from, rt, rets))))
+        Ok(Some(std::rc::Rc::new(
+            self.summary(made_from, rt, rets, params),
+        )))
     }
 
     /// A `&` or `&mut` (`m`) of `q`, made into `dest` (`borrow_mir`): if
@@ -1862,15 +1887,38 @@ impl Walk<'_> {
         ops: &[Operand],
     ) -> Result<Val, Error> {
         let ty = self.mir_ty(fr, dest);
+        // What's called: a function, or a value of a closure's or a
+        // function's type, whose value may say which it is
+        // (docs/78-callable-values.md).
+        let mut closure = None;
         let (symbol, targs, first) = match f {
             Operand::Const(Const::Fn(s, targs)) => {
                 let targs: Vec<Type> = targs.iter().map(|t| self.cx.solved(t)).collect();
                 (Some(s.clone()), targs, 0)
             }
-            Operand::Const(Const::Receiver(_)) => (None, Vec::new(), 1),
+            Operand::Const(Const::Receiver(_)) => {
+                let callee = match ops.first() {
+                    Some(o) => {
+                        let r = self.operand(fr, o, span)?;
+                        self.receiver_callable(&r)
+                    }
+                    None => None,
+                };
+                match callee {
+                    Some(summary::Callable::Fn(s, targs)) => (Some(s), targs, 1),
+                    Some(summary::Callable::Closure(s)) => {
+                        closure = Some(s);
+                        (None, Vec::new(), 1)
+                    }
+                    None => (None, Vec::new(), 1),
+                }
+            }
             o => {
-                self.operand(fr, o, span)?;
-                (None, Vec::new(), 0)
+                let v = self.operand(fr, o, span)?;
+                match self.callable(&v) {
+                    Some(summary::Callable::Fn(s, targs)) => (Some(s), targs, 0),
+                    _ => (None, Vec::new(), 0),
+                }
             }
         };
         // A const: what's known of its value, or else what its type says,
@@ -1909,11 +1957,27 @@ impl Walk<'_> {
                 }
             })
             .collect();
+        // The arguments whose values say what calling them gives: a
+        // closure's summary, or a function, which is as the closure calling
+        // it written in the call (lemmas V1, V4 of docs/78-callable-values.md).
+        let mut fns = Vec::new();
+        let mut summaries = HashMap::new();
+        for (i, v) in vals.iter().enumerate() {
+            match self.callable(v) {
+                Some(summary::Callable::Closure(s)) => {
+                    summaries.insert(i, s);
+                }
+                Some(summary::Callable::Fn(g, gargs)) => fns.push((i, g, gargs)),
+                None => {}
+            }
+        }
         let resolved = symbol.map(|s| self.callee_at(&s, targs));
-        if !closures.is_empty() {
+        if !closures.is_empty() || !fns.is_empty() {
             let trees = match &resolved {
                 Some((s, t)) => {
-                    let idx: Vec<usize> = closures.iter().map(|(i, ..)| *i).collect();
+                    let idx: Vec<usize> = (closures.iter().map(|(i, ..)| *i))
+                        .chain(fns.iter().map(|(i, ..)| *i))
+                        .collect();
                     self.closure_trees(s, t, &vals, &places, &idx)
                 }
                 None => HashMap::new(),
@@ -1923,12 +1987,19 @@ impl Walk<'_> {
                     self.closure_params.insert(l, t.clone());
                 }
                 if let Some(s) = self.walk_closure(bodies, l, &cty, &captured)? {
-                    self.call_summaries.insert(i, s);
+                    summaries.insert(i, s);
+                }
+            }
+            for (i, g, gargs) in fns {
+                if let Some(s) = self.fn_summary(&g, &gargs, trees.get(&i), spans[i])? {
+                    summaries.insert(i, s);
                 }
             }
         }
+        self.call_summaries = summaries;
+        let arg_vals = vals.clone();
         let site = CallAt {
-            ty,
+            ty: ty.clone(),
             resolved,
             spans,
             tys: args.iter().map(|o| self.operand_ty(fr, o)).collect(),
@@ -1938,7 +2009,11 @@ impl Walk<'_> {
         };
         let called = self.call_at(&site, vals, places.clone());
         self.call_summaries.clear();
-        let (result, post) = called?;
+        let (mut result, post) = called?;
+        // A closure's value called: what its summary says it gives.
+        if let Some(s) = closure {
+            result = self.summary_call(&s, &arg_vals, &ty);
+        }
         // What it lent `&mut` may have changed.
         for p in places.iter().flatten() {
             self.invalidate(p, span, "mutable lending");
@@ -1946,6 +2021,87 @@ impl Walk<'_> {
         }
         self.post_now(post, span)?;
         Ok(result)
+    }
+
+    /// What calling a call's receiver, of value `r`, gives, if it's
+    /// known: the closure or function it is, or a reference to it.
+    fn receiver_callable(&mut self, r: &Val) -> Option<summary::Callable> {
+        let v = match r {
+            Val::Ref(_, Pointee::Val(w)) => (**w).clone(),
+            Val::Ref(_, Pointee::Place(p)) => {
+                let p = p.clone();
+                self.read_place(&p)
+            }
+            v => v.clone(),
+        };
+        self.callable(&v)
+    }
+
+    /// What every run of the closure `|xs| g(xs)` would give, written in
+    /// a call that gives its parameters what `trees` says (lemma V4 of
+    /// docs/78-callable-values.md): a call of function `g`, at type
+    /// arguments `gargs`, of values that have that, made at `span`.
+    fn fn_summary(
+        &mut self,
+        g: &str,
+        gargs: &[Type],
+        trees: Option<&Vec<targs::Tree>>,
+        span: Span,
+    ) -> Result<Option<std::rc::Rc<summary::Summary>>, Error> {
+        let s = self.cx.scheme(g).clone();
+        let Type::Fn(sig) = &s.ty else {
+            return Ok(None);
+        };
+        let names = s.params.as_slice().to_vec();
+        if names.len() != gargs.len() {
+            return Ok(None);
+        }
+        let subst = crate::types::Subst::new(&names, gargs);
+        let tys: Vec<Type> = (sig.params.iter())
+            .map(|p| self.cx.solved(&subst.apply(p)))
+            .collect();
+        let rt = self.cx.solved(&subst.apply(&sig.ret));
+        let here = self.take_state();
+        let mut start = here.clone();
+        start.slots = HashMap::new();
+        start.pinned = Vec::new();
+        self.put_state(start);
+        let made_from = self.summary_start();
+        let mut vals = Vec::new();
+        for (i, t) in tys.iter().enumerate() {
+            let v = self.unknown(t);
+            if let Some(tree) = trees.and_then(|ts| ts.get(i)) {
+                self.assume_tree(&v, t, tree);
+            }
+            vals.push(v);
+        }
+        let n = tys.len();
+        let site = CallAt {
+            ty: rt.clone(),
+            resolved: Some(self.callee_at(g, gargs.to_vec())),
+            spans: vec![span; n],
+            tys,
+            texts: Vec::new(),
+            coerced: vec![None; n],
+            span,
+        };
+        // What it gives, and what's known once it's returned. A call that
+        // fails, which is checked where the function's given (as what it
+        // may write, `closures_given`), says nothing here.
+        let errors = self.errors.len();
+        let called = (self.call_at(&site, vals, vec![None; n]))
+            .and_then(|(val, post)| self.post_now(post, span).map(|()| val));
+        let facts = self.facts.clone();
+        self.put_state(here);
+        let failed = self.errors.len() > errors;
+        self.errors.truncate(errors);
+        let (Ok(val), false) = (called, failed) else {
+            return Ok(None);
+        };
+        let rets = vec![summary::Ret { val, facts }];
+        Ok(Some(std::rc::Rc::new(
+            self.summary(made_from, rt, rets, None),
+        )))
     }
 
     /// The edges out of the block whose terminator is `term`, at `at`: to
@@ -2174,9 +2330,11 @@ impl Walk<'_> {
                 }
                 v
             }
-            Const::Fn(symbol, _) => {
+            // A function's value: the same one wherever it's used.
+            Const::Fn(symbol, targs) => {
                 self.as_value(symbol, span)?;
-                Val::Other
+                let targs: Vec<Type> = targs.iter().map(|t| self.cx.solved(t)).collect();
+                Val::Obj(self.fn_obj(symbol, targs))
             }
             Const::Param(name) => self.length(&Type::Param(name.clone(), false)),
             Const::Static(_) => Val::Other,
