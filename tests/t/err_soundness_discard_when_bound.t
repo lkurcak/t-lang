@@ -4,9 +4,9 @@ use alloc::list::List;
 
 struct Fd { n: i64 }
 
-fn sink<T: Discard>(x: T) {}
+fn sink<T: Discard>(_x: T) {}
 
 fn main() with alloc {
     sink(List::<Fd>::new());
 }
-// error: `List<Fd>` doesn't implement `Discard`
+// error: `sink` needs its `T` to implement `Discard`, and `List<Fd>` doesn't

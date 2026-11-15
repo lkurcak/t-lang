@@ -19,7 +19,7 @@ impl Bag {
 
 impl Discard for { b: Bag | b.len() == 0 } {
     fn discard(self) {
-        let Bag { items, label: _ } = self;
+        let Bag { items: _empty, label: _ } = self;
     }
 }
 

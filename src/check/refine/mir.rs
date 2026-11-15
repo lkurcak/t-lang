@@ -724,7 +724,11 @@ impl Walk<'_> {
         let v = self.read_mir(fr, place);
         let name = match (place.proj.is_empty(), fr.id(place.local)) {
             (true, Some(id)) => self.cx.typed.binds.get(&id).map(|b| b.name.clone()),
-            _ => None,
+            // Part of a variable's value, as `self.items`.
+            _ => match self.locate(fr, place) {
+                Loc::Place(p) => self.place_name(&p),
+                Loc::Val(..) => None,
+            },
         };
         let short = self.cx.traits.shorten(&ty.to_string());
         // The refined type, as the impl says it: `{ l: List<Fd> | .. }`.

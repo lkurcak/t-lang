@@ -13,7 +13,7 @@ impl Bag {
 
 impl Discard for { b: Bag | b.count() == 0 } {
     fn discard(self) {
-        let Bag { items, count: _ } = self;
+        let Bag { items: _, count: _ } = self;
     }
 }
 
@@ -21,4 +21,4 @@ fn main() with alloc {
     let mut b = Bag { items: List::new(), count: 0 };
     b.items.push(Fd { n: 1 });
 }
-// error: `items` is dropped here, and `List<Fd>` isn't `Discard`: only `{ l: List<Fd> | l.len() == 0 }` is, which can't be proved of it
+// error: `self.items` is dropped here, and `List<Fd>` isn't `Discard`: only `{ l: List<Fd> | l.len() == 0 }` is, which can't be proved of it

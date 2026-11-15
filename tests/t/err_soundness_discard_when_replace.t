@@ -5,7 +5,7 @@ use alloc::list::List;
 struct Fd { n: i64 }
 
 fn reset(l: &mut List<Fd>) {
-    let old = core::mem::replace(l, List::new());
+    let _old = core::mem::replace(l, List::new());
 }
 
 fn main() with alloc {
@@ -14,4 +14,4 @@ fn main() with alloc {
     reset(&mut l);
     l.free_with(|fd| { let Fd { n: _ } = fd; });
 }
-// error: `old` is dropped here, and `List<Fd>` isn't `Discard`: only `{ l: List<Fd> | l.len() == 0 }` is, which can't be proved of it
+// error: `_old` is dropped here, and `List<Fd>` isn't `Discard`: only `{ l: List<Fd> | l.len() == 0 }` is, which can't be proved of it
