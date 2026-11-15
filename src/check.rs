@@ -150,26 +150,56 @@ pub(super) fn not_library(at: Span) -> Error {
 /// Checking a program sees nothing of most of their bodies, which only
 /// running or lowering it needs: their MIR, which operators were proved
 /// not to panic, and that their borrows and proofs hold, which the tests
-/// of the compiler check of these libraries, which are part of it. So
-/// those are only typed at first (`Checker::only_typed`), which is all
-/// `check_typed` needs; `check` has them checked in full, once.
+/// of the compiler check of these libraries, which are part of it. So for
+/// `check_typed` those are only typed (`Checker::only_typed`); `check` has
+/// them checked in full. Each, once asked for: the first from reading
+/// them, and the other, if it's ever asked for too, from that.
 pub struct Libraries {
     pub sources: crate::source::Sources,
     pub prog: Program,
     /// What checking them left, with the bodies that a program's checking
     /// sees nothing of only typed. Behind a lock only as it has cells in
     /// it, which each program's checking clones.
-    typed: std::sync::Mutex<Checker>,
-    /// What checking them in full leaves: `typed`, with those bodies
-    /// checked in full, once asked for.
+    typed: std::sync::OnceLock<std::sync::Mutex<Checker>>,
+    /// What checking them in full leaves.
     full: std::sync::OnceLock<std::sync::Mutex<Checker>>,
 }
 
+/// The libraries, read once, as they're the same for every program.
+static LIBRARIES: std::sync::OnceLock<Libraries> = std::sync::OnceLock::new();
+
 impl Libraries {
-    /// What checking them in full leaves (`full`).
+    /// The libraries, read and checked, `typed` (see `Libraries`) or not.
+    fn read(typing: bool) -> Libraries {
+        let (sources, prog, cx) = check_libraries(typing);
+        let (typed, full) = (std::sync::OnceLock::new(), std::sync::OnceLock::new());
+        let _ = match typing {
+            true => typed.set(std::sync::Mutex::new(cx)),
+            false => full.set(std::sync::Mutex::new(cx)),
+        };
+        Libraries {
+            sources,
+            prog,
+            typed,
+            full,
+        }
+    }
+
+    /// What checking them left, with bodies only typed (`typed`).
+    fn typed(&self) -> &std::sync::Mutex<Checker> {
+        self.typed.get_or_init(|| {
+            let (_, prog, cx) = check_libraries(true);
+            debug_assert_eq!(prog.next_id, self.prog.next_id, "the same libraries");
+            std::sync::Mutex::new(cx)
+        })
+    }
+
+    /// What checking them in full leaves (`full`): if they were checked
+    /// for `check_typed` first, that, with the bodies only typed checked
+    /// in full.
     fn full(&self) -> &std::sync::Mutex<Checker> {
         self.full.get_or_init(|| {
-            let mut cx = self.typed.lock().expect("never poisoned").clone();
+            let mut cx = self.typed().lock().expect("never poisoned").clone();
             if let Err(e) = cx.finish_library_bodies(&self.prog) {
                 panic!("the libraries don't check: {}", e.render_in(&self.sources));
             }
@@ -181,16 +211,14 @@ impl Libraries {
 /// The libraries, read and checked, each against those before it: core
 /// alone, then alloc. Only once, as they're the same for every program.
 pub fn libraries() -> &'static Libraries {
-    static LIBRARIES: std::sync::OnceLock<Libraries> = std::sync::OnceLock::new();
-    LIBRARIES.get_or_init(|| {
-        let (sources, prog, cx) = check_libraries(true);
-        Libraries {
-            sources,
-            prog,
-            typed: std::sync::Mutex::new(cx),
-            full: std::sync::OnceLock::new(),
-        }
-    })
+    LIBRARIES.get_or_init(|| Libraries::read(false))
+}
+
+/// `libraries`, read for `check_typed` if they haven't been read yet: so a
+/// process that only checks programs, as `t check` does, never checks
+/// their bodies in full.
+pub fn libraries_for_checking() -> &'static Libraries {
+    LIBRARIES.get_or_init(|| Libraries::read(true))
 }
 
 /// The libraries, read and checked, each against those before it, with
@@ -249,7 +277,7 @@ fn check_with(
     let libraries = libraries();
     let checker = match full {
         true => libraries.full(),
-        false => &libraries.typed,
+        false => libraries.typed(),
     };
     let mut cx = checker.lock().expect("never poisoned").clone();
     let packages = match prog.packages.is_empty() {
@@ -2617,11 +2645,9 @@ mod tests {
     /// later.
     #[test]
     fn libraries_typed_then_finished_are_libraries_checked_in_full() {
-        let libraries = libraries();
         let (_, prog, at_once) = check_libraries(false);
-        assert_eq!(prog.next_id, libraries.prog.next_id, "the same nodes");
-        // A copy: finishing them takes the lock.
-        let typed = libraries.typed.lock().unwrap().clone();
+        let (_, typed_prog, typed) = check_libraries(true);
+        assert_eq!(prog.next_id, typed_prog.next_id, "the same nodes");
         assert!(
             typed.typed_only.len() > 100,
             "only {} typed",
@@ -2630,7 +2656,8 @@ mod tests {
         // What a program's checking sees is there before they're finished.
         let seen = libraries_known(&typed, true);
         same(&libraries_known(&at_once, true), &seen, "only typed");
-        let finished = libraries.full().lock().unwrap();
+        let mut finished = typed;
+        finished.finish_library_bodies(&typed_prog).unwrap();
         let known = libraries_known(&finished, false);
         same(&libraries_known(&at_once, false), &known, "finished later");
     }

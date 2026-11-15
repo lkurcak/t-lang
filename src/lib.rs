@@ -110,6 +110,7 @@ pub fn check_files_for(path: &Path, src: &str, read: load::Read, target: Target)
 /// bodies a program's checking sees nothing of were only typed (see
 /// `check::check_typed`).
 pub fn check_only_files(path: &Path, src: &str, read: load::Read) -> Checked {
+    check::libraries_for_checking();
     check_files_with(path, src, read, Target::Hosted, false)
 }
 
