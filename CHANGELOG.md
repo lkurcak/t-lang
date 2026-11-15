@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.94.0 (2026-11-15)
 
 Step 79: what a capture splits. See
 [docs/79-what-a-capture-splits.md](docs/79-what-a-capture-splits.md).
