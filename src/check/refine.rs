@@ -577,7 +577,7 @@ impl Checker {
         if let Some(sig) = self.refined.get(symbol) {
             return sig.scoped.clone();
         }
-        let Some(f) = self.fns.iter().find(|f| f.symbol == symbol) else {
+        let Some(f) = self.fn_def(symbol) else {
             return Vec::new();
         };
         match &f.scheme.ty {
@@ -1677,7 +1677,7 @@ impl Checker {
                     self.info.measures.behind_mut.insert(e.id);
                 }
                 let ret = self.measures[&symbol].ret.clone();
-                if let Some(i) = self.fns.iter().position(|f| f.symbol == symbol) {
+                if let Some(i) = self.fn_position(&symbol) {
                     let (ty, def) = (self.fns[i].scheme.ty.clone(), self.fns[i].name.span);
                     let kind = super::NoteKind::Fn(m.name.clone());
                     self.note(m.span, kind, Some(ty), Some(def));
@@ -1928,7 +1928,7 @@ impl Checker {
     /// (lemma L2 of docs/59-lends.md): parametricity, as the measure can
     /// make, compare or look into none.
     fn measure_free_in(&self, symbol: &str, ty: &Type, w: &[String]) -> bool {
-        let Some(f) = self.fns.iter().find(|f| f.symbol == symbol) else {
+        let Some(f) = self.fn_def(symbol) else {
             return false;
         };
         let Type::Fn(sig) = &f.scheme.ty else {
@@ -1974,7 +1974,7 @@ impl Checker {
                     false => &muts[..],
                 };
                 let through_mut = counted.iter().any(|m| *m);
-                let fn_def = self.fns.iter().find(|f| f.symbol == symbol);
+                let fn_def = self.fn_def(&symbol);
                 if let Some(f) = fn_def
                     && !self.modules.visible(f.module, f.level, self.module)
                 {

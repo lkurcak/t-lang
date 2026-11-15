@@ -2082,7 +2082,7 @@ impl Walk<'_> {
         spans: &[Span],
         at: Span,
     ) -> Result<CallTrees, Error> {
-        let known = self.cx.fns.iter().any(|f| f.symbol == symbol)
+        let known = self.cx.fn_def(symbol).is_some()
             || (self.cx.traits.traits.values())
                 .any(|t| t.methods.iter().any(|m| m.symbol == symbol));
         if !known {
@@ -2097,7 +2097,7 @@ impl Walk<'_> {
             return Ok(CallTrees::default());
         }
         let subst = crate::types::Subst::new(&names, targs);
-        let (fname, pnames) = match self.cx.fns.iter().find(|f| f.symbol == symbol) {
+        let (fname, pnames) = match self.cx.fn_def(symbol) {
             Some(f) => (f.name.name.clone(), f.params.clone()),
             None => (
                 symbol.rsplit("::").next().unwrap_or(symbol).to_string(),
@@ -3030,7 +3030,7 @@ impl Walk<'_> {
         closures: &[usize],
     ) -> HashMap<usize, Vec<Tree>> {
         let mut out = HashMap::new();
-        let known = self.cx.fns.iter().any(|f| f.symbol == symbol)
+        let known = self.cx.fn_def(symbol).is_some()
             || (self.cx.traits.traits.values())
                 .any(|t| t.methods.iter().any(|m| m.symbol == symbol));
         if !known || closures.is_empty() {

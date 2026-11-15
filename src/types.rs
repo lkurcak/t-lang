@@ -1,9 +1,11 @@
 //! Types as the checker understands them.
 
+use crate::borrowck::regions::AdtInfo;
 use crate::check::source_name;
 use crate::traits::{Pred, Projections};
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::{Arc, OnceLock};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Type {
@@ -359,8 +361,14 @@ pub enum AdtKind {
 /// projections their fields may have stand for.
 #[derive(Debug, Clone, Default)]
 pub struct Adts {
-    defs: HashMap<String, AdtDef>,
+    /// Shared with the copies, until one changes them: each body the
+    /// borrow checker checks has a copy of its own (`borrowck::local_adts`),
+    /// and each program's checking a copy of the libraries'.
+    defs: Arc<HashMap<String, AdtDef>>,
     pub proj: Projections,
+    /// What the borrow checker needs to know of `defs` (`info`), once
+    /// worked out, until they change.
+    info: OnceLock<Arc<AdtInfo>>,
 }
 
 impl Adts {
@@ -373,6 +381,24 @@ impl Adts {
     pub fn normalise(&self, t: &Type) -> Type {
         self.proj.normalise(t)
     }
+
+    /// How each struct and enum varies with its parameters, and what they
+    /// must outlive (`AdtInfo`), which only their declarations say: so
+    /// it's worked out outside any function, with no bounds in scope, and
+    /// once for as long as they stay as they are. A bound it gives on a
+    /// projection is normalised where it's used (`wf_bounds`), with the
+    /// bounds in scope there.
+    pub(crate) fn info(&self) -> Arc<AdtInfo> {
+        let worked_out = || {
+            let outside = Adts {
+                defs: self.defs.clone(),
+                proj: self.proj.outside(),
+                info: OnceLock::new(),
+            };
+            Arc::new(AdtInfo::new(&outside))
+        };
+        self.info.get_or_init(worked_out).clone()
+    }
 }
 
 impl std::ops::Deref for Adts {
@@ -384,8 +410,11 @@ impl std::ops::Deref for Adts {
 }
 
 impl std::ops::DerefMut for Adts {
+    /// Every change to a struct or enum goes through here, so this is
+    /// where what was worked out of them is forgotten.
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.defs
+        self.info.take();
+        Arc::make_mut(&mut self.defs)
     }
 }
 

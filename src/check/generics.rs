@@ -1107,6 +1107,10 @@ pub(super) fn polymorphic_recursion(
     nodes.sort();
     nodes.dedup();
     let index = |n: &Node| nodes.binary_search(n).expect("a node");
+    // The edges between the nodes' indices, found once.
+    let indexed: Vec<(usize, usize, i64)> = (edges.iter())
+        .map(|(a, b, w, _)| (index(a), index(b), *w))
+        .collect();
     // The heaviest path from `start` to each node, or `None` if there's
     // none, by Bellman-Ford. `i64::MAX` if it can be as heavy as you like,
     // through a cycle that weighs more than 0.
@@ -1121,8 +1125,7 @@ pub(super) fn polymorphic_recursion(
         // heavier goes round such a cycle, and so does what it leads to.
         for round in 0..2 * nodes.len() + 1 {
             let mut changed = false;
-            for &(a, b, w, _) in &edges {
-                let (a, b) = (index(&a), index(&b));
+            for &(a, b, w) in &indexed {
                 let Some(da) = dist[a] else {
                     continue;
                 };

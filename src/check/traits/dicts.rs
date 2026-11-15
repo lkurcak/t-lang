@@ -452,7 +452,7 @@ impl Checker {
                     within.map_or(Type::Unit, |q| def.params.ty(q))
                 })
                 .collect();
-            if let Some(to) = self.fns.iter().find(|f| f.symbol == *discard) {
+            if let Some(to) = self.fn_def(discard) {
                 out.push(Use {
                     from,
                     to: &to.symbol,

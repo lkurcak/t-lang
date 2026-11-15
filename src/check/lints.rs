@@ -443,9 +443,7 @@ impl Checker {
         // taken to be used.
         todo.extend(self.modules.lengths.values().map(|&(i, _)| FnId(i)));
         let in_preds = self.info.pred_consts.values();
-        todo.extend(
-            in_preds.filter_map(|s| self.fns.iter().position(|f| f.symbol == *s).map(FnId)),
-        );
+        todo.extend(in_preds.filter_map(|s| self.fn_position(s).map(FnId)));
         while let Some(f) = todo.pop() {
             if !std::mem::replace(&mut live[f.0], true) {
                 todo.extend(self.uses[f.0].fns.iter().copied());

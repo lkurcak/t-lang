@@ -197,9 +197,7 @@ impl Checker {
         // One an alias was given for a const parameter, written out
         // (`Checker::written_out`): what it named where it was written.
         let fixed = match self.pred_fixed.get(&id) {
-            Some(super::written::Fixed::Item(symbol)) => {
-                self.fns.iter().position(|f| f.symbol == *symbol)
-            }
+            Some(super::written::Fixed::Item(symbol)) => self.fn_position(symbol),
             _ => None,
         };
         let i = match (fixed, name.contains("::")) {

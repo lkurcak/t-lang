@@ -58,7 +58,7 @@ pub(crate) fn check(
     symbol: &str,
     scheme: &Scheme,
 ) -> Result<Vec<Warning>, Error> {
-    let info = AdtInfo::new(cx.adts());
+    let info = cx.adts().info();
     let Type::Fn(sig) = &scheme.ty else {
         unreachable!("a function has a function type")
     };
@@ -606,7 +606,7 @@ pub(crate) fn decide_result(
     ty: &Type,
     later: usize,
 ) -> Result<Vec<Region>, Error> {
-    let info = AdtInfo::new(cx.adts());
+    let info = cx.adts().info();
     let c = ClosureUse {
         lambda,
         ty: ty.clone(),
