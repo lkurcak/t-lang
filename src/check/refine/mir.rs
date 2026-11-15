@@ -711,14 +711,12 @@ impl Walk<'_> {
         let Some((_, symbol)) = traits.impls[k].methods.iter().find(|(m, _)| m == "discard") else {
             unreachable!("an impl of `DiscardWhen` has a `discard`")
         };
-        let Some(sig) = self.cx.refined.get(symbol).cloned() else {
-            return Ok(());
-        };
-        let Some(Some(r)) = sig.params.first() else {
-            return Ok(());
-        };
-        let Some(r) = r.ways_only() else {
-            return Ok(());
+        // Its `self` is refined (`modules::Rewrite::discard_when`), with
+        // one predicate of the whole value: anything else fails closed.
+        let r = (self.cx.refined.get(symbol).cloned())
+            .and_then(|sig| Some((sig.params.first()?.clone()?.ways_only()?, sig)));
+        let Some((r, sig)) = r else {
+            unreachable!("the `discard` of `{ty}`'s impl of `DiscardWhen` has no refined `self`")
         };
         let targs: Vec<(String, Type)> = sig.type_params.iter().cloned().zip(targs).collect();
         let v = self.read_mir(fr, place);
