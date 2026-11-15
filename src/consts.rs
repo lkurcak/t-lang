@@ -83,18 +83,20 @@ pub(crate) struct Const {
 
 /// Works out the value of each of `consts`, of `prog`, which checked, as
 /// far as `info` says, whose structs and enums are `adts`: into
-/// `Info::const_values`, and their MIR bodies, which then give them.
+/// `Info::const_values`, and their MIR bodies, which then give them. Or
+/// says, before it's done, that one needs a function whose body was only
+/// typed (`Checker::only_typed`), which has to be checked in full first.
 pub(crate) fn evaluate(
     prog: &Program,
     info: &mut Info,
     adts: &Adts,
     consts: &[Const],
-) -> Result<(), Error> {
+) -> Result<Evaluated, Error> {
     if consts
         .iter()
         .all(|c| info.const_values.contains_key(&c.symbol))
     {
-        return Ok(());
+        return Ok(Evaluated::Done);
     }
     let lifted = crate::lift::lift_program(prog, info);
     let mut cx = Cx {
@@ -102,11 +104,23 @@ pub(crate) fn evaluate(
         adts,
         consts,
         working: Vec::new(),
+        unchecked: false,
     };
     for c in consts {
         cx.value(info, &c.symbol)?;
+        if cx.unchecked {
+            return Ok(Evaluated::Unchecked);
+        }
     }
-    Ok(())
+    Ok(Evaluated::Done)
+}
+
+/// How far `evaluate` got.
+pub(crate) enum Evaluated {
+    /// Every const has its value.
+    Done,
+    /// One needs a function whose body was only typed.
+    Unchecked,
 }
 
 struct Cx<'a> {
@@ -115,6 +129,9 @@ struct Cx<'a> {
     consts: &'a [Const],
     /// The consts being worked out, each needed by the one before it.
     working: Vec<String>,
+    /// Whether one needs a function whose body was only typed: then none
+    /// is worked out further.
+    unchecked: bool,
 }
 
 impl Cx<'_> {
@@ -132,10 +149,14 @@ impl Cx<'_> {
         self.working.push(symbol.to_string());
         let exe = loop {
             let (exe, missing) = crate::mono::rooted(self.prog, info, symbol);
-            if missing.is_empty() {
+            if missing.unchecked {
+                self.unchecked = true;
+                return Ok(());
+            }
+            if missing.consts.is_empty() {
                 break exe;
             }
-            for m in missing {
+            for m in missing.consts {
                 if self.working.contains(&m) {
                     let c = self.decl(&m);
                     return Err(Error::ty(
@@ -147,6 +168,9 @@ impl Cx<'_> {
                     ));
                 }
                 self.value(info, &m)?;
+                if self.unchecked {
+                    return Ok(());
+                }
             }
         };
         self.working.pop();
