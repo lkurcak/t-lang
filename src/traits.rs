@@ -1557,6 +1557,13 @@ pub(crate) fn eq_subject(t: &Type) -> &Type {
 ///   for &[i64]` don't overlap, and the checker and monomorphisation find
 ///   the same one. An `unsized` parameter matches any type (lemma U5 of
 ///   docs/57-unsized-parameters.md).
+/// - A set of effects matches one with the same effects, as sets
+///   (`Type::effects` keeps them sorted, without repeats); an impl's
+///   effect parameter alone matches any set, and an impl's type has no
+///   other kind of set (`mixed_effects`), so what the parameter is is a
+///   function of the type too (lemma F2a of
+///   docs/81-contradictions-and-fn-types.md). A set in generic code with
+///   one of its own parameters in it is matched only by such a parameter.
 /// - A const parameter only ever meets a length, a `Type::Nat`, a const
 ///   item (`Type::Const`) or another const parameter, as kinds keep types
 ///   and lengths apart

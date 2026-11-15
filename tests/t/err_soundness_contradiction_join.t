@@ -7,9 +7,7 @@ fn absurd(_u: { u: () | false }) -> ! {
 
 fn pick(b: bool) {
     let x: u32 = if b { 1 } else { 7 };
-    if x > 5 {
-        absurd(())
-    }
+    if x > 5 { absurd(()) }
 }
 
 fn main() {

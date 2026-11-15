@@ -892,7 +892,9 @@ impl<'a> Builder<'a> {
     /// And as this is what runs, that's when the program does it. A
     /// borrow the checker made, by a coercion, waits too: `r` used as a
     /// `&T` when it's a `&Box<T>` is a borrow of place `**r`, and `&mut b`
-    /// used as a `&T` borrows `b` and then reborrows through that.
+    /// used as a `&T` borrows `b` and then reborrows through that. So does
+    /// the reborrow of a `&mut` at a place, `g` passed on as `&mut *g`
+    /// (lemma A4 of docs/81-contradictions-and-fn-types.md).
     ///
     /// `ft` has its projections worked out already, with the regions this
     /// call has (`instantiate`): `T::Out` at `T = Pair<'?1, '?2>` is the

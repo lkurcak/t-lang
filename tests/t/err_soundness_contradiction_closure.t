@@ -7,9 +7,7 @@ fn absurd(_u: { u: () | false }) -> ! {
 fn main() {
     let x: u32 = 3;
     let c = |y: u32| {
-        if y > 5 {
-            absurd(())
-        }
+        if y > 5 { absurd(()) }
     };
     c(x);
     c(9);

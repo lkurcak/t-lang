@@ -10,7 +10,9 @@ struct Holder<'a> { g: &'a mut Game }
 
 fn at(g: &Game, i: { i: usize | i < 4 }) -> u8 { g.b[i] }
 
-fn put(g: &mut Game, i: { i: usize | i < 4 }, v: u8) { g.b[i] = v; }
+fn put(g: &mut Game, i: { i: usize | i < 4 }, v: u8) {
+    g.b[i] = v;
+}
 
 fn bump(g: &mut Game) -> u8 {
     g.b[3] = g.b[3] % 100 + 1;

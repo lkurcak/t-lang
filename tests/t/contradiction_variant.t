@@ -20,7 +20,7 @@ fn absurd(_u: { u: () | false }) -> ! {
 impl<T> Discard for { o: Opt<T> | o.is_no() } {
     fn discard(self) {
         match self {
-            Opt::No => {}
+            Opt::No => {},
             Opt::Yes(_t) => absurd(()),
         }
     }
@@ -56,8 +56,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
         Opt::Yes(fd) => {
             let Fd { n } = fd;
             out.line(&n)?; // expect: 4
-        }
-        Opt::No => {}
+        },
+        Opt::No => {},
     }
     let _one = Small::One(1);
     out.line(&get(Small::Zero, &[1, 2]))?; // expect: 0

@@ -53,6 +53,6 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let h: fn(u8) -> u8 = same;
     let k: fn(u8) -> u8 with panic = halve;
     out.line(&(h.name() + k.name()))?; // expect: 4
-    out.line(&f.out())?; // expect: true
+    out.line(&f.out())?;               // expect: true
     Ok(())
 }

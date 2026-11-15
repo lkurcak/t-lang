@@ -108,7 +108,7 @@ struct S { a: u8, b: u8 }
 fn f(o: &mut { s: S | s.a < s.b }) {
     (*o).a = 100;
 }
-// error: can't prove `s.a < s.b` for `(*o)`, once `(*o).a` is written
+// error: can't prove `s.a < s.b` for `*o`, once `(*o).a` is written
 ```
 
 This was accepted, as were `t.1.a = 100` of a `(u8, { s: S | s.a < s.b

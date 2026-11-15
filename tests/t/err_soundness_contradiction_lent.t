@@ -11,8 +11,6 @@ fn bump(r: &mut u32) {
 fn main() {
     let mut x: u32 = 1;
     bump(&mut x);
-    if x > 5 {
-        absurd(())
-    }
+    if x > 5 { absurd(()) }
 }
 // error: can't prove `false` for argument `_u` of `absurd`

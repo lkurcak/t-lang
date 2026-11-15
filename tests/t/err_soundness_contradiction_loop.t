@@ -8,9 +8,7 @@ fn absurd(_u: { u: () | false }) -> ! {
 fn main() {
     let mut i: u32 = 0;
     while i < 10 {
-        if i > 5 {
-            absurd(())
-        }
+        if i > 5 { absurd(()) }
         i += 1;
     }
 }
