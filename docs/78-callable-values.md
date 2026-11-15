@@ -97,7 +97,8 @@ fn main() with {} {
 A function used as a value, `five`, is the same value wherever it's used:
 one object of the logic for each function and its type arguments
 (`Walk::fn_obj`). It goes wherever it's moved or copied, as a closure's
-does. A call through it, `p()`, is a call of the function: its result
+does, and a closure that gives it back gives back that function, the
+same in every run. A call through it, `p()`, is a call of the function: its result
 has what the function's signature says, and so does what it was lent:
 
 ```rust
@@ -296,8 +297,8 @@ fn main() with panic {
 The adversarial tests are `tests/t/err_soundness_callable_*.t` (and
 `err_soundness_closure_result_other_value.t`, the program above), and the
 generated family `tests/generated_summaries.rs`: one program written in
-ten forms (a closure written in the call, made before it, moved, captured
-by another, kept in a field, a literal, one of two returns; a function by
+eleven forms (a closure written in the call, made before it, moved, captured
+by another, kept in a field, a literal, either of two returns; a function by
 name, through a variable, a method), given to `call`, `twice` and
 `unwrap_or_else` or called straight, each keeping or breaking the
 refinement: every form gets the same verdict, and the interpreter's

@@ -149,6 +149,9 @@ impl Walk<'_> {
         for v in self.consts.values() {
             val_vars(v, &mut keep);
         }
+        // A function's value is the same in every run (lemma V3 of
+        // docs/78-callable-values.md).
+        keep_objs.extend(self.fn_objs.values());
         // The values that are functions of a value from before.
         let mut todo: Vec<Obj> = Vec::new();
         let outer = |o: Obj| o < objs;

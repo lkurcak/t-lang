@@ -39,6 +39,8 @@ enum Form {
     /// `let f = || { if c { return n; } 1 };`, then `f`: either return,
     /// as `c` is any `bool`.
     Branch,
+    /// `let f = || { if c { return 1; } n };`: the other return first.
+    BranchLast,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -53,7 +55,7 @@ enum Taker {
     Direct,
 }
 
-const FORMS: [Form; 10] = [
+const FORMS: [Form; 11] = [
     Form::Inline,
     Form::Local,
     Form::Moved,
@@ -64,6 +66,7 @@ const FORMS: [Form; 10] = [
     Form::Field,
     Form::Literal,
     Form::Branch,
+    Form::BranchLast,
 ];
 const TAKERS: [Taker; 4] = [Taker::Call, Taker::Twice, Taker::OrElse, Taker::Direct];
 
@@ -108,7 +111,7 @@ struct H<F> {{ f: F }}
         Form::Captured => ("let f0 = || give();", "|| f0()", "(|| f0())()".to_string()),
         Form::Field => ("let h = H { f: || give() };", "h.f", "(h.f)()".to_string()),
         Form::Literal => ("", "", format!("(|| {n})()")),
-        Form::Branch => ("", "f", "f()".to_string()),
+        Form::Branch | Form::BranchLast => ("", "f", "f()".to_string()),
     };
     let literal = format!("|| {n}");
     let value = match form {
@@ -118,8 +121,12 @@ struct H<F> {{ f: F }}
     let branch = format!(
         "let f = || {{\n        if c {{\n            return {n};\n        }}\n        1\n    }};"
     );
+    let branch_last = format!(
+        "let f = || {{\n        if c {{\n            return 1;\n        }}\n        {n}\n    }};"
+    );
     let setup = match form {
         Form::Branch => branch.as_str(),
+        Form::BranchLast => branch_last.as_str(),
         _ => setup,
     };
     let read = match taker {

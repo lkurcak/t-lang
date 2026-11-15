@@ -60,6 +60,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let f3 = || five();
     let k: { v: u32 | v > 0 } = call(|| f3());
     out.line(&k)?; // expect: 5
+    // A function a closure gives back is that function.
+    let mk = || five;
+    let five_again = mk();
+    let z: { v: u32 | v > 0 } = five_again();
+    out.line(&z)?; // expect: 5
     // A closure in a field.
     let hold = Holder { f: || five() };
     let m: { v: u32 | v > 0 } = call(hold.f);
