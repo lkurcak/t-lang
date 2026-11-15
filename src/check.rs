@@ -146,12 +146,36 @@ pub(super) fn not_library(at: Span) -> Error {
 /// which every program's checking starts from (see docs/14-packages.md):
 /// their files, their items, with their paths resolved, and an empty crate
 /// root, and what the checker knows of them.
+///
+/// Checking a program sees nothing of most of their bodies, which only
+/// running or lowering it needs: their MIR, which operators were proved
+/// not to panic, and that their borrows and proofs hold, which the tests
+/// of the compiler check of these libraries, which are part of it. So
+/// those are only typed at first (`Checker::only_typed`), which is all
+/// `check_typed` needs; `check` has them checked in full, once.
 pub struct Libraries {
     pub sources: crate::source::Sources,
     pub prog: Program,
-    /// Behind a lock only as it has cells in it, which each program's
-    /// checking clones.
-    cx: std::sync::Mutex<Checker>,
+    /// What checking them left, with the bodies that a program's checking
+    /// sees nothing of only typed. Behind a lock only as it has cells in
+    /// it, which each program's checking clones.
+    typed: std::sync::Mutex<Checker>,
+    /// What checking them in full leaves: `typed`, with those bodies
+    /// checked in full, once asked for.
+    full: std::sync::OnceLock<std::sync::Mutex<Checker>>,
+}
+
+impl Libraries {
+    /// What checking them in full leaves (`full`).
+    fn full(&self) -> &std::sync::Mutex<Checker> {
+        self.full.get_or_init(|| {
+            let mut cx = self.typed.lock().expect("never poisoned").clone();
+            if let Err(e) = cx.finish_library_bodies(&self.prog) {
+                panic!("the libraries don't check: {}", e.render_in(&self.sources));
+            }
+            std::sync::Mutex::new(cx)
+        })
+    }
 }
 
 /// The libraries, read and checked, each against those before it: core
@@ -159,28 +183,39 @@ pub struct Libraries {
 pub fn libraries() -> &'static Libraries {
     static LIBRARIES: std::sync::OnceLock<Libraries> = std::sync::OnceLock::new();
     LIBRARIES.get_or_init(|| {
-        let (mut sources, mut prog) = crate::load::empty();
-        let mut cx = Checker::new();
-        for library in crate::load::LIBRARIES {
-            let from = prog.counts();
-            let checked = crate::load::library(&mut prog, &mut sources, library)
-                .and_then(|root| cx.package(&mut prog, root, from));
-            if let Err(e) = checked {
-                panic!(
-                    "the {} library doesn't check: {}",
-                    library.0,
-                    e.render_in(&sources)
-                );
-            }
-        }
-        // Its own business, as `check_files` says.
-        cx.warnings.clear();
+        let (sources, prog, cx) = check_libraries(true);
         Libraries {
             sources,
             prog,
-            cx: std::sync::Mutex::new(cx),
+            typed: std::sync::Mutex::new(cx),
+            full: std::sync::OnceLock::new(),
         }
     })
+}
+
+/// The libraries, read and checked, each against those before it, with
+/// the bodies that a program's checking sees nothing of only typed if
+/// `typing` (see `Libraries`).
+fn check_libraries(typing: bool) -> (crate::source::Sources, Program, Checker) {
+    let (mut sources, mut prog) = crate::load::empty();
+    let mut cx = Checker::new();
+    cx.typing_libraries = typing;
+    for library in crate::load::LIBRARIES {
+        let from = prog.counts();
+        let checked = crate::load::library(&mut prog, &mut sources, library)
+            .and_then(|root| cx.package(&mut prog, root, from));
+        if let Err(e) = checked {
+            panic!(
+                "the {} library doesn't check: {}",
+                library.0,
+                e.render_in(&sources)
+            );
+        }
+    }
+    cx.typing_libraries = false;
+    // Its own business, as `check_files` says.
+    cx.warnings.clear();
+    (sources, prog, cx)
 }
 
 /// Type-checks `prog`, adding any warnings to `warnings`, in source order.
@@ -193,8 +228,30 @@ pub fn libraries() -> &'static Libraries {
 /// those it depends on, each against those before it, which are those it
 /// depends on (see `load.rs`), then the crate root's.
 pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
+    check_with(prog, warnings, true)
+}
+
+/// `check`, with the libraries' bodies that a program's checking sees
+/// nothing of only typed (see `Libraries`): the same errors and warnings,
+/// for checking a program alone, but not what running or lowering it
+/// needs. Unless working out a const needs what one of those bodies does,
+/// which it then checks in full.
+pub fn check_typed(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(), Error>) {
+    check_with(prog, warnings, false)
+}
+
+/// `check`, or (not `full`) `check_typed`.
+fn check_with(
+    prog: &mut Program,
+    warnings: &mut Vec<Warning>,
+    full: bool,
+) -> (Info, Result<(), Error>) {
     let libraries = libraries();
-    let mut cx = libraries.cx.lock().expect("never poisoned").clone();
+    let checker = match full {
+        true => libraries.full(),
+        false => &libraries.typed,
+    };
+    let mut cx = checker.lock().expect("never poisoned").clone();
     let packages = match prog.packages.is_empty() {
         // A program put together by hand, not by `load`.
         true => vec![(ROOT, libraries.prog.counts())],
@@ -249,7 +306,21 @@ pub fn check(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Result<(
                 }
             })
             .collect();
-        result = crate::consts::evaluate(prog, &mut cx.info, &cx.adts, &consts);
+        result = loop {
+            match crate::consts::evaluate(prog, &mut cx.info, &cx.adts, &consts) {
+                Ok(crate::consts::Evaluated::Done) => break Ok(()),
+                // A function a const needs was only typed: so all of them
+                // are checked in full, as running the program would need.
+                Ok(crate::consts::Evaluated::Unchecked) => {
+                    if let Err(e) = cx.finish_library_bodies(prog) {
+                        unreachable!("the libraries don't check: {}", e.message);
+                    }
+                    let mir = cx.mir.take();
+                    cx.info.mir.extend(mir);
+                }
+                Err(e) => break Err(e),
+            }
+        };
     }
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
@@ -398,6 +469,24 @@ impl Local {
 /// "1 field", "2 fields".
 fn plural(n: usize, what: &str) -> String {
     format!("{n} {what}{}", if n == 1 { "" } else { "s" })
+}
+
+/// Where the ids of the nodes made up checking library bodies late start
+/// (`Checker::finish_library_bodies`), in the libraries' checking: past any
+/// program's, which go on from the libraries' parsed nodes'.
+const LIBRARY_IDS: u32 = 1 << 31;
+
+/// Where a package's own things start, which `package_passes` sets as it
+/// goes into it (see the `Checker` fields of the same names).
+#[derive(Clone, Copy)]
+struct PackageContext {
+    from: Counts,
+    leaves_from: usize,
+    imports_from: usize,
+    refs_from: usize,
+    impls_from: usize,
+    package: usize,
+    spans_from: usize,
 }
 
 #[derive(Clone)]
@@ -698,6 +787,16 @@ pub(crate) struct Checker {
     /// The functions whose effects are being inferred, by `FnId`, whose
     /// group's bodies aren't all checked yet (see `check/infer.rs`).
     inferring: HashSet<usize>,
+    /// Whether the libraries' bodies that nothing a program's checking sees
+    /// are only typed, not checked in full (`Checker::only_typed`): when
+    /// the libraries are checked for `check_typed`.
+    typing_libraries: bool,
+    /// The library functions whose bodies were only typed, by `FnId`, in
+    /// the order they were: `finish_library_bodies` checks them in full.
+    typed_only: Vec<usize>,
+    /// What `package_passes` set for each package checked, by its root
+    /// module: so a library body can be checked in full later, as if then.
+    package_contexts: Vec<(usize, PackageContext)>,
     /// Every package's tests so far, and where the one being checked's
     /// start.
     tests: Vec<TestFn>,
@@ -1050,6 +1149,9 @@ impl Checker {
             literals: Vec::new(),
             nots: Vec::new(),
             inferring: HashSet::new(),
+            typing_libraries: false,
+            typed_only: Vec::new(),
+            package_contexts: Vec::new(),
             tests: Vec::new(),
             tests_from: 0,
             blaming: Vec::new(),
@@ -1108,6 +1210,8 @@ impl Checker {
         self.impls_from = self.traits.impls.len();
         self.package = root;
         self.spans_from = prog.mods[root].span.start;
+        let context = self.package_context();
+        self.package_contexts.push((root, context));
         let resolved = modules::resolve(prog, &mut self.modules, from);
         self.next_id = prog.next_id;
         resolved?;
@@ -1571,15 +1675,118 @@ impl Checker {
                 _ => Vec::new(),
             };
             let notes = self.info.notes.len();
-            let result = self.body(f, FnId(i));
+            let full = !(self.typing_libraries && self.only_typed(f, FnId(i)));
+            let result = self.body(f, FnId(i), full);
             self.finish_notes(notes);
+            if !full {
+                // What's noted of it is for an editor, which has the
+                // libraries checked in full: noted when they are.
+                self.info.notes.truncate(notes);
+                self.typed_only.push(i);
+            }
             result?;
         }
         Ok(())
     }
 
-    /// Checks the body of `f`, which has id `id`, top-level or nested.
-    fn body(&mut self, f: &FnDecl, id: FnId) -> Result<(), Error> {
+    /// Whether only the types of `f`'s body, whose id is `id`, are checked
+    /// when the libraries are for `check_typed` (see `Libraries`): a library
+    /// function's, unless a program's checking sees something of its body
+    /// other than its types: if its effects are inferred, if it's a const or
+    /// a static, whose value is worked out, a measure, whose body is in the
+    /// logic, or if it returns an opaque type, which stands for what its
+    /// body returns. What its types give, a program's checking sees: the
+    /// calls the body makes, at which type arguments, which polymorphic
+    /// recursion is about (`no_polymorphic_recursion`), and its closures'
+    /// types, with their effects, as far as what the body says of them,
+    /// unproved.
+    fn only_typed(&self, f: &FnDecl, id: FnId) -> bool {
+        if !self.modules.in_library(f.module)
+            || f.is_const()
+            || f.measure.is_some()
+            || self.inferring.contains(&id.0)
+        {
+            return false;
+        }
+        fn opaque(t: &Type) -> bool {
+            matches!(t, Type::Opaque(..)) || t.parts().any(opaque)
+        }
+        match &self.fns[id.0].scheme.ty {
+            Type::Fn(sig) => !opaque(&sig.ret),
+            _ => false,
+        }
+    }
+
+    /// Checks in full the library bodies that were only typed
+    /// (`typed_only`), of `prog`, each as part of its package, as checking
+    /// the libraries would have. Their ids are their own, apart from any
+    /// program's.
+    fn finish_library_bodies(&mut self, prog: &Program) -> Result<(), Error> {
+        let typed = std::mem::take(&mut self.typed_only);
+        if typed.is_empty() {
+            return Ok(());
+        }
+        let here = self.package_context();
+        let next_id = self.next_id;
+        self.next_id = self.next_id.max(LIBRARY_IDS);
+        let warnings = self.warnings.len();
+        let all = prog.all_fns();
+        let mut result = Ok(());
+        for i in typed {
+            let root = self.modules.package_root(all[i].0.module);
+            if let Some(&(_, c)) = self.package_contexts.iter().find(|(r, _)| *r == root) {
+                self.set_package_context(c);
+            }
+            result = self.fn_body(prog, all[i], i);
+            if result.is_err() {
+                break;
+            }
+        }
+        if result.is_ok() {
+            result = self.solve_group(Vec::new(), true);
+        }
+        if result.is_ok()
+            && let Some(e) = self.proof_errors.pop()
+        {
+            result = Err(e);
+        }
+        self.set_package_context(here);
+        self.next_id = match next_id < LIBRARY_IDS {
+            true => next_id,
+            false => self.next_id,
+        };
+        // Its own business, as `check_files` says.
+        self.warnings.truncate(warnings);
+        self.info.traits.closures = self.traits.closures.clone();
+        result
+    }
+
+    /// Where the package being checked starts (`PackageContext`).
+    fn package_context(&self) -> PackageContext {
+        PackageContext {
+            from: self.from,
+            leaves_from: self.leaves_from,
+            imports_from: self.imports_from,
+            refs_from: self.refs_from,
+            impls_from: self.impls_from,
+            package: self.package,
+            spans_from: self.spans_from,
+        }
+    }
+
+    fn set_package_context(&mut self, c: PackageContext) {
+        self.from = c.from;
+        self.leaves_from = c.leaves_from;
+        self.imports_from = c.imports_from;
+        self.refs_from = c.refs_from;
+        self.impls_from = c.impls_from;
+        self.package = c.package;
+        self.spans_from = c.spans_from;
+    }
+
+    /// Checks the body of `f`, which has id `id`, top-level or nested: in
+    /// full, or (not `full`) only its types (see `only_typed`).
+    fn body(&mut self, f: &FnDecl, id: FnId, full: bool) -> Result<(), Error> {
         self.current = Some(id);
         self.module = f.module;
         let scheme = self.fns[id.0].scheme.clone();
@@ -1647,6 +1854,21 @@ impl Checker {
         // docs/64-phase-order.md). The borrow checker's warnings come last,
         // as they always did.
         let closures = self.solve_types(vars)?;
+        if !full {
+            // Its effects, as far as what's within what says, for the
+            // types of its closures and of the calls it makes, but not
+            // checked: that waits, with its borrows and proofs, for it to
+            // be checked in full.
+            let _ = self.least_effects(vars);
+            self.resettle_closures(&closures);
+            self.obligations.clear();
+            self.effect_sites.clear();
+            self.unwraps.clear();
+            self.dropped.clear();
+            self.unsafe_blocks.clear();
+            self.unsafe_uses.clear();
+            return Ok(());
+        }
         self.fresh_mir.borrow_mut().clear();
         self.refine_mir.borrow_mut().clear();
         self.reveal_hidden(f, &hidden, true)?;
@@ -2288,7 +2510,7 @@ mod tests {
     #[test]
     fn checking_a_program_leaves_the_libraries_as_they_were() {
         let libraries = libraries();
-        let base = libraries.cx.lock().unwrap().clone();
+        let base = libraries.full().lock().unwrap().clone();
         let want = base.library_part(&base);
         assert!(want.len() > 100, "only {} things known", want.len());
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/t");
@@ -2304,7 +2526,7 @@ mod tests {
             let handles: Vec<_> = (0..threads)
                 .map(|_| {
                     s.spawn(|| {
-                        let base = libraries.cx.lock().unwrap().clone();
+                        let base = libraries.full().lock().unwrap().clone();
                         let mut failures = Vec::new();
                         loop {
                             let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -2322,6 +2544,140 @@ mod tests {
                             if let Some((w, g)) = want.iter().zip(&got).find(|(w, g)| w != g) {
                                 let name = path.file_name().unwrap().to_string_lossy();
                                 failures.push(format!("{name}:\n  was {w}\n  now {g}"));
+                            }
+                        }
+                    })
+                })
+                .collect();
+            handles
+                .into_iter()
+                .flat_map(|h| h.join().unwrap())
+                .collect()
+        });
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
+    /// What a program's checking sees of the libraries (`seen`), or also
+    /// what running it needs of them: MIR and proofs.
+    fn libraries_known(cx: &Checker, seen: bool) -> Vec<String> {
+        let mut out = cx.library_part(cx);
+        let mut sorted = |mut v: Vec<String>| {
+            v.sort();
+            out.extend(v);
+        };
+        let at = |id| cx.instance_at.get(id);
+        sorted(
+            (cx.info.instances.iter())
+                .map(|(id, i)| format!("instance {id:?} {i:?} at {:?}", at(id)))
+                .collect(),
+        );
+        sorted(
+            cx.inferred
+                .iter()
+                .map(|(f, t)| format!("inferred {f} {t:?}"))
+                .collect(),
+        );
+        sorted(
+            cx.const_values
+                .iter()
+                .map(|(c, k)| format!("const {c} {k:?}"))
+                .collect(),
+        );
+        if !seen {
+            sorted(
+                cx.info
+                    .proved
+                    .iter()
+                    .map(|id| format!("proved {id:?}"))
+                    .collect(),
+            );
+            sorted(
+                cx.mir
+                    .borrow()
+                    .iter()
+                    .map(|(k, b)| format!("mir {k:?} {b:?}"))
+                    .collect(),
+            );
+        }
+        out
+    }
+
+    /// The first difference of `got` from `want`, if there's one.
+    fn same(want: &[String], got: &[String], what: &str) {
+        if let Some((w, g)) = want.iter().zip(got).find(|(w, g)| w != g) {
+            panic!("checked at once: {w}\n{what}: {g}");
+        }
+        assert_eq!(want.len(), got.len(), "{what}");
+    }
+
+    /// The libraries with the bodies that were only typed checked in full
+    /// later (`Libraries::full`) are what checking them in full at once
+    /// gives: checking a body depends on the others only through what they
+    /// declare, and through what's inferred of them, which isn't left for
+    /// later.
+    #[test]
+    fn libraries_typed_then_finished_are_libraries_checked_in_full() {
+        let libraries = libraries();
+        let (_, prog, at_once) = check_libraries(false);
+        assert_eq!(prog.next_id, libraries.prog.next_id, "the same nodes");
+        // A copy: finishing them takes the lock.
+        let typed = libraries.typed.lock().unwrap().clone();
+        assert!(
+            typed.typed_only.len() > 100,
+            "only {} typed",
+            typed.typed_only.len()
+        );
+        // What a program's checking sees is there before they're finished.
+        let seen = libraries_known(&typed, true);
+        same(&libraries_known(&at_once, true), &seen, "only typed");
+        let finished = libraries.full().lock().unwrap();
+        let known = libraries_known(&finished, false);
+        same(&libraries_known(&at_once, false), &known, "finished later");
+    }
+
+    /// `check_typed` finds what `check` does, in every program of the tests:
+    /// the same errors and warnings.
+    #[test]
+    fn check_typed_says_what_check_says() {
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/t");
+        let mut paths: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .map(|e| e.unwrap().path())
+            .filter(|p| p.extension().is_some_and(|e| e == "t"))
+            .collect();
+        paths.sort();
+        // Read before the threads, as `libraries` is once.
+        let _ = libraries().full();
+        let next = std::sync::atomic::AtomicUsize::new(0);
+        let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+        let shown = |c: &crate::Checked| {
+            let mut out = Warning::render_all_in(&c.warnings, &c.sources);
+            if let Err(e) = &c.result {
+                out.push(e.render_in(&c.sources));
+            }
+            out
+        };
+        let failures: Vec<String> = std::thread::scope(|s| {
+            let handles: Vec<_> = (0..threads)
+                .map(|_| {
+                    s.spawn(|| {
+                        let mut failures = Vec::new();
+                        loop {
+                            let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            let Some(path) = paths.get(i) else {
+                                return failures;
+                            };
+                            let src = std::fs::read_to_string(path).unwrap();
+                            let read = &crate::load::read_file;
+                            let full = shown(&crate::check_files(path, &src, read));
+                            let typed = shown(&crate::check_only_files(path, &src, read));
+                            if full != typed {
+                                let name = path.file_name().unwrap().to_string_lossy();
+                                failures.push(format!(
+                                    "{name}:\n--- check:\n{}\n--- check_typed:\n{}",
+                                    full.join("\n"),
+                                    typed.join("\n")
+                                ));
                             }
                         }
                     })

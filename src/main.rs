@@ -196,7 +196,12 @@ fn run() -> ExitCode {
 
     let path = std::path::Path::new(path);
     if cmd == "check" || cmd == "mono" {
-        let checked = t_lang::check_files(path, &src, &t_lang::load::read_file);
+        // `t check` lowers nothing, so it needs the libraries checked only
+        // as far as checking a program sees them.
+        let checked = match cmd {
+            "check" => t_lang::check_only_files(path, &src, &t_lang::load::read_file),
+            _ => t_lang::check_files(path, &src, &t_lang::load::read_file),
+        };
         for w in Warning::render_all_in(&checked.warnings, &checked.sources) {
             eprintln!("{w}\n");
         }

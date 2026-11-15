@@ -371,7 +371,7 @@ impl Checker {
             nots: std::mem::take(&mut self.nots),
         };
         self.closure_fix = fix.map(|fix| (outer.barrier, fix));
-        let result = self.body(f, id);
+        let result = self.body(f, id, true);
         self.current = outer.current;
         self.type_params = outer.type_params;
         self.const_decls = outer.const_decls;

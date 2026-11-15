@@ -259,6 +259,12 @@ impl crate::mir::Names for Executable {
 pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
     let mut mono = Mono::new(&prog.program, prog.info);
     let program = mono.run();
+    if let Some(f) = mono.unchecked.first() {
+        unreachable!(
+            "`{f}` was only typed, not checked in full: a program to lower is checked with \
+             `check::check`, whose libraries are"
+        );
+    }
     let shapes = mono.shapes();
     Executable {
         program,
@@ -275,18 +281,18 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
 /// `prog`, which has been checked and lifted, without generics, as far as
 /// const `root` needs it: only what it reaches, for working out its value
 /// (see `crate::consts`). With the consts it needs whose values aren't
-/// known yet, as lengths or by calls: if there are any, what this makes
-/// doesn't do what it would, and is only for finding them.
-pub(crate) fn rooted(
-    prog: &Program,
-    info: &Info,
-    root: &str,
-) -> (Executable, std::collections::BTreeSet<String>) {
+/// known yet, as lengths or by calls, and the functions it needs whose
+/// bodies were only typed (`Mono::unchecked`): if there are any, what this
+/// makes doesn't do what it would, and is only for finding them.
+pub(crate) fn rooted(prog: &Program, info: &Info, root: &str) -> (Executable, Rooted) {
     let mut mono = Mono::new(prog, info);
     mono.roots = Some(vec![root.to_string()]);
     let program = mono.run();
     let shapes = mono.shapes();
-    let missing = mono.missing.take();
+    let missing = Rooted {
+        consts: mono.missing.take(),
+        unchecked: !mono.unchecked.is_empty(),
+    };
     let exe = Executable {
         program,
         bodies: mono.bodies,
@@ -298,6 +304,13 @@ pub(crate) fn rooted(
         intrinsics: mono.intrinsics,
     };
     (exe, missing)
+}
+
+/// What `rooted`'s copy needs first: the consts whose values aren't known
+/// yet, and whether some function's body was only typed.
+pub(crate) struct Rooted {
+    pub(crate) consts: std::collections::BTreeSet<String>,
+    pub(crate) unchecked: bool,
 }
 
 /// The name of the copy of the closure made by the lambda with node `id`,
@@ -408,6 +421,10 @@ struct Mono<'p> {
     /// The consts whose values were needed, as lengths or by calls, but
     /// aren't known yet, so that they can be worked out first.
     missing: std::cell::RefCell<std::collections::BTreeSet<String>>,
+    /// The functions needed whose bodies were only typed, as the libraries'
+    /// are for `check::check_typed` (`Checker::only_typed`): they have no
+    /// MIR to copy until they're checked in full.
+    unchecked: std::collections::BTreeSet<String>,
 }
 
 impl<'p> Mono<'p> {
@@ -540,6 +557,7 @@ impl<'p> Mono<'p> {
             intrinsics: HashMap::new(),
             roots: None,
             missing: Default::default(),
+            unchecked: Default::default(),
         }
     }
 
@@ -777,11 +795,16 @@ impl<'p> Mono<'p> {
                 cx.m.entry_drops.insert(copy.clone(), g);
             }
         }
-        if !f.bodiless()
-            && let Some(b) = cx.m.info.mir.get(&crate::mir::Key::Fn(f.name.name.clone()))
-        {
-            let b = cx.body(b, &copy);
-            cx.m.bodies.insert(copy.clone(), b);
+        if !f.bodiless() {
+            match cx.m.info.mir.get(&crate::mir::Key::Fn(f.name.name.clone())) {
+                Some(b) => {
+                    let b = cx.body(b, &copy);
+                    cx.m.bodies.insert(copy.clone(), b);
+                }
+                None => {
+                    cx.m.unchecked.insert(f.name.name.clone());
+                }
+            }
         }
         if f.bodiless() {
             let ps = (f.params.iter())

@@ -310,6 +310,13 @@ impl Checker {
     /// are finitely many. A `sup` with two variables gives the first what
     /// it needs, which is a solution if not the only least one.
     pub(super) fn settle_effects(&mut self, vars: usize) -> Result<(), Error> {
+        let withins = self.least_effects(vars);
+        self.check_withins(withins)
+    }
+
+    /// `settle_effects`' least solution, without its checks: the `Within`s,
+    /// taken, for those.
+    pub(super) fn least_effects(&mut self, vars: usize) -> Vec<Within> {
         let withins = std::mem::take(&mut self.withins);
         let mut least: HashMap<u32, Vec<Type>> = HashMap::new();
         let open = |c: &Checker, t: &Type| -> Vec<u32> {
@@ -366,6 +373,11 @@ impl Checker {
                 self.vars[v as usize].solution = Some(Type::effects(items));
             }
         }
+        withins
+    }
+
+    /// `settle_effects`' checks, of what's within what.
+    fn check_withins(&mut self, withins: Vec<Within>) -> Result<(), Error> {
         for w in withins {
             let (mut sub, sup) = (self.solved(&w.sub), self.solved(&w.sup));
             if w.discharged {

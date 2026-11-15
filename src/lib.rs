@@ -102,6 +102,25 @@ pub fn check_files(path: &Path, src: &str, read: load::Read) -> Checked {
 /// `check_files`, for `target`, which says which libraries the program has
 /// (see docs/39-freestanding.md).
 pub fn check_files_for(path: &Path, src: &str, read: load::Read, target: Target) -> Checked {
+    check_files_with(path, src, read, target, true)
+}
+
+/// `check_files`, for checking alone, as `t check` does: the same errors and
+/// warnings, sooner, but what it gives can't be lowered, as the libraries'
+/// bodies a program's checking sees nothing of were only typed (see
+/// `check::check_typed`).
+pub fn check_only_files(path: &Path, src: &str, read: load::Read) -> Checked {
+    check_files_with(path, src, read, Target::Hosted, false)
+}
+
+/// `check_files_for`, with the libraries checked in full (`full`) or not.
+fn check_files_with(
+    path: &Path,
+    src: &str,
+    read: load::Read,
+    target: Target,
+    full: bool,
+) -> Checked {
     let mut warnings = Vec::new();
     let (sources, program) = load::load_for(path, src, read, target);
     let mut program = match program {
@@ -115,7 +134,10 @@ pub fn check_files_for(path: &Path, src: &str, read: load::Read, target: Target)
             };
         }
     };
-    let (info, result) = check::check(&mut program, &mut warnings);
+    let (info, result) = match full {
+        true => check::check(&mut program, &mut warnings),
+        false => check::check_typed(&mut program, &mut warnings),
+    };
     // Here rather than in `check`, since the fixes check renamed programs.
     let checked = result.is_ok().then_some(&info);
     warnings.extend(naming::warnings(&sources, &program, checked));
