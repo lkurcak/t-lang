@@ -165,6 +165,8 @@ type Keeps = Vec<(Place, Vec<String>)>;
 #[derive(Debug, Clone)]
 struct Part {
     pred: Expr,
+    /// Its binder, as written: `""` for a postcondition's. For messages.
+    binder: String,
     /// Where each part of the value it's of is, as the variant and field
     /// of each enum on the way to it: one way, `[]`, for the whole value;
     /// for the `T` of `Option<T>`, `[(1, 0)]`, the field of `Some`. None
@@ -192,6 +194,7 @@ impl Refinement {
         Refinement {
             parts: vec![Part {
                 pred,
+                binder: String::new(),
                 ways: vec![Vec::new()],
                 path: Vec::new(),
                 carried: false,
@@ -557,13 +560,15 @@ impl Checker {
                 .cloned(),
         );
         // An impl's method of a trait can say more of what it gives than
-        // the trait does, for the calls known to be of it.
+        // the trait does, for the calls known to be of it. An impl of
+        // `DiscardWhen`'s `discard` has its `self` refined, which each drop
+        // that calls it proves (lemma W1 of docs/80-discard-when.md).
         let results = allowed || self.sig_self.is_some();
         self.pending_refined.push(Pending::Sig {
             f: Box::new(f.clone()),
             params: params.to_vec(),
             ret: ret.clone(),
-            allowed,
+            allowed: allowed || self.sig_discard_when,
             results,
             owner: self.sig_owner.clone(),
             consts,
@@ -1321,6 +1326,7 @@ impl Checker {
             }
             parts.push(Part {
                 pred: pred.clone(),
+                binder: binder.name.clone(),
                 ways,
                 path,
                 carried,
@@ -4102,6 +4108,23 @@ impl Walk<'_> {
             });
             self.assume_tree(val, &base, &proved);
         }
+        self.need_parts(r, val, env, span, &|_, text| {
+            format!("can't prove `{text}` for {what}")
+        });
+        Ok(())
+    }
+
+    /// As `need`, for a refinement with no carried parts, failing with the
+    /// message `says` makes of the binder and predicate of the part that
+    /// can't be proved.
+    pub(super) fn need_parts(
+        &mut self,
+        r: &Refinement,
+        val: &Val,
+        env: Env,
+        span: Span,
+        says: &dyn Fn(&str, &str) -> String,
+    ) {
         for part in &r.parts {
             if part.carried {
                 continue;
@@ -4119,10 +4142,7 @@ impl Walk<'_> {
                 continue;
             };
             let failure = self.proof_failure(reason, goal.as_ref().ok(), Some(val), &part.text());
-            self.failed(failure.attach(Error::ty(
-                span,
-                format!("can't prove `{}` for {what}", part.text()),
-            )));
+            self.failed(failure.attach(Error::ty(span, says(&part.binder, &part.text()))));
             // Assumed from here on, as if it had been proved.
             for part in &r.parts {
                 if !part.carried
@@ -4131,9 +4151,8 @@ impl Walk<'_> {
                     self.fact(g);
                 }
             }
-            return Ok(());
+            return;
         }
-        Ok(())
     }
 
     /// `e`, that a refinement couldn't be proved, is reported, but checking

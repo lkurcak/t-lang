@@ -223,11 +223,23 @@ export struct IntoIter<T> {
     next: { i: usize | i <= len },
 }
 
+impl<T> IntoIter<T> {
+    /// How many values it has yet to give. It's a measure: once `next`
+    /// has given `None`, it's `0`.
+    #[measure]
+    export fn len(&self) -> usize { self.len - self.next }
+}
+
+/// Gives the next value, until there are none: then `None`, and from then
+/// on, as it says.
 impl<T> Iterator for IntoIter<T> {
     type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
+    {
         let i = self.next;
         if i < self.len {
             self.next = i + 1;
@@ -252,9 +264,33 @@ impl<T: Discard> Discard for IntoIter<T> {
     }
 }
 
+/// One that's given all its values holds none, whatever they are: it
+/// only gives the buffer back. So a `for` over a list of values that
+/// aren't `Discard` uses its iterator up when it runs to its end
+/// (docs/80-discard-when.md).
+impl<T> Discard for { it: IntoIter<T> | it.len() == 0 } {
+    fn discard(self) {
+        let IntoIter { buf, len: _, next: _ } = self;
+        // SAFETY: `next == len`, so every value in slots `0..len` has been
+        // read out, and the slots after them never held any.
+        unsafe { buf.free() };
+    }
+}
+
 /// Drops its values, front to back, and gives the buffer back.
 impl<T: Discard> Discard for List<T> {
     fn discard(self) { self.free_with(|_x| {}) }
+}
+
+/// An empty one holds no values, whatever they'd be: it only gives the
+/// buffer back. So a list of values that aren't `Discard` may be dropped
+/// where it's known to be empty (docs/80-discard-when.md).
+impl<T> Discard for { l: List<T> | l.len() == 0 } {
+    fn discard(self) {
+        let List { buf, len: _ } = self;
+        // SAFETY: `len == 0`, so no slot holds a value.
+        unsafe { buf.free() };
+    }
 }
 
 impl<T: Copy> List<T> {

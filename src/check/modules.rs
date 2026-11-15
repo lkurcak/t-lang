@@ -1373,6 +1373,7 @@ impl Rewrite<'_> {
             if let Some(t) = &mut d.trait_name {
                 self.trait_ref(t)?;
             }
+            self.discard_when(d)?;
             self.generics(&mut d.generics)?;
             self.ty(&mut d.self_ty)?;
             for a in &mut d.assoc {
@@ -1481,6 +1482,74 @@ impl Rewrite<'_> {
     }
 
     /// A reference to a trait, which from here on names it by its symbol.
+    /// `impl Discard for { v: T | p } { fn discard(self) { .. } }`, impl
+    /// `d` once its trait is a symbol: an impl of `DiscardWhen` for `T`,
+    /// whose `discard`'s `self` has the refinement, `self: { v: Self | p
+    /// }`, which no program can write. So its body is checked knowing `p`
+    /// of `self`, and each drop that calls it must prove `p` of what it
+    /// drops, as a call would (lemma W1 of docs/80-discard-when.md). Only
+    /// `Discard` can be implemented for a refined type: any other trait's
+    /// impl is for every value of its type, as an inherent impl's methods
+    /// are.
+    fn discard_when(&mut self, d: &mut ImplDecl) -> Result<(), Error> {
+        let TypeExprKind::Refined(..) = &d.self_ty.kind else {
+            return Ok(());
+        };
+        let Some(t) = d
+            .trait_name
+            .as_mut()
+            .filter(|t| t.name == crate::traits::DISCARD)
+        else {
+            return Err(Error::ty(
+                d.self_ty.span,
+                "only `Discard` can be implemented for a refined type, for the values its \
+                 refinement holds of: an impl of any other trait is for every value of its type",
+            ));
+        };
+        t.name = crate::traits::DISCARD_WHEN.into();
+        let span = d.self_ty.span;
+        let refined = std::mem::replace(
+            &mut d.self_ty,
+            TypeExpr {
+                kind: TypeExprKind::Unit,
+                span,
+                id: NodeId(0),
+            },
+        );
+        let TypeExprKind::Refined(binder, base, pred) = refined.kind else {
+            unreachable!("matched above")
+        };
+        d.self_ty = *base;
+        if let TypeExprKind::Refined(..) = d.self_ty.kind {
+            return Err(Error::ty(
+                d.self_ty.span,
+                "an impl of `Discard` for a refined type has one refinement: say both in one, \
+                 with `&&`",
+            ));
+        }
+        let receiver = (d.methods.iter_mut())
+            .filter(|f| f.name.name == "discard")
+            .flat_map(|f| f.params.first_mut())
+            .find(|p| p.name.name == "self" && matches!(&p.ty.kind, TypeExprKind::Named(n, a) if n == "Self" && a.is_empty()));
+        if let Some(p) = receiver {
+            let at = p.ty.span;
+            let base = std::mem::replace(
+                &mut p.ty,
+                TypeExpr {
+                    kind: TypeExprKind::Unit,
+                    span: at,
+                    id: NodeId(0),
+                },
+            );
+            p.ty = TypeExpr {
+                kind: TypeExprKind::Refined(binder, Box::new(base), pred),
+                span: at,
+                id: self.id(),
+            };
+        }
+        Ok(())
+    }
+
     fn trait_ref(&mut self, name: &mut Ident) -> Result<(), Error> {
         if name.name.contains("::") {
             let b = self.path(name, Ns::Types)?;

@@ -691,6 +691,10 @@ pub(crate) struct Checker {
     /// The type of the impl whose method's signature is being checked, if
     /// it's one: what `Self` is in it.
     sig_self: Option<Type>,
+    /// While resolving the signature of an impl's method, whether the
+    /// impl is of `DiscardWhen`, whose `discard`'s `self` is refined (see
+    /// `modules::Rewrite::discard_when`).
+    sig_discard_when: bool,
     /// What has effects in the body being checked, the function's or a
     /// closure's (see `effects`).
     effect_sites: Vec<effects::Site>,
@@ -1137,6 +1141,7 @@ impl Checker {
             opaque_at: HashMap::new(),
             sig_owner: Default::default(),
             sig_self: None,
+            sig_discard_when: false,
             effect_sites: Vec::new(),
             proof_failures: HashMap::new(),
             proof_errors: Vec::new(),
@@ -1692,11 +1697,15 @@ impl Checker {
                 method,
                 Some(MethodOf::Impl(k)) if prog.impls[k].trait_name.is_some()
             );
+            // An impl of `Discard` for a refined type is one of
+            // `DiscardWhen` (`modules::Rewrite::discard_when`).
             self.in_discard = matches!(
                 method,
                 Some(MethodOf::Impl(k))
-                    if self.traits.impls[self.impl_ids[k]].trait_name.as_deref()
-                        == Some(crate::traits::DISCARD)
+                    if matches!(
+                        self.traits.impls[self.impl_ids[k]].trait_name.as_deref(),
+                        Some(crate::traits::DISCARD | crate::traits::DISCARD_WHEN)
+                    )
             );
             self.const_decls = match method {
                 Some(MethodOf::Impl(k)) => consts(&prog.impls[k].generics),

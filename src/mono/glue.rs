@@ -231,12 +231,20 @@ impl Cx<'_, '_, '_> {
         let mut g = G::new(Type::Unit, vec![t.clone()]);
         let x = Place::local(Local(1));
         let traits = &self.m.info.traits;
-        let own = matches!(
-            traits.implements(t, DISCARD, &[], &[]),
-            Ok(Source::Impl(i, _)) if !traits.impls[i].derived
-        );
-        if own {
-            let name = format!("<{DISCARD}>::discard");
+        let discard = traits.implements(t, DISCARD, &[], &[]);
+        let own = matches!(discard, Ok(Source::Impl(i, _)) if !traits.impls[i].derived);
+        // One that isn't `Discard`, dropped, is one its impl of `Discard`
+        // for a refined type holds of: the checker proved it where it's
+        // dropped (lemma W2 of docs/80-discard-when.md). That impl's
+        // `discard` drops it.
+        let when = discard.is_err()
+            && (traits.implements(t, crate::traits::DISCARD_WHEN, &[], &[])).is_ok();
+        if own || when {
+            let tr = match when {
+                true => crate::traits::DISCARD_WHEN,
+                false => DISCARD,
+            };
+            let name = format!("<{tr}>::discard");
             let Target::Fn(of, args, copy) = self.target(&name, vec![t.clone()]) else {
                 unreachable!("an own `discard` is a function")
             };

@@ -276,11 +276,14 @@ impl Checker {
         let mut effect_bounds = impl_effects.to_vec();
         effect_bounds.extend(own_effects);
         let opaques = this.is_none();
+        self.sig_discard_when = (this.as_ref())
+            .is_some_and(|p| p.trait_name == crate::traits::DISCARD_WHEN && self_ty.is_some());
         self.adts.proj.env = preds.iter().cloned().chain(this).collect();
         self.adts.proj.local = eqs.clone();
         self.sig_self = self_ty.cloned();
         let signature = self.signature(f, &with_self, &lifetimes, opaques);
         self.sig_self = None;
+        self.sig_discard_when = false;
         let (param_tys, ret, effects, lts) = signature?;
         let mut ty = Type::func_with(param_tys, ret, effects);
         if let Some(s) = self_ty {

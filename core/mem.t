@@ -21,6 +21,16 @@ export trait Discard {
     fn discard(self);
 }
 
+/// What `impl Discard for { v: T | .. }` is an impl of: a type's values
+/// that its refinement holds of may be thrown away, where the checker can
+/// prove it holds, as an empty list of values that aren't `Discard` can.
+/// Dropping one calls this `discard`, whose `self` the refinement holds
+/// of. It's never a bound, and can't be named: a drop is the only call of
+/// it (see docs/80-discard-when.md).
+trait DiscardWhen {
+    fn discard(self);
+}
+
 /// Says a type's values are copied, rather than moved: using one leaves
 /// it where it was. It needs `Discard`, as a copy that can't be thrown
 /// away would be one more value to use up.

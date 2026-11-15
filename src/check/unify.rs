@@ -582,11 +582,13 @@ impl Checker {
 
     /// An unused variable whose type isn't `Discard` must still be used
     /// up, so renaming it `_x` would only hide the warning: it says so
-    /// instead, with no fix.
+    /// instead, with no fix. Not of a type that may be dropped where a
+    /// refinement holds, as an empty list of them may: whether it does is
+    /// the refinement checker's to say.
     fn settle_unused(&mut self) {
         for (i, t) in std::mem::take(&mut self.unused) {
             let t = self.solved(&t);
-            if has_type_vars(&t) || self.is_discard(&t) {
+            if has_type_vars(&t) || self.is_discard(&t) || self.is_discard_when(&t) {
                 continue;
             }
             let w = &mut self.warnings[i];

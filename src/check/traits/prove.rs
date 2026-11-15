@@ -46,6 +46,21 @@ impl Checker {
             .is_ok()
     }
 
+    /// May a value of type `t`, which has no type variables in it and isn't
+    /// `Discard`, be thrown away where a refinement holds of it: is there an
+    /// `impl Discard for { v: T | p }` that's for `t`, with the bounds in
+    /// scope? Then the drop needs `p` of it (docs/80-discard-when.md).
+    pub(crate) fn is_discard_when(&self, t: &Type) -> bool {
+        (self.traits)
+            .implements(
+                t,
+                crate::traits::DISCARD_WHEN,
+                &self.adts.proj.env,
+                &self.adts.proj.local,
+            )
+            .is_ok()
+    }
+
     /// What `t`, which isn't `Discard`, would need to be, for messages to
     /// say: a type parameter, which a bound can make so, or a struct or
     /// enum that deriving `Discard` would make so, if its fields allow

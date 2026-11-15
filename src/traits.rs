@@ -42,6 +42,10 @@ impl fmt::Display for Pred {
 /// `core::mem::Discard`: a type's values may be thrown away rather than
 /// used up (see docs/06a.1-linear-types.md).
 pub const DISCARD: &str = "core::mem::Discard";
+/// `core::mem::DiscardWhen`: what `impl Discard for { v: T | .. }` is an
+/// impl of. Its values that the refinement holds of may be dropped where
+/// that's proved (see docs/80-discard-when.md). Never a bound.
+pub const DISCARD_WHEN: &str = "core::mem::DiscardWhen";
 /// `core::mem::Copy`: a type's values are copied rather than moved, which
 /// needs `Discard`.
 pub const COPY: &str = "core::mem::Copy";

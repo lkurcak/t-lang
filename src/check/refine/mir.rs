@@ -614,6 +614,11 @@ impl Walk<'_> {
                 self.mir_drop(fr, p, s.span);
             }
         }
+        if let Some(dropped) = fr.notes.drops_when.get(&at) {
+            for p in dropped {
+                self.mir_drop_when(fr, p, s.span)?;
+            }
+        }
         match &s.kind {
             StmtKind::Assign {
                 place,
@@ -680,6 +685,76 @@ impl Walk<'_> {
             ));
             return;
         }
+    }
+
+    /// The value at `place` is dropped here by an impl of `Discard` for a
+    /// refined type (`Notes::drops_when`): that refinement must hold of
+    /// it, as it's what that impl's `discard` needs of its `self`, which the
+    /// drop is a call of (lemma W1 of docs/80-discard-when.md).
+    fn mir_drop_when(
+        &mut self,
+        fr: &Frame,
+        place: &crate::mir::Place,
+        span: Span,
+    ) -> Result<(), Error> {
+        if !self.reachable {
+            return Ok(());
+        }
+        let ty = self.mir_ty(fr, place);
+        let traits = &self.cx.traits;
+        let (env, eqs) = (&self.cx.adts.proj.env, &self.cx.adts.proj.local);
+        let Ok(crate::traits::Source::Impl(k, targs)) =
+            traits.implements(&ty, crate::traits::DISCARD_WHEN, env, eqs)
+        else {
+            unreachable!("`{ty}` is dropped as `DiscardWhen`, but isn't")
+        };
+        let Some((_, symbol)) = traits.impls[k].methods.iter().find(|(m, _)| m == "discard") else {
+            unreachable!("an impl of `DiscardWhen` has a `discard`")
+        };
+        let Some(sig) = self.cx.refined.get(symbol).cloned() else {
+            return Ok(());
+        };
+        let Some(Some(r)) = sig.params.first() else {
+            return Ok(());
+        };
+        let Some(r) = r.ways_only() else {
+            return Ok(());
+        };
+        let targs: Vec<(String, Type)> = sig.type_params.iter().cloned().zip(targs).collect();
+        let v = self.read_mir(fr, place);
+        let name = match (place.proj.is_empty(), fr.id(place.local)) {
+            (true, Some(id)) => self.cx.typed.binds.get(&id).map(|b| b.name.clone()),
+            _ => None,
+        };
+        let short = self.cx.traits.shorten(&ty.to_string());
+        // The refined type, as the impl says it: `{ l: List<Fd> | .. }`.
+        let says = |binder: &str, text: &str| {
+            let only =
+                format!("`{{ {binder}: {short} | {text} }}` is, which can't be proved of it");
+            match name.as_deref() {
+                Some(crate::check::FOR_ITERATOR) => format!(
+                    "the `for` may stop before its iterator is used up, and drops it then: \
+                     `{short}` isn't `Discard`, only {only}"
+                ),
+                Some(n) => {
+                    format!("`{n}` is dropped here, and `{short}` isn't `Discard`: only {only}")
+                }
+                None => format!(
+                    "this value is dropped here, and `{short}` isn't `Discard`: only {only}"
+                ),
+            }
+        };
+        // Where a `for` ends, which has no span of its own, but one in its
+        // `for` (`modules::Rewrite::for_loop`): at what it goes through. A
+        // `return` or `?` in its body is where that is.
+        let decl = fr.body.locals[place.local.0].span;
+        let span = match name.as_deref() {
+            Some(crate::check::FOR_ITERATOR) if span.start < decl.start => decl,
+            _ => span,
+        };
+        let env = Env::Call(std::slice::from_ref(&v), &targs);
+        self.need_parts(&r, &v, env, span, &says);
+        Ok(())
     }
 
     /// Local `l` goes out of scope, or, if it's declared with no value, is
