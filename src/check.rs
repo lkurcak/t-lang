@@ -647,6 +647,11 @@ pub(crate) struct Checker {
     /// changing a field through it captures the field (lemma E1 of
     /// docs/77-method-captures.md).
     fn_params: HashMap<NodeId, bool>,
+    /// The parameters of closures, by id. What's declared of one is what
+    /// the call it's given to gives it, which only the refinement checker
+    /// knows, so a closure in its body that changes a place in it captures
+    /// it whole (K2b of docs/79-what-a-capture-splits.md).
+    lambda_params: HashSet<NodeId>,
     /// How each struct and enum varies with its parameters, as the borrow
     /// checker says, once asked, for as many as there were then
     /// (`Checker::adt_info`).
@@ -1038,6 +1043,7 @@ impl Checker {
             refined_lets: HashMap::new(),
             refined_params: HashSet::new(),
             fn_params: HashMap::new(),
+            lambda_params: HashSet::new(),
             adt_info: AdtInfoCache::default(),
             field_refined: HashMap::new(),
             variant_refined: HashMap::new(),

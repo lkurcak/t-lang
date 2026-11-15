@@ -2456,10 +2456,14 @@ impl Walk<'_> {
     /// Checks, as the checker's capture rules promise, that what closure
     /// `body` changes or owns of a variable is all of it, or a place in it
     /// no refinement relates to the rest (lemma C4 of
-    /// docs/76-widths-and-captures.md, K2 of docs/77-method-captures.md):
+    /// docs/79-what-a-capture-splits.md, K2 of docs/77-method-captures.md):
     /// otherwise the walk would check what it changes against the rest as
     /// it was when the closure was made, which the function may have
-    /// changed since. So: fields, none of which a refinement relates to
+    /// changed since. So: nothing declared of the whole of any place it's
+    /// in, which is what says what's at a place and what's next to it
+    /// (asked here of the walk, `place_decl_own`, not of the rules' own
+    /// list, so that a way to declare something the rules missed is caught
+    /// here: lemma O); fields, none of which a refinement relates to
     /// another field of its struct, and in none with a refinement of its
     /// own; through a `&mut`, by `&mut`, only if it's first, to a field,
     /// and nothing's declared behind it (lemma E1). Fails closed.
@@ -2472,6 +2476,9 @@ impl Walk<'_> {
             let mut p = Place::local(var.id);
             let mut apart = !self.invariants.contains_key(&var.id);
             for (k, proj) in var.path.iter().enumerate() {
+                // `p` is a place the capture is in, short of it.
+                apart &=
+                    (self.place_decl_own(&p).iter()).all(|(pos, d)| !pos.is_empty() || d.is_any());
                 match proj {
                     crate::mir::Proj::Field(i) => {
                         if let Some(fields) = self.refined_fields(&self.place_ty(&p)) {
@@ -2501,7 +2508,7 @@ impl Walk<'_> {
                     var.span,
                     format!(
                         "internal error: a closure captures `{}` apart from what a refinement \
-                         relates it to (docs/77-method-captures.md)",
+                         relates it to (docs/79-what-a-capture-splits.md)",
                         var.name
                     ),
                 ));
