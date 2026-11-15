@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.94.0 (2026-11-15)
+
+Step 79: what a capture splits. See
+[docs/79-what-a-capture-splits.md](docs/79-what-a-capture-splits.md).
+
+### Fixed
+
+- Soundness, since 0.91.0: a closure changing a place inside a tuple's
+  element, or inside a struct's field whose type is a type argument
+  (`|| t.0.x = 50`, `|| p.a.x = 50`), captured that place alone, so what
+  it wrote wasn't checked against a refinement the element's type
+  carried (`t: ({ v: Q | v.x <= v.y }, u32)` from a call, with no
+  refinement written at `t`), and a later read of `t.0` assumed one that
+  no longer held. The same in a closure's parameter, given what the
+  call gives it. Now such a closure captures the element, the field or
+  the parameter whole, and what it writes is checked against it.
+- The refinement checker's check that a closure's capture is apart from
+  what a refinement relates it to asks what's declared of every place
+  the capture is in, rather than repeating the capture rules.
+- A message about what couldn't be proved showed an empty condition
+  where what's declared at a place is which values may be there rather
+  than a predicate, or that none may: it says `false`, or which values,
+  now.
+
+### Changed
+
+- A `move` closure reading or changing a place below a tuple's element
+  or a generic struct's field takes the element or the field, as one
+  changing it by `&mut` does.
+
 ## 0.93.0 (2026-11-15)
 
 Step 78: callable values. See

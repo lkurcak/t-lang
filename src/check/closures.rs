@@ -193,6 +193,7 @@ impl Checker {
             {
                 self.refined_params.insert(local.id());
             }
+            self.lambda_params.insert(local.id());
             self.note_binds(std::slice::from_ref(&local), p.ty.is_none());
             self.bind(&local);
             self.locals.push(local);
@@ -535,7 +536,11 @@ impl Checker {
     ///   have refinements. Those relate the place to the rest, which the
     ///   function could change while the closure lives; what the closure
     ///   changes must keep them, and the rest is checked as it was when the
-    ///   closure was made.
+    ///   closure was made. Nor below a tuple's element or a field whose
+    ///   type is a type argument (K2a), nor into a closure's parameter
+    ///   (K2b): what's declared of those, which may relate places in them,
+    ///   only the refinement checker knows (lemma O of
+    ///   docs/79-what-a-capture-splits.md).
     /// - K3. By value, a place that isn't `Copy` is moved out: not out of a
     ///   struct that can't be taken apart here, which is taken whole.
     /// - K4. Where one place is in another, the other is captured, the
@@ -642,6 +647,16 @@ impl Checker {
         if refined && !path.is_empty() {
             return stop(0, Some(format!("`{var}` is declared with a refinement")));
         }
+        // A closure's parameter is declared what its call gives it (K2b).
+        if self.lambda_params.contains(&id) && matches!(path.first(), Some(Proj::Field(_))) {
+            return stop(
+                0,
+                Some(format!(
+                    "`{var}` is a closure's parameter, which may be declared with a refinement \
+                     where the closure is called"
+                )),
+            );
+        }
         // Through a function's parameter that's a `&mut`, to a field of what
         // it points to: what's declared there is what its type says
         // (lemma E1 of docs/77-method-captures.md).
@@ -669,23 +684,35 @@ impl Checker {
                     break;
                 }
                 Proj::Field(i) => {
-                    let Type::Adt(s, ..) = &tys[k] else {
-                        continue;
-                    };
-                    let Some(fields) = self.field_refined.get(s) else {
-                        continue;
-                    };
                     // A field a refinement relates to another is captured
                     // with it, in the struct; one with a refinement of its
                     // own, whole (lemmas E2 and E3).
-                    if let Some(relates) = fields.relates(*i) {
-                        (end, why) = (k, Some(relates));
-                        break;
-                    }
-                    if k + 1 < path.len()
-                        && let Some(own) = fields.own(*i)
+                    if let Type::Adt(s, ..) = &tys[k]
+                        && let Some(fields) = self.field_refined.get(s)
                     {
-                        (end, why) = (k + 1, Some(own));
+                        if let Some(relates) = fields.relates(*i) {
+                            (end, why) = (k, Some(relates));
+                            break;
+                        }
+                        if k + 1 < path.len()
+                            && let Some(own) = fields.own(*i)
+                        {
+                            (end, why) = (k + 1, Some(own));
+                            break;
+                        }
+                    }
+                    // So is one at a type argument's place, whose
+                    // refinement, if it has one, may relate places in it
+                    // (K2a).
+                    if k + 1 < path.len() && self.at_type_argument(&tys[k], *i) {
+                        let f = name(k + 1);
+                        (end, why) = (
+                            k + 1,
+                            Some(format!(
+                                "the type of `{f}` is a type argument, which may have a \
+                                 refinement relating the places in it"
+                            )),
+                        );
                         break;
                     }
                 }
@@ -707,6 +734,24 @@ impl Checker {
         match end == path.len() {
             true => (path, used, None),
             false => stop(end, why),
+        }
+    }
+
+    /// Is field `i` of a value of type `t` at a type argument's place: a
+    /// tuple's element, or a struct's field declared of a type parameter or
+    /// a projection? What a refinement of a type argument says is declared
+    /// there (`targs::field_decl`), which the types written here needn't
+    /// show (a `let` without one declares what its value's type has).
+    fn at_type_argument(&self, t: &Type, i: usize) -> bool {
+        match t {
+            Type::Tuple(_) => true,
+            Type::Adt(s, ..) => match self.adts.get(s).map(|d| &d.kind) {
+                Some(crate::types::AdtKind::Struct(fs)) => {
+                    matches!(fs.get(i), Some((_, Type::Param(..) | Type::Proj(..))))
+                }
+                _ => false,
+            },
+            _ => false,
         }
     }
 

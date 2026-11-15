@@ -234,15 +234,24 @@ fn main() {
 > its fields, a variable's own refinement, or what's declared behind a
 > reference. The walk would check them against the rest as it was when
 > the closure was made. K2 cuts a changing capture at each of those, so
-> none relates a place in it to one outside it; refinements of type
-> arguments are of values, not places (lemma A1 of
-> docs/60-refined-type-arguments.md). (The function, changing the rest,
-> knows nothing of the lent place but its own refinements, as the loan
-> forgets it, which may well keep it from breaking one; the cut makes the
-> argument not depend on that, and can be eased later.) As a backstop, the refinement
-> checker refuses, as an internal error, a closure that captures by
-> `&mut` or by value a place a refinement relates to the rest
-> (`Walk::captures_apart`).
+> none relates a place in it to one outside it. (The function, changing
+> the rest, knows nothing of the lent place but its own refinements, as
+> the loan forgets it, which may well keep it from breaking one; the cut
+> makes the argument not depend on that, and can be eased later.) As a
+> backstop, the refinement checker refuses, as an internal error, a
+> closure that captures by `&mut` or by value a place a refinement
+> relates to the rest (`Walk::captures_apart`).
+>
+> *Corrected in 0.94.0 (docs/79-what-a-capture-splits.md).* This said
+> next that "refinements of type arguments are of values, not places
+> (lemma A1 of docs/60)", and K2 didn't cut at them. That was wrong: A1
+> says a type argument's refinement names nothing outside the value at
+> its place, but it relates the places inside it, and a `let` without a
+> refinement declares what its value's type carries there. From 0.91.0
+> to 0.93.0 a closure could break one by changing `t.0.x` of a `t: ({ v:
+> Q | v.x <= v.y }, u32)`. K2 now also stops at a tuple's element and a
+> field whose type is a type argument, and at a closure's parameter, and
+> the backstop asks what's declared of each place a capture is in.
 
 > **Lemma C5 (`&` captures go anywhere).** A capture by `&` freezes its
 > place while the closure lives, so what was known of it when the
