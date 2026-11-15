@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.96.0 (2026-11-15)
 
 Step 81: contradictions, impls on function types, argument reborrows
 (retrospective 12's batch). See

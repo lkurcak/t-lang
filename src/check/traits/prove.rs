@@ -155,6 +155,18 @@ impl Checker {
         // How to fix what doesn't hold, if it's simple, or why it can't be.
         let at_bottom = bad == o.pred;
         let fix = |p: &Pred| match (&p.ty, p.trait_name.as_str()) {
+            // An impl for a function type is found by its effects, which
+            // aren't worked out yet for a function in a recursive group
+            // with this one (docs/81-contradictions-and-fn-types.md).
+            (Type::Fn(f), tr)
+                if (f.effects.effect_items().iter()).any(|e| matches!(e, Type::Inferred(..)))
+                    && (self.traits.impls.of_trait(Some(tr)))
+                        .any(|(_, d)| matches!(d.self_ty, Type::Fn(_))) =>
+            {
+                "; what its calls may do is worked out with this function's, as they call each \
+                 other, so it isn't known here: say it, with `with`, where it's declared"
+                    .to_string()
+            }
             (Type::Param(t, _), tr) => format!("; add a bound: `{t}: {}`", tr),
             (Type::Fn(_), EQ) if at_bottom => ": functions can't be compared".to_string(),
             (Type::Fn(_), EQ) => ", and functions can't be compared".to_string(),
