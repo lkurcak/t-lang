@@ -39,6 +39,15 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     // expect: 0 2
     // expect: 1 3
     // expect: 2 4
+    // A list's iterator gives what's in it: the closure knows.
+    let mut ix: List<{ t: usize | t < 4 }> = List::new();
+    ix.push(3);
+    ix.push(0);
+    for v in ix.iter().map(|i| a[*i]) {
+        out.line(&v)?;
+    }
+    // expect: 4
+    // expect: 1
     let mut m = (0..4).rev().map(|x| a[x]);
     match m.next() {
         Some(v) => out.line(&v)?, // expect: 4

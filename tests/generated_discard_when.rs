@@ -184,11 +184,15 @@ fn expected(n: usize, way: &Way) -> i64 {
 
 /// Would the program of `Fd`s leave a value unused on some path the
 /// checker can't rule out, and what it says: a `for` that may stop early,
-/// whatever `n` is, as a loop forgets what it's lent; or a list or iterator
-/// that may hold values where it's dropped, which it knows from `n`.
+/// whatever `n` is but 0, as a loop forgets what it's lent (but what an
+/// empty list's iterator gives: nothing, so its body never runs,
+/// docs/82-item-invariants.md); or a list or iterator that may hold values
+/// where it's dropped, which it knows from `n`.
 fn leaks(n: usize, way: &Way) -> Option<&'static str> {
     match way.name {
-        "for that breaks" | "for that returns" => Some("the `for` may stop before its iterator"),
+        "for that breaks" | "for that returns" if n > 0 => {
+            Some("the `for` may stop before its iterator")
+        }
         "nothing" | "its iterator, dropped" | "one pop" | "two pops" if (way.uses)(n) < n => {
             Some("is dropped here")
         }

@@ -33,6 +33,7 @@
 use super::*;
 use crate::traits::{COPY, DISCARD, SEND, SYNC};
 use std::rc::Rc;
+use crate::borrowck::regions::Variance;
 use targs::{Cand, Disj, Tree};
 
 /// The name a loop's frame keeps an iterator's items by, as if it were one
@@ -53,9 +54,9 @@ const ITERATOR_DEI: &str = "core::iter::DoubleEndedIterator";
 pub(super) struct Envelope {
     /// Its type: `Range<usize>`.
     ty: Type,
-    /// `next`, and `next_back` if it's double-ended: what they say, and
-    /// their impls' type arguments.
-    methods: Vec<(RefinedSig, Vec<(String, Type)>)>,
+    /// `next`, and `next_back` if it's double-ended: their names, what
+    /// they say, and their impls' type arguments.
+    methods: Vec<(String, RefinedSig, Vec<(String, Type)>)>,
     /// Each measure, its value at the object, and whether it never grows
     /// and never shrinks.
     bounds: Vec<(String, Val, bool, bool)>,
@@ -119,8 +120,51 @@ fn sources(item: &Type, at: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, Type)>) 
                 at.pop();
             }
         }
+        Type::Ref(_, _, t) | Type::Box(t) if !matches!(**t, Type::Param(..)) => {
+            at.push(0);
+            sources(t, at, out);
+            at.pop();
+        }
+        Type::Ref(_, _, t) | Type::Box(t) => {
+            out.push((at.clone(), item.clone()));
+            at.push(0);
+            out.push((at.clone(), (**t).clone()));
+            at.pop();
+        }
         t => out.push((at.clone(), t.clone())),
     }
+}
+
+/// Is `p`, one of an impl's or a function's bounds, one that lets it make
+/// no value of type parameter `x` (lemmas I3, I4)? Of `x` itself, the
+/// protocol's traits and markers; of its items, markers; of any other type
+/// with `x` in it, none: `Holder<X>: Make` could make one.
+fn harmless(p: &crate::traits::Pred, x: &str) -> bool {
+    let marker = [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str());
+    match &p.ty {
+        Type::Param(q, _) if q == x => {
+            marker || p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI
+        }
+        t if item_of(t) == Some(x) => marker,
+        t => !mentions_param(t, x),
+    }
+}
+
+/// Do equality bounds `eqs` let code make no value of type parameter `x`,
+/// nor say what its items are? A closure's signature may take them, not
+/// give them; another projection may be them only if it's `x`'s own
+/// (`X::Item = u8` lets it make items, which is checked of an adapter's
+/// impl apart).
+fn harmless_eqs(eqs: &[(Type, Type)], x: &str) -> bool {
+    eqs.iter().all(|(a, b)| match (a, b) {
+        (Type::Proj(_, _, n), Type::Fn(fs)) if n == crate::traits::SIG => {
+            !mentions_param(&fs.ret, x)
+        }
+        (Type::Proj(base, ..), b) if matches!(&**base, Type::Param(q, _) if q == x) => {
+            !mentions_param(b, x)
+        }
+        (a, b) => !mentions_param(a, x) && !mentions_param(b, x),
+    })
 }
 
 /// What type `pattern`, of an impl's parameters, matches in `t` (`pattern`
@@ -176,9 +220,9 @@ fn either(a: &Tree, b: &Tree) -> Tree {
 impl Walk<'_> {
     /// Is `symbol`, a function called (before an impl's method is found
     /// for it), a method of the protocol: `Iterator`'s or
-    /// `DoubleEndedIterator`'s, taking its iterator by `&mut`? And does it
-    /// give a value, as `next` and `next_back` do?
-    pub(super) fn protocol(&self, symbol: &str) -> Option<bool> {
+    /// `DoubleEndedIterator`'s, taking its iterator by `&mut`? Its name,
+    /// if it is.
+    pub(super) fn protocol(&self, symbol: &str) -> Option<String> {
         for tr in [ITERATOR, ITERATOR_DEI] {
             let Some(d) = self.cx.traits.traits.get(tr) else {
                 continue;
@@ -193,11 +237,32 @@ impl Walk<'_> {
                 if let Some(Type::Ref(_, true, inner)) = sig.params.first()
                     && matches!(&**inner, Type::Param(p, _) if p == "Self")
                 {
-                    return Some(m.name == "next" || m.name == "next_back");
+                    return Some(m.name.clone());
                 }
             }
         }
         None
+    }
+
+    /// Is concrete type `t` an adapter: is its `Item` made of the items of
+    /// iterators, or the results of closures, it's generic in?
+    pub(super) fn adapter(&self, t: &Type) -> bool {
+        let Some((i, _)) = self.cx.traits.select(t, Some(ITERATOR), &[]) else {
+            return false;
+        };
+        let d = &self.cx.traits.impls[i];
+        let Some((_, item)) = d.assoc.iter().find(|(n, _)| n == "Item") else {
+            return false;
+        };
+        let mut leaves = Vec::new();
+        sources(item, &mut Vec::new(), &mut leaves);
+        leaves.iter().any(|(_, l)| {
+            item_of(l).is_some()
+                || matches!(l, Type::Param(u, _) if d.eqs.iter().any(|(a, b)| {
+                    matches!((a, b), (Type::Proj(_, _, n), Type::Fn(fs))
+                        if n == crate::traits::SIG && matches!(&*fs.ret, Type::Param(v, _) if v == u))
+                }))
+        })
     }
 
     /// The items of value `v`, of type `t`: what's kept of its object, or
@@ -221,11 +286,46 @@ impl Walk<'_> {
     }
 
     /// Place `p` has a new value, which gives what `g` says, as what it
-    /// had did (lemma I1).
-    pub(super) fn keep_items(&mut self, p: &Place, g: Rc<Tree>) {
+    /// had did (lemma I1): the value.
+    pub(super) fn keep_items(&mut self, p: &Place, g: Rc<Tree>) -> Val {
         let v = self.read_place(p);
         if let Some(o) = targs::obj_of(&v) {
             self.items.insert(o, g);
+        }
+        v
+    }
+
+    /// Of `states`, values of iterator type `t` its protocol got to from
+    /// one whose items are `g`: each is within the bounds of what its own
+    /// signatures say (`Envelope`), as every state its protocol gets to is
+    /// (lemma I2). At a call of its protocol, those are the states before
+    /// and after, so of what it gives, its signature says the rest.
+    pub(super) fn bound_states(&mut self, g: &Tree, t: &Type, states: &[Val]) {
+        let envelopes: Vec<Rc<Envelope>> = (g.iter())
+            .flat_map(|(_, d)| d.0.iter())
+            .filter_map(|(guards, c)| match c {
+                Cand::Gives(e) if guards.is_empty() && e.ty == *t => Some(e.clone()),
+                _ => None,
+            })
+            .collect();
+        for e in envelopes {
+            for v in states {
+                for (m, at, le, ge) in &e.bounds {
+                    let Val::Int(at) = at else {
+                        continue;
+                    };
+                    let recv = Val::Ref(self.new_obj(), Pointee::Val(Box::new(v.clone())));
+                    let Val::Int(x) = self.measure(m, recv) else {
+                        continue;
+                    };
+                    if *le && let Some(f) = Formula::le(&x, at) {
+                        self.fact(f);
+                    }
+                    if *ge && let Some(f) = Formula::le(at, &x) {
+                        self.fact(f);
+                    }
+                }
+            }
         }
     }
 
@@ -234,7 +334,7 @@ impl Walk<'_> {
     /// `next_back`, with their type arguments: the default methods, which
     /// get values only from those, by parametricity, are the rest of its
     /// protocol.
-    fn own_impls(&self, t: &Type) -> Option<Vec<(String, Vec<(String, Type)>)>> {
+    fn own_impls(&self, t: &Type) -> Option<Vec<(String, String, Vec<(String, Type)>)>> {
         if !concrete(t) {
             return None;
         }
@@ -252,7 +352,7 @@ impl Walk<'_> {
             }
             let (_, symbol) = d.methods.iter().find(|(n, _)| n == name)?;
             let names = d.params.as_slice().to_vec();
-            out.push((symbol.clone(), names.into_iter().zip(args).collect()));
+            out.push((name.to_string(), symbol.clone(), names.into_iter().zip(args).collect()));
         }
         Some(out)
     }
@@ -268,11 +368,13 @@ impl Walk<'_> {
     /// one says nothing of it.
     fn envelope(&mut self, v: &Val, t: &Type) -> Option<Tree> {
         let own = self.own_impls(t)?;
+        let mut tree = self.carried_items(v, t);
         let mut methods = Vec::new();
-        for (symbol, targs) in own {
-            let sig = self.cx.refined.get(&symbol)?.clone();
-            sig.ret.as_ref()?;
-            methods.push((sig, targs));
+        for (name, symbol, targs) in own {
+            match self.cx.refined.get(&symbol) {
+                Some(sig) if sig.ret.is_some() => methods.push((name, sig.clone(), targs)),
+                _ => return Some(tree).filter(|t| !t.is_empty()),
+            }
         }
         let moves = self.moves(t, &methods);
         let mut bounds = Vec::new();
@@ -289,7 +391,58 @@ impl Walk<'_> {
             methods,
             bounds,
         };
-        Some(vec![(Vec::new(), Disj(vec![(Vec::new(), Cand::Gives(Rc::new(e)))]))])
+        tree.push((Vec::new(), Disj(vec![(Vec::new(), Cand::Gives(Rc::new(e)))])));
+        Some(tree)
+    }
+
+    /// What every value iterator `v`, of concrete type `t`, gives has of
+    /// what's in it: where its impl's `Item` is one of its type
+    /// parameters `X` that's free there, its bounds markers alone, each
+    /// value of `X` it gives is one in it (lemma A2 of
+    /// docs/60-refined-type-arguments.md), at a position of its type where
+    /// nothing else can write it.
+    fn carried_items(&mut self, v: &Val, t: &Type) -> Tree {
+        let mut tree = Vec::new();
+        let Some((i, args)) = self.cx.traits.select(t, Some(ITERATOR), &[]) else {
+            return tree;
+        };
+        let d = self.cx.traits.impls[i].clone();
+        let Some((_, item)) = d.assoc.iter().find(|(n, _)| n == "Item") else {
+            return tree;
+        };
+        let params = d.params.as_slice().to_vec();
+        if params.len() != args.len() {
+            return tree;
+        }
+        let mut leaves = Vec::new();
+        sources(item, &mut Vec::new(), &mut leaves);
+        for (pos, leaf) in leaves {
+            let Type::Param(x, _) = &leaf else {
+                continue;
+            };
+            let free = (d.preds.iter()).all(|p| {
+                !mentions_param(&p.ty, x)
+                    || (matches!(&p.ty, Type::Param(q, _) if q == x)
+                        && [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str()))
+            });
+            let free = free && d.eqs.iter().all(|(a, b)| !mentions_param(a, x) && !mentions_param(b, x));
+            if !free || !params.contains(x) {
+                continue;
+            }
+            let mut cases = Vec::new();
+            for path in targs::param_paths(&d.self_ty, x) {
+                if !matches!(self.type_at(t, &path), Some((_, Variance::Co))) {
+                    cases.clear();
+                    break;
+                }
+                cases.extend(self.values_at(v, t, &path));
+            }
+            let d = Disj(cases);
+            if !d.0.is_empty() && !d.is_any() {
+                tree.push((pos, d));
+            }
+        }
+        tree
     }
 
     /// Which way each measure of iterator type `t` may move under each of
@@ -297,12 +450,12 @@ impl Walk<'_> {
     /// other arguments (as `keeps_at`, which this generalises): a measure
     /// never grows if each says it's at most what it was, and so on. One a
     /// method says nothing of may be anything after it.
-    fn moves(&mut self, t: &Type, methods: &[(RefinedSig, Vec<(String, Type)>)]) -> Moves {
+    fn moves(&mut self, t: &Type, methods: &[(String, RefinedSig, Vec<(String, Type)>)]) -> Moves {
         if let Some(m) = self.moves_of.get(t) {
             return m.clone();
         }
         let mut all: Option<Moves> = None;
-        for (sig, targs) in methods {
+        for (_, sig, targs) in methods {
             let (before, after) = (self.new_obj(), self.new_obj());
             let behind =
                 |w: &mut Self, o: Obj| Val::Ref(w.new_obj(), Pointee::Val(Box::new(Val::Obj(o))));
@@ -368,7 +521,7 @@ impl Walk<'_> {
         let opt = Type::Adt(OPTION.to_string(), Vec::new(), vec![item]);
         let some = self.variant_index(OPTION, "Some")?;
         let mut cases = Vec::new();
-        for (sig, targs) in &e.methods {
+        for (_, sig, targs) in &e.methods {
             let (before, after) = (self.new_obj(), self.new_obj());
             let behind =
                 |w: &mut Self, o: Obj| Val::Ref(w.new_obj(), Pointee::Val(Box::new(Val::Obj(o))));
@@ -498,30 +651,12 @@ impl Walk<'_> {
         let at = targs.get(i)?.clone();
         // Bounds that let it make one: any but the protocol's traits and
         // markers, or a closure that gives one.
-        let mut iterator = false;
-        for p in &s.preds {
-            if !mentions_param(&p.ty, x) {
-                continue;
-            }
-            match &p.ty {
-                Type::Param(q, _) if q == x => {
-                    if p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI {
-                        iterator = true;
-                    } else if ![COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str()) {
-                        return None;
-                    }
-                }
-                // Of its items, `X::Item: Discard`: they make no `X`.
-                _ => {}
-            }
-        }
-        for (a, b) in &s.eqs {
-            if let (Type::Proj(_, _, n), Type::Fn(fs)) = (a, b)
-                && n == crate::traits::SIG
-                && mentions_param(&fs.ret, x)
-            {
-                return None;
-            }
+        let iterator = (s.preds.iter()).any(|p| {
+            matches!(&p.ty, Type::Param(q, _) if q == x)
+                && (p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI)
+        });
+        if !s.preds.iter().all(|p| harmless(p, x)) || !harmless_eqs(&s.eqs, x) {
+            return None;
         }
         if !iterator || !self.defaults_only(&at) {
             return None;
@@ -584,39 +719,31 @@ impl Walk<'_> {
                 _ => {}
             }
         }
-        for p in &d.preds {
-            let ok = [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str());
-            match &p.ty {
-                Type::Param(q, _) if iters.contains(q) => {
-                    if !ok && p.trait_name != ITERATOR && p.trait_name != ITERATOR_DEI {
-                        return None;
-                    }
-                }
-                t if mentions(t, &iters, &[]) && !ok => return None,
-                _ => {}
+        for x in &iters {
+            if !d.preds.iter().all(|p| harmless(p, x)) {
+                return None;
+            }
+            // Not even of its own items: `I: Iterator<Item = usize>` lets
+            // it make them.
+            let fixed = (d.eqs.iter()).any(|(a, b)| {
+                !matches!((a, b), (Type::Proj(_, _, n), Type::Fn(_)) if n == crate::traits::SIG)
+                    && (mentions_param(a, x) || mentions_param(b, x))
+            });
+            if fixed || !harmless_eqs(&d.eqs, x) {
+                return None;
             }
         }
         // Its closures: each `F: FnMut(..) -> U` whose `U` is a parameter
-        // of its own. No closure gives an item of an iterator, and no
-        // equality bound says what one is.
+        // of its own.
         let mut outs: Vec<(String, String)> = Vec::new();
         for (a, b) in &d.eqs {
             if let (Type::Proj(base, _, n), Type::Fn(fs)) = (a, b)
                 && n == crate::traits::SIG
                 && let Type::Param(f, _) = &**base
+                && let Type::Param(u, _) = &*fs.ret
+                && params.contains(u)
             {
-                if mentions(&fs.ret, &iters, &[]) {
-                    return None;
-                }
-                if let Type::Param(u, _) = &*fs.ret
-                    && params.contains(u)
-                {
-                    outs.push((u.clone(), f.clone()));
-                }
-                continue;
-            }
-            if mentions(a, &iters, &[]) || mentions(b, &iters, &[]) {
-                return None;
+                outs.push((u.clone(), f.clone()));
             }
         }
         let us: Vec<String> = outs.iter().map(|(u, _)| u.clone()).collect();
@@ -628,10 +755,24 @@ impl Walk<'_> {
             }
         }
         // None of them is in its fields, where it could keep one it wasn't
-        // given by its iterator or closure.
+        // given by its iterator or closure; and it holds its iterators and
+        // closures itself, where nothing but it can write them, not behind
+        // a `&mut` or in a `Cell`, where another iterator could be put
+        // without its protocol (lemma I4).
         let fields = struct_fields(&self.cx.adts, &d.self_ty)?;
         if fields.iter().any(|(_, ft)| mentions(ft, &iters, &us)) {
             return None;
+        }
+        let held: Vec<String> = (iters.iter().cloned())
+            .chain(outs.iter().map(|(_, f)| f.clone()))
+            .collect();
+        for (_, ft) in &fields {
+            for x in &held {
+                let (occ, hidden) = self.occurrences(ft, x);
+                if hidden || occ.iter().any(|(_, v)| !matches!(v, Variance::Co)) {
+                    return None;
+                }
+            }
         }
         // What each of its parameters is, as the callee's.
         let mut at = HashMap::new();

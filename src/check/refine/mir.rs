@@ -2073,9 +2073,13 @@ impl Walk<'_> {
             Some(s) => self.protocol(s),
             None => None,
         };
-        let items = match (protocol, places.first().cloned().flatten()) {
-            (Some(_), Some(p)) if self.reachable => self.items_at(&p),
-            _ => None,
+        let (items, pre) = match (&protocol, places.first().cloned().flatten()) {
+            (Some(_), Some(p)) if self.reachable => {
+                let t = self.place_ty(&p);
+                let pre = self.read_place(&p);
+                (self.items_of(&pre, &t), Some(pre))
+            }
+            _ => (None, None),
         };
         let resolved = symbol.map(|s| self.callee_at(&s, targs));
         if !closures.is_empty() || !fns.is_empty() {
@@ -2137,7 +2141,13 @@ impl Walk<'_> {
         if let Some(s) = closure {
             result = self.summary_call(&s, &arg_vals, &ty);
         }
-        if let (Some(true), Some(g)) = (protocol, &items) {
+        // An adapter's: what its iterators and closures give. A base
+        // iterator's own signatures say what this call gives, of the states
+        // before and after it, which are bounded below (`bound_states`).
+        if let (Some("next" | "next_back"), Some(g), Some(Some(p))) =
+            (protocol.as_deref(), &items, places.first())
+            && self.adapter(&self.place_ty(p))
+        {
             let given = super::items::shift(g, &[0]);
             self.assume_tree(&result, &ty, &given);
         }
@@ -2147,8 +2157,10 @@ impl Walk<'_> {
             self.kill(p);
         }
         self.post_now(post, span)?;
-        if let (Some(g), Some(Some(p))) = (items, places.first()) {
-            self.keep_items(p, g);
+        if let (Some(g), Some(Some(p)), Some(pre)) = (items, places.first(), pre) {
+            let post = self.keep_items(p, g.clone());
+            let t = self.place_ty(p);
+            self.bound_states(&g, &t, &[pre, post]);
         }
         for (p, g) in lent_items {
             self.keep_items(&p, g);

@@ -447,7 +447,7 @@ impl Walk<'_> {
     /// function's type, a projection or an `impl` type, where nothing's
     /// followed, and how (`Some(true)` if as a result, which is where a
     /// value of it could come from).
-    fn occurrences(&mut self, t: &Type, x: &str) -> (Vec<(Pos, Variance)>, bool) {
+    pub(super) fn occurrences(&mut self, t: &Type, x: &str) -> (Vec<(Pos, Variance)>, bool) {
         fn go(
             w: &mut Walk,
             t: &Type,
@@ -3232,7 +3232,7 @@ pub(super) fn reach(adts: &crate::types::Adts, t: &Type, pos: &[usize]) -> Vec<c
 }
 
 /// The positions of type parameter `x` in `t`, a type as declared.
-fn param_paths(t: &Type, x: &str) -> Vec<Pos> {
+pub(super) fn param_paths(t: &Type, x: &str) -> Vec<Pos> {
     fn go(t: &Type, x: &str, at: &mut Pos, out: &mut Vec<Pos>) {
         if matches!(t, Type::Param(p, _) if p == x) {
             out.push(at.clone());
