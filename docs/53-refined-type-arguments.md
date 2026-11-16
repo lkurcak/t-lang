@@ -190,7 +190,8 @@ fn next(&mut self) -> Option<{ v: T | v < self.end() }> ensures self.end() == ol
 
 `for x in 0..n` lends its range to `next` each time round, which keeps the
 range's end, so the loop's frame keeps it (step 52), and each `x` is less
-than it: `n`. A measure can now give an integer of a type parameter `T:
+than it: `n`. (Step 82 says more of both ends, and keeps it through
+adapters: docs/82-item-invariants.md.) A measure can now give an integer of a type parameter `T:
 Int`, which, where it's called, is an integer every integer type has room
 for.
 

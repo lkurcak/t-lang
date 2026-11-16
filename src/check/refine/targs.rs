@@ -53,6 +53,10 @@ pub(super) enum Cand {
     Pred(Rc<Closed>),
     All(Vec<Disj>),
     Made(Rc<super::summary::Made>),
+    /// One an iterator's own signatures say it gives
+    /// (`items::Envelope`), of which, as of a `Made`, what's known is
+    /// of new values for the states it was given from.
+    Gives(Rc<super::items::Envelope>),
     Any,
 }
 
@@ -69,6 +73,7 @@ impl PartialEq for Cand {
             (Cand::Pred(a), Cand::Pred(b)) => Rc::ptr_eq(a, b),
             (Cand::All(a), Cand::All(b)) => a == b,
             (Cand::Made(a), Cand::Made(b)) => Rc::ptr_eq(a, b),
+            (Cand::Gives(a), Cand::Gives(b)) => Rc::ptr_eq(a, b),
             (Cand::Any, Cand::Any) => true,
             _ => false,
         }
@@ -442,7 +447,7 @@ impl Walk<'_> {
     /// function's type, a projection or an `impl` type, where nothing's
     /// followed, and how (`Some(true)` if as a result, which is where a
     /// value of it could come from).
-    fn occurrences(&mut self, t: &Type, x: &str) -> (Vec<(Pos, Variance)>, bool) {
+    pub(super) fn occurrences(&mut self, t: &Type, x: &str) -> (Vec<(Pos, Variance)>, bool) {
         fn go(
             w: &mut Walk,
             t: &Type,
@@ -820,6 +825,11 @@ impl Walk<'_> {
             Cand::Made(made) => {
                 let made = made.clone();
                 Some(self.made_formula(&made, v).unwrap_or(Formula::True))
+            }
+            Cand::Gives(_) if strict => None,
+            Cand::Gives(e) => {
+                let e = e.clone();
+                Some(self.envelope_formula(&e, v).unwrap_or(Formula::True))
             }
             Cand::All(ds) => {
                 let mut all = Vec::new();
@@ -1272,7 +1282,7 @@ pub(super) fn under(tree: &Tree, k: usize) -> Tree {
 pub(super) fn widen(tree: &Tree) -> Tree {
     fn cand(c: &Cand) -> Cand {
         match c {
-            Cand::Exact(_) | Cand::Made(_) | Cand::Any => Cand::Any,
+            Cand::Exact(_) | Cand::Made(_) | Cand::Gives(_) | Cand::Any => Cand::Any,
             Cand::Pred(p) => Cand::Pred(p.clone()),
             Cand::All(ds) => Cand::all(ds.iter().map(disj).collect()),
         }
@@ -3222,7 +3232,7 @@ pub(super) fn reach(adts: &crate::types::Adts, t: &Type, pos: &[usize]) -> Vec<c
 }
 
 /// The positions of type parameter `x` in `t`, a type as declared.
-fn param_paths(t: &Type, x: &str) -> Vec<Pos> {
+pub(super) fn param_paths(t: &Type, x: &str) -> Vec<Pos> {
     fn go(t: &Type, x: &str, at: &mut Pos, out: &mut Vec<Pos>) {
         if matches!(t, Type::Param(p, _) if p == x) {
             out.push(at.clone());
