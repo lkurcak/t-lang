@@ -326,32 +326,48 @@ impl Walk<'_> {
     /// one whose items are `g`: each is within the bounds of what its own
     /// signatures say (`Envelope`), as every state its protocol gets to is
     /// (lemma I2). At a call of its protocol, those are the states before
-    /// and after, so of what it gives, its signature says the rest.
+    /// and after, so of what it gives, its signature says the rest. Of an
+    /// iterator that's one of several (`either`), within the bounds of one
+    /// of them: so each case of what's said is said apart, and if any case
+    /// isn't what `t`'s signatures say, nothing is.
     pub(super) fn bound_states(&mut self, g: &Tree, t: &Type, states: &[Val]) {
-        let envelopes: Vec<Rc<Envelope>> = (g.iter())
-            .flat_map(|(_, d)| d.0.iter())
-            .filter_map(|(guards, c)| match c {
-                Cand::Gives(e) if guards.is_empty() && e.ty == *t => Some(e.clone()),
-                _ => None,
-            })
-            .collect();
-        for e in envelopes {
-            for v in states {
-                for (m, at, le, ge) in &e.bounds {
-                    let Val::Int(at) = at else {
-                        continue;
-                    };
-                    let recv = Val::Ref(self.new_obj(), Pointee::Val(Box::new(v.clone())));
-                    let Val::Int(x) = self.measure(m, recv) else {
-                        continue;
-                    };
-                    if *le && let Some(f) = Formula::le(&x, at) {
-                        self.fact(f);
-                    }
-                    if *ge && let Some(f) = Formula::le(at, &x) {
-                        self.fact(f);
+        for (pos, d) in g {
+            if !pos.is_empty() || d.0.is_empty() {
+                continue;
+            }
+            let mut cases = Vec::new();
+            for (guards, c) in &d.0 {
+                let Cand::Gives(e) = c else {
+                    cases.clear();
+                    break;
+                };
+                if e.ty != *t {
+                    cases.clear();
+                    break;
+                }
+                let e = e.clone();
+                let mut all = guards.clone();
+                for v in states {
+                    for (m, at, le, ge) in &e.bounds {
+                        let Val::Int(at) = at else {
+                            continue;
+                        };
+                        let recv = Val::Ref(self.new_obj(), Pointee::Val(Box::new(v.clone())));
+                        let Val::Int(x) = self.measure(m, recv) else {
+                            continue;
+                        };
+                        if *le {
+                            all.extend(Formula::le(&x, at));
+                        }
+                        if *ge {
+                            all.extend(Formula::le(at, &x));
+                        }
                     }
                 }
+                cases.push(Formula::and(all));
+            }
+            if !cases.is_empty() {
+                self.fact(Formula::or(cases));
             }
         }
     }

@@ -291,10 +291,12 @@ it, new for each value, as two values are given from two states
   some two states within the bounds have it. New states for each value,
   as each is given from a state of its own.
 - **I3 (conservation).** A function generic in `X`, whose bounds on `X`
-  are `Iterator`, `DoubleEndedIterator` and markers, on `X::Item` markers,
-  and on no other type with `X` in it, with no equality bound giving an
-  `X`, and an `X` whose impls are the defaults, can't make an `X`: no
-  method it can call gives one but by wrapping one it consumes. So each it
+  are `Iterator`, `DoubleEndedIterator`, `IntoIterator` and markers, on
+  `X::Item` markers, and on no other type with `X` in it, with no equality
+  bound giving an `X` (but the blanket impl's own `X::IntoIter = X`; not
+  `X::Item = X`, `err_soundness_items_nested.t`), and an `X` whose impls
+  are the defaults, can't make an `X`: no method it can call gives one but
+  by wrapping one it consumes, or, `into_iter`, giving it back. So each it
   gives back, or leaves behind a `&mut`, is one it was given, or what one
   became by the protocol: whose items, by I1, are that one's.
 - **I4 (adapters).** In an adapter's impl, generic in iterators `P` and
