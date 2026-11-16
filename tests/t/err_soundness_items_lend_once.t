@@ -3,7 +3,9 @@
 use core::iter::Rev;
 use core::ops::Range;
 
-fn widen(it: &mut Rev<Range<usize>>) { *it = (0..100).rev(); }
+fn widen(it: &mut Rev<Range<usize>>) {
+    *it = (0..100).rev();
+}
 
 fn main() {
     let a: [u8; 8] = [0; 8];

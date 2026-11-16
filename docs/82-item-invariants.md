@@ -218,7 +218,7 @@ closure is called only with what `I` gives, so it's walked knowing that,
 as `Option::map`'s closure knows what's in the `Some`:
 
 ```rust
-fn half(v: u32) -> { r: u32 | r <= 50 } { (v % 100) / 2 }
+fn half(v: u32) -> { r: u32 | r <= 50 } { v % 100 / 2 }
 
 fn need50(r: { r: u32 | r <= 50 }) -> u32 { r }
 

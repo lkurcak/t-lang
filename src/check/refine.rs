@@ -4615,7 +4615,11 @@ impl Walk<'_> {
     /// borrow checker lets nothing else have it while it is), and a
     /// measure is of the value alone (lemma F1 of docs/52-loop-frames.md).
     /// The same of a closure's body, by induction on how many times it's
-    /// run (lemma F2 of docs/69-loans.md).
+    /// run (lemma F2 of docs/69-loans.md). And of what an iterator gives,
+    /// kept as if a measure, `items::ITEMS`, by a call of its protocol or
+    /// of a function generic in it given no other: what it leaves there
+    /// gives what the iterator did (lemmas I1, I3, I5 of
+    /// docs/82-item-invariants.md).
     fn frames_of(
         &mut self,
         changes: &[(Place, Keeps)],

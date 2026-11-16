@@ -31,9 +31,9 @@
 //!   (docs/74-refined-instantiation.md).
 
 use super::*;
+use crate::borrowck::regions::Variance;
 use crate::traits::{COPY, DISCARD, SEND, SYNC};
 use std::rc::Rc;
-use crate::borrowck::regions::Variance;
 use targs::{Cand, Disj, Tree};
 
 /// The name a loop's frame keeps an iterator's items by, as if it were one
@@ -42,6 +42,9 @@ use targs::{Cand, Disj, Tree};
 pub(super) const ITEMS: &str = "(items)";
 
 const ITERATOR: &str = crate::check::ITERATOR;
+
+/// `IntoIterator`, which every iterator is, as it is.
+const INTO_ITERATOR: &str = "core::iter::IntoIterator";
 
 /// `DoubleEndedIterator`, whose `next_back` is of the protocol too.
 const ITERATOR_DEI: &str = "core::iter::DoubleEndedIterator";
@@ -56,7 +59,7 @@ pub(super) struct Envelope {
     ty: Type,
     /// `next`, and `next_back` if it's double-ended: their names, what
     /// they say, and their impls' type arguments.
-    methods: Vec<(String, RefinedSig, Vec<(String, Type)>)>,
+    methods: Vec<Method>,
     /// Each measure, its value at the object, and whether it never grows
     /// and never shrinks.
     bounds: Vec<(String, Val, bool, bool)>,
@@ -65,6 +68,13 @@ pub(super) struct Envelope {
 /// Which way each measure a protocol call keeps may move: whether it
 /// never grows, and whether it never shrinks.
 type Moves = Vec<(String, bool, bool)>;
+
+/// A method of an iterator's own that gives a value: its name, what it
+/// says, and its impl's type arguments, by name.
+type Method = (String, RefinedSig, Vec<(String, Type)>);
+
+/// The same, by its symbol, before what it says is looked up.
+type OwnMethod = (String, String, Vec<(String, Type)>);
 
 /// Is `t` a type the impls of which are known: no type parameter,
 /// projection, opaque type or variable in it.
@@ -78,9 +88,7 @@ fn concrete(t: &Type) -> bool {
 /// Is `t` `P::Item`, for type parameter `P`?
 fn item_of(t: &Type) -> Option<&str> {
     match t {
-        Type::Proj(base, tr, name)
-            if name == "Item" && (tr == ITERATOR || tr == ITERATOR_DEI) =>
-        {
+        Type::Proj(base, tr, name) if name == "Item" && (tr == ITERATOR || tr == ITERATOR_DEI) => {
             match &**base {
                 Type::Param(p, _) => Some(p),
                 _ => None,
@@ -137,13 +145,18 @@ fn sources(item: &Type, at: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, Type)>) 
 
 /// Is `p`, one of an impl's or a function's bounds, one that lets it make
 /// no value of type parameter `x` (lemmas I3, I4)? Of `x` itself, the
-/// protocol's traits and markers; of its items, markers; of any other type
-/// with `x` in it, none: `Holder<X>: Make` could make one.
+/// protocol's traits and markers, and `IntoIterator`, whose impl for an
+/// iterator is the blanket one, giving it back as it is; of its items,
+/// markers; of any other type with `x` in it, none: `Holder<X>: Make`
+/// could make one.
 fn harmless(p: &crate::traits::Pred, x: &str) -> bool {
     let marker = [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str());
     match &p.ty {
         Type::Param(q, _) if q == x => {
-            marker || p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI
+            marker
+                || p.trait_name == ITERATOR
+                || p.trait_name == ITERATOR_DEI
+                || p.trait_name == INTO_ITERATOR
         }
         t if item_of(t) == Some(x) => marker,
         t => !mentions_param(t, x),
@@ -159,6 +172,17 @@ fn harmless_eqs(eqs: &[(Type, Type)], x: &str) -> bool {
     eqs.iter().all(|(a, b)| match (a, b) {
         (Type::Proj(_, _, n), Type::Fn(fs)) if n == crate::traits::SIG => {
             !mentions_param(&fs.ret, x)
+        }
+        // The blanket impl's own `IntoIter`, the iterator itself, which
+        // `into_iter` gives back as it is: but `X::Item = X` would let
+        // `next` make one.
+        (Type::Proj(base, tr, n), Type::Param(q, _))
+            if tr == INTO_ITERATOR
+                && n == "IntoIter"
+                && q == x
+                && matches!(&**base, Type::Param(p, _) if p == x) =>
+        {
+            true
         }
         (Type::Proj(base, ..), b) if matches!(&**base, Type::Param(q, _) if q == x) => {
             !mentions_param(b, x)
@@ -212,7 +236,10 @@ fn either(a: &Tree, b: &Tree) -> Tree {
         }
         let mine = Cand::all(vec![d.clone()]);
         let other = Cand::all(theirs.into_iter().cloned().collect());
-        out.push((p.clone(), Disj(vec![(Vec::new(), mine), (Vec::new(), other)])));
+        out.push((
+            p.clone(),
+            Disj(vec![(Vec::new(), mine), (Vec::new(), other)]),
+        ));
     }
     out
 }
@@ -334,7 +361,7 @@ impl Walk<'_> {
     /// `next_back`, with their type arguments: the default methods, which
     /// get values only from those, by parametricity, are the rest of its
     /// protocol.
-    fn own_impls(&self, t: &Type) -> Option<Vec<(String, String, Vec<(String, Type)>)>> {
+    fn own_impls(&self, t: &Type) -> Option<Vec<OwnMethod>> {
         if !concrete(t) {
             return None;
         }
@@ -352,7 +379,11 @@ impl Walk<'_> {
             }
             let (_, symbol) = d.methods.iter().find(|(n, _)| n == name)?;
             let names = d.params.as_slice().to_vec();
-            out.push((name.to_string(), symbol.clone(), names.into_iter().zip(args).collect()));
+            out.push((
+                name.to_string(),
+                symbol.clone(),
+                names.into_iter().zip(args).collect(),
+            ));
         }
         Some(out)
     }
@@ -391,7 +422,10 @@ impl Walk<'_> {
             methods,
             bounds,
         };
-        tree.push((Vec::new(), Disj(vec![(Vec::new(), Cand::Gives(Rc::new(e)))])));
+        tree.push((
+            Vec::new(),
+            Disj(vec![(Vec::new(), Cand::Gives(Rc::new(e)))]),
+        ));
         Some(tree)
     }
 
@@ -425,7 +459,10 @@ impl Walk<'_> {
                     || (matches!(&p.ty, Type::Param(q, _) if q == x)
                         && [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str()))
             });
-            let free = free && d.eqs.iter().all(|(a, b)| !mentions_param(a, x) && !mentions_param(b, x));
+            let free = free
+                && d.eqs
+                    .iter()
+                    .all(|(a, b)| !mentions_param(a, x) && !mentions_param(b, x));
             if !free || !params.contains(x) {
                 continue;
             }
@@ -450,7 +487,7 @@ impl Walk<'_> {
     /// other arguments (as `keeps_at`, which this generalises): a measure
     /// never grows if each says it's at most what it was, and so on. One a
     /// method says nothing of may be anything after it.
-    fn moves(&mut self, t: &Type, methods: &[(String, RefinedSig, Vec<(String, Type)>)]) -> Moves {
+    fn moves(&mut self, t: &Type, methods: &[Method]) -> Moves {
         if let Some(m) = self.moves_of.get(t) {
             return m.clone();
         }
@@ -625,7 +662,10 @@ impl Walk<'_> {
                 continue;
             };
             let x = x.clone();
-            if let Some(g) = self.given_items(&s, &x, targs, vals).filter(|g| !g.is_empty()) {
+            if let Some(g) = self
+                .given_items(&s, &x, targs, vals)
+                .filter(|g| !g.is_empty())
+            {
                 out.push((p.clone(), Rc::new(g)));
             }
         }
@@ -736,13 +776,11 @@ impl Walk<'_> {
         let params = d.params.as_slice().to_vec();
         let mut iters: Vec<String> = Vec::new();
         for p in &d.preds {
-            match &p.ty {
-                Type::Param(q, _) if p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI => {
-                    if !iters.contains(q) {
-                        iters.push(q.clone());
-                    }
-                }
-                _ => {}
+            if let Type::Param(q, _) = &p.ty
+                && (p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI)
+                && !iters.contains(q)
+            {
+                iters.push(q.clone());
             }
         }
         for x in &iters {
@@ -775,7 +813,8 @@ impl Walk<'_> {
         let us: Vec<String> = outs.iter().map(|(u, _)| u.clone()).collect();
         // A closure's result may be a bound's subject only as a marker's.
         for p in &d.preds {
-            if mentions(&p.ty, &[], &us) && ![COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str())
+            if mentions(&p.ty, &[], &us)
+                && ![COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str())
             {
                 return None;
             }
@@ -805,8 +844,11 @@ impl Walk<'_> {
         if !bind(&d.self_ty, ret, &mut at) {
             return None;
         }
-        let summaries: Vec<(usize, Rc<summary::Summary>)> =
-            self.call_summaries.iter().map(|(j, s)| (*j, s.clone())).collect();
+        let summaries: Vec<(usize, Rc<summary::Summary>)> = self
+            .call_summaries
+            .iter()
+            .map(|(j, s)| (*j, s.clone()))
+            .collect();
         let mut tree = Vec::new();
         for (pos, leaf) in leaves {
             if let Some(p) = item_of(&leaf) {

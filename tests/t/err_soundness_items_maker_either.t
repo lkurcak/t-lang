@@ -1,8 +1,5 @@
 // A function given two iterators of one type can give back either.
-fn either<I: DoubleEndedIterator>(x: I, y: I, first: bool) -> core::iter::Rev<I>
-where
-    I: Discard,
-{
+fn either<I: DoubleEndedIterator>(x: I, y: I, first: bool) -> core::iter::Rev<I> where I: Discard {
     match first {
         true => x.rev(),
         false => y.rev(),

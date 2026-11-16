@@ -181,7 +181,10 @@ const CHANGES: [(&str, bool); 9] = [
     ("let _ = it.next();", true),
     ("let _ = it.any(|x| x > 5);", true),
     ("step(&mut it);", true),
-    ("if v == 3 {\n            let _ = it.next();\n        }", true),
+    (
+        "if v == 3 {\n            let _ = it.next();\n        }",
+        true,
+    ),
     ("it = (0..100).rev();", false),
     ("widen(&mut it);", false),
     ("if v == 3 {\n            widen(&mut it);\n        }", false),
@@ -229,10 +232,8 @@ fn change_output(change: &str) -> String {
             "let _ = it.any(|x| x > 5);" => {
                 let _ = it.any(|x| x > 5);
             }
-            c if c.starts_with("if v == 3") => {
-                if v == 3 {
-                    it.next();
-                }
+            c if c.starts_with("if v == 3") && v == 3 => {
+                it.next();
             }
             _ => {}
         }

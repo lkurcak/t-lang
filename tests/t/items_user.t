@@ -54,7 +54,9 @@ impl<I: Iterator> Iterator for Halve<I> where I::Item: Discard {
 fn halve<I: Iterator>(iter: I) -> Halve<I> where I::Item: Discard { Halve { iter } }
 
 /// Skips one, through a `&mut`: what's left still gives only what it did.
-fn drop_one<I: Iterator>(it: &mut I) with I::e where I::Item: Discard { let _ = it.next(); }
+fn drop_one<I: Iterator>(it: &mut I) with I::e where I::Item: Discard {
+    let _ = it.next();
+}
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;

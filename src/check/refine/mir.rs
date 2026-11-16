@@ -561,7 +561,8 @@ impl Walk<'_> {
 
     /// The measures a call keeps of `p`, if `local`, a `&mut` of it, is
     /// given straight to it, and nothing else it's given lends `p`
-    /// (`Walk::keeps`).
+    /// (`Walk::keeps`); and what it gives, if it's an iterator the call is
+    /// of the protocol of, or generic in (`items::ITEMS`).
     fn lent_keeps(&mut self, fr: &Frame, local: Local, p: &Place) -> Option<Vec<String>> {
         let &(at, i) = fr.operand_of.get(&local)?;
         let (f, ops) = fr.call_at(at)?;
@@ -2092,7 +2093,9 @@ impl Walk<'_> {
                     let mut trees = self.closure_trees(s, t, &vals, &places, &idx);
                     // What a closure is called with that an iterator gives.
                     for (i, more) in self.item_params(s, t, &vals, &idx) {
-                        let ts = trees.entry(i).or_insert_with(|| vec![Vec::new(); more.len()]);
+                        let ts = trees
+                            .entry(i)
+                            .or_insert_with(|| vec![Vec::new(); more.len()]);
                         for (k, m) in more.into_iter().enumerate() {
                             if let Some(t) = ts.get_mut(k) {
                                 t.extend(m);

@@ -4,7 +4,7 @@
 // the iterator gives (docs/82-item-invariants.md).
 use alloc::list::List;
 
-fn half(v: &u32) -> { r: u32 | r <= 50 } { (*v % 100) / 2 }
+fn half(v: &u32) -> { r: u32 | r <= 50 } { *v % 100 / 2 }
 
 fn need50(r: { r: u32 | r <= 50 }) -> u32 { r }
 
