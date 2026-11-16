@@ -151,6 +151,7 @@ fn close(fd: Fd) -> i64 {
 fn main() with alloc {
     let mut fds: List<Fd> = List::new();
     fds.push(Fd { n: 1 });
+    fds.push(Fd { n: 2 });
     for fd in fds {
         if close(fd) == 1 {
             break;

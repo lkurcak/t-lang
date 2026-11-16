@@ -632,6 +632,46 @@ impl Walk<'_> {
         out
     }
 
+    /// Is `x`, a type parameter of a function of scheme `s`, at type
+    /// arguments `targs`, an iterator it can't make (lemma I3): its bounds
+    /// the protocol's traits and markers, its items' markers, none on any
+    /// other type with it in it, no equality bound or closure giving one,
+    /// and its impls the defaults? What it is there, if it is.
+    fn conserved(&self, s: &crate::types::Scheme, x: &str, targs: &[Type]) -> Option<Type> {
+        let names = s.params.as_slice().to_vec();
+        if names.len() != targs.len() {
+            return None;
+        }
+        let i = names.iter().position(|n| n == x)?;
+        let at = targs.get(i)?.clone();
+        let iterator = (s.preds.iter()).any(|p| {
+            matches!(&p.ty, Type::Param(q, _) if q == x)
+                && (p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI)
+        });
+        let harmless = s.preds.iter().all(|p| harmless(p, x)) && harmless_eqs(&s.eqs, x);
+        (iterator && harmless && self.defaults_only(&at)).then_some(at)
+    }
+
+    /// Does a call of `symbol` (resolved, at type arguments `targs`) keep
+    /// what the iterator it's lent `&mut` as argument `i` gives: is it
+    /// generic in it, an iterator it can't make, and given no other of its
+    /// type (lemma I3)? Then what it leaves there is that one, or what
+    /// that one became by its protocol.
+    pub(super) fn generic_keeps(&self, symbol: &str, targs: &[Type], i: usize) -> bool {
+        let s = self.cx.scheme(symbol);
+        let Type::Fn(sig) = &s.ty else {
+            return false;
+        };
+        let Some(Type::Ref(_, true, inner)) = sig.params.get(i) else {
+            return false;
+        };
+        let Type::Param(x, _) = &**inner else {
+            return false;
+        };
+        let alone = (sig.params.iter().enumerate()).all(|(j, p)| j == i || !mentions_param(p, x));
+        alone && self.conserved(s, x, targs).is_some()
+    }
+
     /// The items of every value of callee type parameter `x` the callee
     /// can give back, if `x` is an iterator it can't make (lemma I3): one
     /// of those it was given, by value or behind a reference, or what
@@ -646,21 +686,7 @@ impl Walk<'_> {
         let Type::Fn(sig) = &s.ty else {
             return None;
         };
-        let names = s.params.as_slice().to_vec();
-        let i = names.iter().position(|n| n == x)?;
-        let at = targs.get(i)?.clone();
-        // Bounds that let it make one: any but the protocol's traits and
-        // markers, or a closure that gives one.
-        let iterator = (s.preds.iter()).any(|p| {
-            matches!(&p.ty, Type::Param(q, _) if q == x)
-                && (p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI)
-        });
-        if !s.preds.iter().all(|p| harmless(p, x)) || !harmless_eqs(&s.eqs, x) {
-            return None;
-        }
-        if !iterator || !self.defaults_only(&at) {
-            return None;
-        }
+        let at = self.conserved(s, x, targs)?;
         let mut g: Option<Tree> = None;
         let mut any = false;
         for (j, pt) in sig.params.iter().enumerate() {

@@ -1,5 +1,36 @@
 # Changelog
 
+## Unreleased
+
+Step 82: what an iterator gives, through its adapters. See
+[docs/82-item-invariants.md](docs/82-item-invariants.md).
+
+### Added
+
+- An iterator's adapters give what it gives: `for r in (0..8).rev()`
+  knows `r < 8`, and so do `skip`, `filter`, `enumerate` (each value's
+  second part), `zip` (both parts), and an adapter a program writes of
+  that shape, generic in its iterator and holding it by value.
+  `map` gives what its closure or function gives (`l.iter().map(half)`
+  keeps `half`'s refined result), and its closure, like `filter`'s and
+  `any`'s, knows its argument is one the iterator gives:
+  `(0..4).map(|i| a[i])` is accepted.
+- What an iterator gives is worked out from its own signatures, for any
+  whose impls define `next` and `next_back` alone: the measures they keep
+  or move one way bound every state it gets to. A program's own iterator
+  with such a `next` gets it too.
+- A function generic in an iterator, lent one `&mut` or given one by
+  value, leaves or gives back one that gives what it did.
+
+### Changed
+
+- `Range`'s `next` says it gives a value at least where it started, and
+  that its start never goes back; `next_back`, a value below the end it
+  had, and that its end never grows. So `for r in 3..8` knows `r >= 3`,
+  and `while let Some(r) = it.next_back()` knows `r` is in the range.
+- An empty list's iterator is known to give nothing, so a `for` over it
+  that would `break` is accepted, as its body never runs.
+
 ## 0.96.0 (2026-11-15)
 
 Step 81: contradictions, impls on function types, argument reborrows

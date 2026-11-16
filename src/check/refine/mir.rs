@@ -587,6 +587,7 @@ impl Walk<'_> {
         // docs/82-item-invariants.md).
         let protocol = i == 0 && self.protocol(symbol).is_some();
         let (symbol, targs) = self.callee_at(symbol, targs);
+        let protocol = protocol || self.generic_keeps(&symbol, &targs, i);
         let tys: Vec<Option<Type>> = ops.iter().map(|o| Some(self.operand_ty(fr, o))).collect();
         let kept = self.keeps_at(&symbol, targs, &tys, i);
         match (kept, protocol) {

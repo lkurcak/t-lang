@@ -321,7 +321,8 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
   `l.iter().skip(1)`, `enumerate` and `zip` give values of `I::Item`,
   which come from `I`'s own `next`, not from an argument, so step 60's
   instantiation finds none. Saying what an associated type's values are
-  is its own step.
+  is its own step. (Step 63 did it for a type argument's refinement, step
+  82 for a range's and a closure's: docs/82-item-invariants.md.)
 - A part of a refined `let` (a field of it, or what's in a box in it)
   still can't be lent `&mut`: the refinement would have to be proved again
   of the whole, which nothing here does yet.
