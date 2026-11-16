@@ -9,6 +9,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     // expect: 17
     // expect: 16
     // expect: 15
+    for r in (6..8).rev().into_iter() {
+        out.line(&a[r])?;
+    }
+    // expect: 17
+    // expect: 16
     for r in (3..8).skip(3) {
         out.line(&a[r])?;
     }
