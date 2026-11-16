@@ -270,7 +270,9 @@ start it gives at the head every time round (lemma I5).
 At a call of a range's `next` itself, the states before and after are
 known: they're within the bounds (`Walk::bound_states`), and the call's
 own signature says the rest, with no new variables, so a loop over a
-range costs what it did. Through an adapter, the inner range's states
+range costs what it did. Of a range that's one of several, as a function
+given two may give back either, within one's bounds: not both
+(`err_soundness_items_pick.t`). Through an adapter, the inner range's states
 aren't known: what's said is that some two states within the bounds gave
 it, new for each value, as two values are given from two states
 (`err_soundness_items_witness.t`).
