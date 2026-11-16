@@ -53,6 +53,10 @@ pub(super) enum Cand {
     Pred(Rc<Closed>),
     All(Vec<Disj>),
     Made(Rc<super::summary::Made>),
+    /// One an iterator's own signatures say it gives
+    /// (`items::Envelope`), of which, as of a `Made`, what's known is
+    /// of new values for the states it was given from.
+    Gives(Rc<super::items::Envelope>),
     Any,
 }
 
@@ -69,6 +73,7 @@ impl PartialEq for Cand {
             (Cand::Pred(a), Cand::Pred(b)) => Rc::ptr_eq(a, b),
             (Cand::All(a), Cand::All(b)) => a == b,
             (Cand::Made(a), Cand::Made(b)) => Rc::ptr_eq(a, b),
+            (Cand::Gives(a), Cand::Gives(b)) => Rc::ptr_eq(a, b),
             (Cand::Any, Cand::Any) => true,
             _ => false,
         }
@@ -821,6 +826,11 @@ impl Walk<'_> {
                 let made = made.clone();
                 Some(self.made_formula(&made, v).unwrap_or(Formula::True))
             }
+            Cand::Gives(_) if strict => None,
+            Cand::Gives(e) => {
+                let e = e.clone();
+                Some(self.envelope_formula(&e, v).unwrap_or(Formula::True))
+            }
             Cand::All(ds) => {
                 let mut all = Vec::new();
                 for d in ds {
@@ -1272,7 +1282,7 @@ pub(super) fn under(tree: &Tree, k: usize) -> Tree {
 pub(super) fn widen(tree: &Tree) -> Tree {
     fn cand(c: &Cand) -> Cand {
         match c {
-            Cand::Exact(_) | Cand::Made(_) | Cand::Any => Cand::Any,
+            Cand::Exact(_) | Cand::Made(_) | Cand::Gives(_) | Cand::Any => Cand::Any,
             Cand::Pred(p) => Cand::Pred(p.clone()),
             Cand::All(ds) => Cand::all(ds.iter().map(disj).collect()),
         }

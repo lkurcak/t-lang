@@ -121,6 +121,7 @@
 
 mod diagnostics;
 mod free;
+mod items;
 mod logic;
 pub use logic::{Work, work};
 mod mir;
@@ -160,6 +161,14 @@ pub(super) type Framed = Vec<Option<Vec<String>>>;
 /// What a change to a place keeps: of each place in it, the measures it
 /// leaves as they were (`Walk::frames_of`).
 type Keeps = Vec<(Place, Vec<String>)>;
+
+/// What a loop's frame keeps of a place, before it changes
+/// (`Walk::measures_now`): a measure's value, or what it gives, if it's
+/// an iterator (docs/82-item-invariants.md).
+enum Was {
+    Measure(Val),
+    Items(std::rc::Rc<targs::Tree>),
+}
 
 /// One predicate of a refinement, and the parts of the value it's of.
 #[derive(Debug, Clone)]
@@ -2291,6 +2300,8 @@ impl Checker {
             parts: HashMap::new(),
             trees: HashMap::new(),
             decl: HashMap::new(),
+            items: HashMap::new(),
+            moves_of: HashMap::new(),
             lent_trees: HashMap::new(),
             coerced_args: Vec::new(),
             no_place_reads: false,
@@ -2812,6 +2823,12 @@ struct Walk<'c> {
     /// What's declared of each local's value's positions, which each
     /// write must keep (`Walk::place_decl`).
     decl: HashMap<NodeId, targs::Tree>,
+    /// What every value each iterator object gives has, its items
+    /// (`items`): a tree of its `Item` type.
+    items: HashMap<Obj, std::rc::Rc<targs::Tree>>,
+    /// Which way each measure of each iterator type its protocol keeps may
+    /// move (`Walk::moves`).
+    moves_of: HashMap<Type, Vec<(String, bool, bool)>>,
     /// What the call that last lent each place `&mut` left at its
     /// positions, for when it's read next (`Walk::place_read`).
     lent_trees: HashMap<Place, targs::Tree>,
@@ -4544,12 +4561,21 @@ impl Walk<'_> {
 
     /// The value of each measure `frames` names of its place, now: before
     /// what changes the place, which keeps them (`measures_kept`).
-    fn measures_now(&mut self, frames: &[(Place, Vec<String>)]) -> Vec<(Place, String, Val)> {
+    fn measures_now(&mut self, frames: &[(Place, Vec<String>)]) -> Vec<(Place, String, Was)> {
         let mut kept = Vec::new();
         for (p, measures) in frames {
             for m in measures {
+                // What an iterator gives, kept as its measures are: every
+                // change is a call of its protocol (lemma I5 of
+                // docs/82-item-invariants.md).
+                if m == items::ITEMS {
+                    if let Some(g) = self.items_at(p) {
+                        kept.push((p.clone(), m.clone(), Was::Items(g)));
+                    }
+                    continue;
+                }
                 let recv = Val::Ref(self.new_obj(), Pointee::Place(p.clone()));
-                kept.push((p.clone(), m.clone(), self.measure(m, recv)));
+                kept.push((p.clone(), m.clone(), Was::Measure(self.measure(m, recv))));
             }
         }
         kept
@@ -4557,8 +4583,15 @@ impl Walk<'_> {
 
     /// Each measure in `kept` of its place is what it was
     /// (`measures_now`): what changed the place since kept it.
-    fn measures_kept(&mut self, kept: Vec<(Place, String, Val)>) {
+    fn measures_kept(&mut self, kept: Vec<(Place, String, Was)>) {
         for (p, m, before) in kept {
+            let before = match before {
+                Was::Measure(v) => v,
+                Was::Items(g) => {
+                    self.keep_items(&p, g);
+                    continue;
+                }
+            };
             let recv = Val::Ref(self.new_obj(), Pointee::Place(p));
             let now = self.measure(&m, recv);
             for f in equal(&now, &before) {
@@ -5103,6 +5136,13 @@ impl Walk<'_> {
             result = self.free_theorems(s, &vals, result);
         }
         self.assume_tree(&result, &ty, &trees.result);
+        // An iterator, or an adapter of it, given back by code generic in
+        // it: what it gives (docs/82-item-invariants.md).
+        if let Some((s, t)) = &resolved
+            && self.reachable
+        {
+            self.make_items(s, t, &vals, &result, &ty);
+        }
         // What the two intrinsics that say how big an integer type is give.
         if let (Some(f @ ("core::num::least" | "core::num::greatest")), Val::Int(v)) =
             (symbol, &result)

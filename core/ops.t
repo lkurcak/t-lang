@@ -48,13 +48,18 @@ impl<T: Int> Range<T> {
 /// Counts up, and can't panic: it adds one only to what's less than the
 /// end, which can't overflow, even at the end of its type, as the checker
 /// proves of every integer type (see docs/08-refinement-types.md). What it
-/// gives is less than the end, which it keeps: so `for x in a..b` knows
-/// `x < b` (see docs/53-refined-type-arguments.md).
+/// gives is where it started, and less than the end, which it keeps, and
+/// it never goes back: so `for x in a..b` knows `a <= x` and `x < b` (see
+/// docs/53-refined-type-arguments.md and docs/82-item-invariants.md).
 impl<T: Int> Iterator for Range<T> {
     type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> Option<{ v: T | v < self.end() }> ensures self.end() == old(self.end()) {
+    fn next(&mut self) -> Option<{ v: T | v >= old(self.start()) && v < self.end() }>
+    ensures
+        self.end() == old(self.end()),
+        self.start() >= old(self.start()),
+    {
         if self.start < self.end {
             let n = self.start;
             self.start = self.start + 1;
@@ -67,12 +72,13 @@ impl<T: Int> Iterator for Range<T> {
 
 /// Counts down from the end, as `next` counts up from the start: what it
 /// gives is at least the start, which it keeps, and less than the end it
-/// had. Neither can panic: it takes one only from what's more than the
-/// start.
+/// had, which only comes down. Neither can panic: it takes one only from
+/// what's more than the start.
 impl<T: Int> DoubleEndedIterator for Range<T> {
-    fn next_back(&mut self) -> Option<{ v: T | v >= self.start() }>
+    fn next_back(&mut self) -> Option<{ v: T | v >= self.start() && v < old(self.end()) }>
     ensures
         self.start() == old(self.start()),
+        self.end() <= old(self.end()),
     {
         if self.start < self.end {
             self.end = self.end - 1;

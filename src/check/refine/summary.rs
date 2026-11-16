@@ -383,7 +383,7 @@ impl Walk<'_> {
             Cand::All(ds) => Cand::All(ds.iter().map(|d| self.freshen_disj(s, fresh, d)).collect()),
             // What an inner closure's summary says is of values of this
             // run's it would have to rename too: left out, which says less.
-            Cand::Made(_) | Cand::Any => Cand::Any,
+            Cand::Made(_) | Cand::Gives(_) | Cand::Any => Cand::Any,
         }
     }
 

@@ -583,9 +583,20 @@ impl Walk<'_> {
             return None;
         }
         let targs = targs.iter().map(|t| self.cx.solved(t)).collect();
+        // A call of its protocol keeps what an iterator gives (lemma I5 of
+        // docs/82-item-invariants.md).
+        let protocol = i == 0 && self.protocol(symbol).is_some();
         let (symbol, targs) = self.callee_at(symbol, targs);
         let tys: Vec<Option<Type>> = ops.iter().map(|o| Some(self.operand_ty(fr, o))).collect();
-        self.keeps_at(&symbol, targs, &tys, i)
+        let kept = self.keeps_at(&symbol, targs, &tys, i);
+        match (kept, protocol) {
+            (Some(mut k), true) => {
+                k.push(super::items::ITEMS.to_string());
+                Some(k)
+            }
+            (None, true) => Some(vec![super::items::ITEMS.to_string()]),
+            (k, false) => k,
+        }
     }
 
     /// Along an edge from `from` back to loop head `head`: its invariant
@@ -2056,6 +2067,16 @@ impl Walk<'_> {
                 None => {}
             }
         }
+        // A call of the protocol of an iterator: what its iterator gives,
+        // which what's left gives too (docs/82-item-invariants.md).
+        let protocol = match &symbol {
+            Some(s) => self.protocol(s),
+            None => None,
+        };
+        let items = match (protocol, places.first().cloned().flatten()) {
+            (Some(_), Some(p)) if self.reachable => self.items_at(&p),
+            _ => None,
+        };
         let resolved = symbol.map(|s| self.callee_at(&s, targs));
         if !closures.is_empty() || !fns.is_empty() {
             let trees = match &resolved {
@@ -2063,7 +2084,17 @@ impl Walk<'_> {
                     let idx: Vec<usize> = (closures.iter().map(|(i, ..)| *i))
                         .chain(fns.iter().map(|(i, ..)| *i))
                         .collect();
-                    self.closure_trees(s, t, &vals, &places, &idx)
+                    let mut trees = self.closure_trees(s, t, &vals, &places, &idx);
+                    // What a closure is called with that an iterator gives.
+                    for (i, more) in self.item_params(s, t, &vals, &idx) {
+                        let ts = trees.entry(i).or_insert_with(|| vec![Vec::new(); more.len()]);
+                        for (k, m) in more.into_iter().enumerate() {
+                            if let Some(t) = ts.get_mut(k) {
+                                t.extend(m);
+                            }
+                        }
+                    }
+                    trees
                 }
                 None => HashMap::new(),
             };
@@ -2083,6 +2114,13 @@ impl Walk<'_> {
         }
         self.call_summaries = summaries;
         let arg_vals = vals.clone();
+        // What an iterator lent to code generic in it has after.
+        let lent_items = match (&resolved, items.is_some()) {
+            (Some((s, t)), false) if self.reachable && places.iter().any(Option::is_some) => {
+                self.lent_items(s, t, &vals, &places)
+            }
+            _ => Vec::new(),
+        };
         let site = CallAt {
             ty: ty.clone(),
             resolved,
@@ -2099,12 +2137,22 @@ impl Walk<'_> {
         if let Some(s) = closure {
             result = self.summary_call(&s, &arg_vals, &ty);
         }
+        if let (Some(true), Some(g)) = (protocol, &items) {
+            let given = super::items::shift(g, &[0]);
+            self.assume_tree(&result, &ty, &given);
+        }
         // What it lent `&mut` may have changed.
         for p in places.iter().flatten() {
             self.invalidate(p, span, "mutable lending");
             self.kill(p);
         }
         self.post_now(post, span)?;
+        if let (Some(g), Some(Some(p))) = (items, places.first()) {
+            self.keep_items(p, g);
+        }
+        for (p, g) in lent_items {
+            self.keep_items(&p, g);
+        }
         Ok(result)
     }
 
