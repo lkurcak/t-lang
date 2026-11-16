@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.97.0 (2026-11-16)
 
 Step 82: what an iterator gives, through its adapters. See
 [docs/82-item-invariants.md](docs/82-item-invariants.md).
