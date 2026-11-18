@@ -338,8 +338,10 @@ what the arguments do before it runs first, as written.
 > now `Arg::Borrow(*p)`, exactly what `&mut *p` written is: the same MIR
 > statement, taken at the same point, just before the call. So the
 > argument of docs/06 for args first holds as it is: finding `*p` is
-> following fields and `*`s, which no other argument can observe, and the
-> borrow checker sees every borrow and use in the order they run.
+> following fields and `*`s, and the borrow checker sees every borrow and
+> use in the order they run. (Retrospective 13 found that another
+> argument could observe it, by giving `p` a new value; since step 83
+> that's refused: lemma A5 of docs/83-sources.md.)
 
 The adversarial tests are `tests/t/err_soundness_contradiction_*.t`
 (facts from before a loop, a value lent `&mut`, two paths joined, a

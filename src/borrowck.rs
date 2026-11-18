@@ -366,6 +366,9 @@ fn analyze(
     // lifetimes is often because of something else that's wrong, which is
     // what's worth saying, if there's anything.
     let members = member_constraints(b, names).err();
+    if let Err(e) = loans::pins(b) {
+        errors.push(e);
+    }
     let sol = b.regions.solve(&b.body);
     if let Err(e) = loans::check(b, &sol) {
         errors.push(e);

@@ -45,10 +45,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
         1
     });
     stdout.line(&v.len())?;          // expect: 6
-    // The box is borrowed after it's replaced, so it's the new one.
+    // What's in the box is borrowed after it's replaced, so it's the new
+    // value. (The box itself can't be replaced there: docs/83.)
     let mut h = Holder { b: Box::new(Stack { top: 0, size: 0 }) };
     h.b.push({
-        h.b = Box::new(Stack { top: 0, size: 10 });
+        *h.b = Stack { top: 0, size: 10 };
         4
     });
     stdout.line(&h.b.size)?;         // expect: 11

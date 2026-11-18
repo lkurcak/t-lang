@@ -252,9 +252,11 @@ taken there.
 
 Only the borrow waits: what a place is made from, if it isn't a variable,
 like `make()` in `&mut make().f`, is worked out in order. Finding a place
-is only following fields and `*`s of references and boxes, which nothing
-can see happen, so taking it later changes no program's meaning; it only
-lets the borrow checker see that nothing clashes. That's a reason to keep
+is only following fields and `*`s of references and boxes, and no later
+argument may give one of those references or boxes a new value (since
+step 83, docs/83-sources.md: `put(g, { g = b; 1 })` is refused), so
+taking it later changes no program's meaning; it only lets the borrow
+checker see that nothing clashes. That's a reason to keep
 it so: when traits for `*` and indexing come, their calls will be worked
 out in order, and only what's built in borrowed late.
 

@@ -25,6 +25,7 @@
 use super::*;
 use crate::borrowck::regions::Variance;
 use crate::traits::{COPY, DISCARD, SEND, SYNC};
+use sources::Signature;
 use std::rc::Rc;
 
 /// A position in a type: which of the types in it a refinement can be in
@@ -1315,7 +1316,7 @@ pub(super) fn widen(tree: &Tree) -> Tree {
 /// so `T: Iterator`, of a `T` that's an `Iter<'_, U>`, keeps what's said of
 /// its `U`s, and what `<T as Iterator>::Item` is says what it gives
 /// (`Walk::subst_tree`).
-fn parametric_impl(cx: &Checker, t: &Type, tr: &str) -> bool {
+pub(super) fn parametric_impl(cx: &Checker, t: &Type, tr: &str) -> bool {
     parametric_impl_seen(cx, t, tr, &mut Vec::new())
 }
 
@@ -1535,112 +1536,6 @@ pub(super) fn writable_inside(cx: &Checker, t: &Type) -> bool {
     go(cx, t, 0)
 }
 
-/// Where a type parameter's values come from that a call can't follow: a
-/// bound on it that makes values (`consumer`), or another that might,
-/// or a closure's result, but of a closure given for a type parameter
-/// `given` says the call can follow, by its summary (lemma C2 of
-/// docs/74-refined-instantiation.md). `None` if there's none (lemma A2).
-pub(super) fn makes(
-    cx: &Checker,
-    s: &crate::types::Scheme,
-    x: &str,
-    ty: Option<&Type>,
-    given: &dyn Fn(&str) -> bool,
-) -> Option<String> {
-    let traits = &cx.traits;
-    let this = s.params.ty(x);
-    for p in &s.preds {
-        if p.ty == this {
-            if !consumer(traits, &p.trait_name, &mut Vec::new())
-                && !ty.is_some_and(|t| parametric_impl(cx, t, &p.trait_name))
-            {
-                let name = traits.shorten(&p.trait_name);
-                return Some(format!("`{x}: {name}`"));
-            }
-        } else if free::mentions(&p.ty, x)
-            && !consumer(traits, &p.trait_name, &mut Vec::new())
-            && !crate::traits::FN_TRAITS.contains(&p.trait_name.as_str())
-        {
-            let name = traits.shorten(&p.trait_name);
-            return Some(format!("`{}: {name}`", p.ty));
-        }
-    }
-    for (a, b) in &s.eqs {
-        // What an impl says its trait's associated type is, for its own
-        // type, isn't a bound: a value of it is made only by the impl's
-        // methods, which can make an `x` no more than this one can.
-        if let Type::Proj(base, ..) = a
-            && !matches!(**base, Type::Param(..))
-            && !free::mentions(a, x)
-        {
-            continue;
-        }
-        if let Type::Proj(base, ..) = a
-            && !matches!(**base, Type::Param(..) | Type::Proj(..))
-        {
-            continue;
-        }
-        if crate::traits::is_sig(a) {
-            let followed = matches!(a, Type::Proj(base, ..)
-                if matches!(&**base, Type::Param(f, _) if given(f)));
-            if let Type::Fn(f) = b
-                && free::mentions(&f.ret, x)
-                && !followed
-            {
-                return Some(format!("a closure's result, `{}`", f.ret));
-            }
-            continue;
-        }
-        if free::mentions(a, x) || free::mentions(b, x) {
-            return Some(format!("`{a} = {b}`"));
-        }
-    }
-    None
-}
-
-/// The one parameter of a function of scheme `s` that every value of its
-/// type parameter `f` it can call comes from, if there is one: a parameter
-/// whose type is `f`, with `f` in no other parameter's type, and no bound
-/// that makes one (lemma V5 of docs/78-callable-values.md). What a closure
-/// given there gives is then what every call of `f` gives. Two parameters
-/// of type `F`, or an `Option<F>` or a `&List<F>` beside it, could each be
-/// another closure of the same type, made with other captures.
-pub(super) fn sole_source(cx: &Checker, s: &crate::types::Scheme, f: &str) -> Option<usize> {
-    let Type::Fn(sig) = &s.ty else {
-        return None;
-    };
-    let mut at = None;
-    for (j, p) in sig.params.iter().enumerate() {
-        match p {
-            Type::Param(g, _) if g == f && at.is_none() => at = Some(j),
-            p if free::mentions(p, f) => return None,
-            _ => {}
-        }
-    }
-    let traits = &cx.traits;
-    for p in &s.preds {
-        if free::mentions(&p.ty, f)
-            && !consumer(traits, &p.trait_name, &mut Vec::new())
-            && !crate::traits::FN_TRAITS.contains(&p.trait_name.as_str())
-        {
-            return None;
-        }
-    }
-    for (a, b) in &s.eqs {
-        if !free::mentions(a, f) && !free::mentions(b, f) {
-            continue;
-        }
-        // Its own signature, which gives what calling it gives: not one.
-        let own = matches!(a, Type::Proj(base, _, n)
-            if n == crate::traits::SIG && matches!(&**base, Type::Param(g, _) if g == f));
-        match b {
-            Type::Fn(sig) if own && !free::mentions(&sig.ret, f) => {}
-            _ => return None,
-        }
-    }
-    at
-}
-
 impl Walk<'_> {
     /// What the values of `v` (of type `t`) at each position are, as a
     /// tree: of each of `t`'s positions as deep as `DEPTH`.
@@ -1725,11 +1620,13 @@ impl Walk<'_> {
         // they give is summarized (lemma V5 of docs/78-callable-values.md).
         let given: Vec<usize> = self.call_summaries.keys().copied().collect();
         let cx = self.cx;
-        let summarized =
-            |f: &str| sole_source(cx, s, f).filter(|j| given.contains(j) && sig.params.len() > *j);
+        let callee = Signature::of_scheme(s);
+        let summarized = |f: &str| {
+            (callee.sole_source(cx, f)).filter(|j| given.contains(j) && sig.params.len() > *j)
+        };
         let mut inst = Inst {
             at: all.iter().map(|p| (p.clone(), Vec::new())).collect(),
-            any: makes(self.cx, s, x, Some(&ty), &|f| summarized(f).is_some()),
+            any: callee.makes(self.cx, x, Some(&ty), &|f| summarized(f).is_some()),
             changed,
         };
         let push = |inst: &mut Inst, pos: &[usize], c: (Source, Vec<Formula>, Cand)| {
@@ -2958,12 +2855,16 @@ impl Walk<'_> {
             };
             let mut subs = Vec::new();
             let mut unsaid = Vec::new();
+            let impl_sig = Signature::of_scheme(&as_scheme);
             for (k, p) in names.iter().enumerate() {
                 if !def.params.is_type(p) {
                     continue;
                 }
                 let arg = impl_args.get(k).cloned();
-                if makes(self.cx, &as_scheme, p, arg.as_ref(), &|_| false).is_some() {
+                if impl_sig
+                    .makes(self.cx, p, arg.as_ref(), &|_| false)
+                    .is_some()
+                {
                     unsaid.push(p.clone());
                     continue;
                 }
@@ -3077,21 +2978,15 @@ impl Walk<'_> {
             let inst = self.instantiate_one(&s, x, &subst, vals, &written, &mut behind);
             insts.push((x.clone(), inst));
         }
-        fn has_opaque(t: &Type) -> bool {
-            matches!(t, Type::Opaque(..)) || t.parts().any(has_opaque)
-        }
+        let callee = Signature::of_scheme(&s);
         for &j in closures {
             let Some(Type::Param(f, _)) = fsig.params.get(j) else {
                 continue;
             };
             // Only one the callee can't give back, or keep anywhere the
-            // caller can call it from after: its type nowhere else in the
-            // signature. Else it could be called with anything later.
-            let elsewhere = (fsig.params.iter().enumerate())
-                .any(|(i, p)| i != j && free::mentions(p, f))
-                || free::mentions(&fsig.ret, f)
-                || has_opaque(&fsig.ret);
-            if elsewhere {
+            // caller can call it from after (`Signature::kept`): else it
+            // could be called with anything later.
+            if callee.kept(self.cx, f, j) {
                 continue;
             }
             let sig = (s.eqs.iter()).find_map(|(a, b)| match (a, b) {

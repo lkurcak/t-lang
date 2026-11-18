@@ -125,6 +125,7 @@ mod items;
 mod logic;
 pub use logic::{Work, work};
 mod mir;
+mod sources;
 mod summary;
 mod targs;
 

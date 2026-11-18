@@ -10,9 +10,11 @@
 //! writing, moving or dropping clashes with any.
 //!
 //! A call's borrows of places are made after its other arguments (see
-//! `Builder::call_into`), so `v.push(v.len())` needs nothing special here.
+//! `Builder::call_into`), so `v.push(v.len())` needs nothing special here;
+//! but what such a place is found through mustn't change in between
+//! (`pins`).
 
-use super::build::{Builder, Loan, project};
+use super::build::{self, Builder, Loan, project};
 use super::describe;
 use super::regions::Solution;
 use crate::error::{Error, Span};
@@ -88,6 +90,93 @@ fn accesses(s: &Statement) -> Vec<(Place, Access)> {
     out
 }
 
+/// Checks that no argument gives a new value to what a borrow an earlier
+/// one waits for is found through (`build::Pin`, lemma A5 of
+/// docs/83-sources.md): giving it one, lending it `&mut`, or moving it,
+/// or a place it's in, short of a `*`.
+pub(crate) fn pins(b: &Builder) -> Result<(), Error> {
+    for pin in &b.pins {
+        let Some(until) = pin.until else {
+            continue;
+        };
+        // Only the later arguments' blocks, and of those, only the ones
+        // from which the borrows are got to: a `?`, `return` or `break` in
+        // one leaves the call, which then borrows nothing.
+        let ours = |bb: Bb| bb == pin.from.block || bb.0 >= pin.first_block;
+        let mut reaches = std::collections::HashSet::from([until.block]);
+        loop {
+            let more: Vec<Bb> = (0..b.body.blocks.len())
+                .map(Bb)
+                .filter(|bb| ours(*bb) && !reaches.contains(bb))
+                .filter(|bb| b.body.successors(*bb).iter().any(|s| reaches.contains(s)))
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            reaches.extend(more);
+        }
+        let mut todo = vec![pin.from];
+        let mut seen = std::collections::HashSet::new();
+        while let Some(p) = todo.pop() {
+            if p == until || !seen.insert(p) {
+                continue;
+            }
+            let block = &b.body.blocks[p.block.0];
+            if p.index < block.stmts.len() {
+                let s = &block.stmts[p.index];
+                for (place, access) in accesses(s) {
+                    if access.writes() && changes(&place, &pin.place) {
+                        return Err(pin_clash(b, pin, &place, access, s.span));
+                    }
+                }
+                todo.push(Point {
+                    block: p.block,
+                    index: p.index + 1,
+                });
+            } else {
+                for succ in b.body.successors(p.block) {
+                    if ours(succ) && reaches.contains(&succ) {
+                        todo.push(Point {
+                            block: succ,
+                            index: 0,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Does writing `place` change what's at `pinned`: is it `pinned`, or a
+/// place `pinned` is in, reached without a `*`?
+fn changes(place: &Place, pinned: &Place) -> bool {
+    place.local == pinned.local
+        && place.proj.len() <= pinned.proj.len()
+        && place.proj.iter().zip(&pinned.proj).all(|(p, q)| p == q)
+        && !pinned.proj[place.proj.len()..].contains(&Proj::Deref)
+}
+
+/// The error for `access` to `place`, at `span`, which changes what `pin`
+/// pins.
+fn pin_clash(b: &Builder, pin: &build::Pin, place: &Place, access: Access, span: Span) -> Error {
+    let what = describe(b, place);
+    let borrowed = describe(b, &pin.borrowed);
+    let doing = match access {
+        Access::BorrowMut => format!("lend `{what}` here"),
+        Access::Move => format!("move `{what}` here"),
+        _ => format!("give `{what}` a new value here"),
+    };
+    Error::ty(
+        span,
+        format!(
+            "can't {doing}: an earlier argument borrows `{borrowed}`, which is found through it \
+             when the call's borrows are taken, after the other arguments; change it before \
+             the call"
+        ),
+    )
+}
+
 /// Do loan `loan` and an access to `place` of kind `access` overlap?
 fn overlaps(b: &Builder, loan: &Place, place: &Place, access: Access) -> bool {
     if loan.local != place.local {
@@ -136,7 +225,8 @@ pub(crate) fn check(b: &Builder, sol: &Solution) -> Result<(), Error> {
                 index: i,
             };
             in_region(b, sol, &mut live, point);
-            if let Err(e) = conflicts(b, sol, &live, s)
+            if let Err(e) =
+                pin_reads(b, sol, &live, point).and_then(|()| conflicts(b, sol, &live, s))
                 && first.as_ref().is_none_or(|f| e.span.start < f.span.start)
             {
                 first = Some(e);
@@ -148,6 +238,11 @@ pub(crate) fn check(b: &Builder, sol: &Solution) -> Result<(), Error> {
             index: body.blocks[bb].stmts.len(),
         };
         in_region(b, sol, &mut live, end);
+        if let Err(e) = pin_reads(b, sol, &live, end)
+            && first.as_ref().is_none_or(|f| e.span.start < f.span.start)
+        {
+            first = Some(e);
+        }
         for succ in body.successors(Bb(bb)) {
             let new = match &ins[succ.0] {
                 None => live.clone(),
@@ -200,9 +295,37 @@ fn effect(b: &Builder, live: &mut [bool], s: &Statement, point: Point) {
     }
 }
 
+/// The first clash between reading each place a pin starts at `point`
+/// pins, where its argument is, and the loans in `live` (`build::Pin`): a
+/// `&mut` to it in use there could change it later.
+fn pin_reads(b: &Builder, sol: &Solution, live: &[bool], point: Point) -> Result<(), Error> {
+    for pin in b.pins.iter().filter(|p| p.from == point) {
+        clashes(
+            b,
+            sol,
+            live,
+            &[(pin.place.clone(), Access::Inspect)],
+            pin.span,
+        )?;
+    }
+    Ok(())
+}
+
 /// The first clash between what `s` does and the loans in `live`.
 fn conflicts(b: &Builder, sol: &Solution, live: &[bool], s: &Statement) -> Result<(), Error> {
-    for (place, access) in accesses(s) {
+    clashes(b, sol, live, &accesses(s), s.span)
+}
+
+/// The first clash between accesses `accesses`, at `span`, and the loans
+/// in `live`.
+fn clashes(
+    b: &Builder,
+    sol: &Solution,
+    live: &[bool],
+    accesses: &[(Place, Access)],
+    span: Span,
+) -> Result<(), Error> {
+    for (place, access) in accesses.iter().cloned() {
         for (i, loan) in b.loans.iter().enumerate() {
             let mutable = loan.mutable;
             if !live[i] || !(mutable || access.writes()) {
@@ -210,7 +333,7 @@ fn conflicts(b: &Builder, sol: &Solution, live: &[bool], s: &Statement) -> Resul
             }
             if overlaps(b, &loan.place, &place, access) {
                 let escapes = !sol.ends(loan.region, b.regions.universal.len()).is_empty();
-                let e = clash(b, loan, mutable, &place, access, s.span, escapes);
+                let e = clash(b, loan, mutable, &place, access, span, escapes);
                 return Err(match dropped_later(b, sol, loan) {
                     Some((name, span)) => e.with_note(
                         span,
