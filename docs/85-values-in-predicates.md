@@ -262,8 +262,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 4. A function says `ensures *a == old(*b)` of two `&mut Box<u8>`, and
    swaps them, then writes `**a = 5`. Why is that refused, and what would
    go wrong if it weren't? What if they were `&mut &mut u8`?
-5. Why can't `copy_into`'s `ensures` be `*dst == old(*src)` with `src:
-   &mut Pair`? (Hint: docs/30, call-scoped.)
+5. `copy_into` says `*dst == *src`, of what `src` points to at return.
+   Why is that `old(*src)` too? Would it be if `src` were a `&mut Pair`?
 
 ## Reading
 
