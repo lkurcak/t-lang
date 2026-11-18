@@ -5,12 +5,12 @@ use super::info::{Instance, Resolved};
 use super::lints::{Unwrap, narrowable, unreachable_alt, unreachable_code, unused_label};
 use super::scope::{Binding, FnScope, to_closure};
 use super::typed::Res;
-use super::{Checker, ITERATOR, effects, generics, modules, plural, source_name, traits, unify};
+use super::{Checker, effects, generics, plural, source_name, traits, unify};
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::exhaust::{self, Redundant};
 use crate::traits::Pred;
-use crate::traits::{DISCARD, EQ, FN_ONCE, INT, ORD};
+use crate::traits::{EQ, FN_ONCE, INT, ORD};
 use crate::types::{FnType, IntTy, Region, Type, struct_fields, variant_fields};
 
 impl Checker {
@@ -1799,11 +1799,6 @@ impl Checker {
                     self.note_binds(&binds, ty.is_none());
                     binds.iter().for_each(|l| self.bind(l));
                     let t = self.solved(&t);
-                    if let (PatternKind::Bind(name, _), Some(init)) = (&pat.kind, init)
-                        && name == modules::FOR_ITERATOR
-                    {
-                        self.for_iterator(&t, init.span)?;
-                    }
                     // Only alternatives can be unreachable here. A whole `let`
                     // pattern only is when the value can't exist, like a
                     // `Never` parameter, and then nothing is wrong.
@@ -1885,32 +1880,6 @@ impl Checker {
             self.scopes.pop();
         }
         Ok(t)
-    }
-
-    /// Checks the iterator of a `for` loop, of type `t`, written at `span`,
-    /// can be thrown away when the loop ends, as it is: the same check as
-    /// for any variable, which borrowck makes too, but with a message that
-    /// says what to do about it. If `t` isn't known yet, or isn't an
-    /// iterator at all, that's for those to say.
-    fn for_iterator(&self, t: &Type, span: Span) -> Result<(), Error> {
-        if unify::has_vars(t) || self.has_unsettled_closure(t) {
-            return Ok(());
-        }
-        let (env, eqs) = (&self.adts.proj.env, &self.adts.proj.local);
-        let implements = |tr: &str| self.traits.implements(t, tr, env, eqs).is_ok();
-        // One that may be thrown away when it's used up, by an impl of
-        // `Discard` for a refined type, is the refinement checker's to say
-        // of where the loop ends (docs/80-discard-when.md).
-        if !implements(ITERATOR) || implements(DISCARD) || implements(crate::traits::DISCARD_WHEN) {
-            return Ok(());
-        }
-        Err(Error::ty(
-            span,
-            format!(
-                "a `for` throws its iterator away when it ends, and `{t}` isn't `Discard`; to \
-                 keep it, iterate over a mutable reference to it: `for x in &mut it`"
-            ),
-        ))
     }
 }
 

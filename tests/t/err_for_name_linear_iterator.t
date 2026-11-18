@@ -1,0 +1,26 @@
+// A `for` drops its iterator when it ends, named or not, so it must be
+// `Discard`; to keep a linear one, iterate over `&mut it`.
+struct Lines { left: i64 }
+
+impl Iterator for Lines {
+    type Item = i64;
+    effect e = {};
+
+    fn next(&mut self) -> Option<i64> {
+        if self.left == 0 {
+            return None;
+        }
+        self.left = self.left - 1;
+        Some(self.left)
+    }
+}
+
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    for n in it: (Lines { left: 2 }) {
+        let _ = &it;
+        out.line(&n)?;
+    }
+    Ok(())
+}
+// error: a `for` throws its iterator away when it ends, and `Lines` isn't `Discard`; to keep it, iterate over a mutable reference to it: `for x in &mut it`

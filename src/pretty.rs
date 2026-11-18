@@ -1238,6 +1238,10 @@ impl Printer<'_> {
                     + "for "
                     + self.pattern(&f.pat)
                     + " in "
+                    + match &f.name {
+                        Some(n) => text(format!("{}: ", n.name)),
+                        None => Doc::nil(),
+                    }
                     + self.head(&f.iter)
                     + self.invariant(&f.invariant)
                     + self.block_or_expr(&f.body),

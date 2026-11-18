@@ -657,8 +657,14 @@ its calls ensure stays the same and what its `invariant p` says (`while
 lo < hi invariant hi <= a.len() { .. }`, also on `loop`, `for` and `while
 let`): `p` must hold as the loop starts, at the end of its body and at
 each `continue`. After a loop, what held at one of its exits (its
-condition false, or a `break`) holds. See [loop frames](52-loop-frames.md)
-and [loop invariants](54-loop-invariants.md). Diagnostics explain the required condition, relevant known
+condition false, or a `break`) holds. `for x in it: e` names the iterator
+the loop goes through `it`, a variable in the invariant and the body: an
+iterator over a slice, array or list says what it has left, `it.len()`,
+which each value it gives takes one off, and a range's `next` moves
+`it.start()` by one, so `for x in it: l.iter() invariant n + it.len() <=
+l.len()` proves a count `n` doesn't overflow. `swap` exchanges what's
+known of its two places. See [loop frames](52-loop-frames.md),
+[loop invariants](54-loop-invariants.md) and [counting](84-counting.md). Diagnostics explain the required condition, relevant known
 facts, and mutations that caused facts to be forgotten.
 
 `<` of two `char`s compares their numbers, so a guard such as `c < 'a'`

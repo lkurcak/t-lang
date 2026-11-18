@@ -72,7 +72,7 @@
 //! if       = "if" expr block ("else" (block | if))?
 //! while    = "while" ("let" pattern "=")? expr invariant? block
 //! loop     = "loop" invariant? block
-//! for      = "for" pattern "in" expr invariant? block
+//! for      = "for" pattern "in" (IDENT ":")? expr invariant? block  -- the name is the iterator's
 //! invariant = "invariant" expr                               -- a predicate, never run
 //! match    = "match" expr "{" (pattern "=>" expr ","?)* "}"  -- `,` optional after a block/if/match
 //! field_init = IDENT (":" expr)?                             -- `x` is short for `x: x`
@@ -2919,6 +2919,16 @@ impl Parser {
             self.bump();
             let pat = self.pattern()?;
             let in_span = self.expect(Tok::In)?;
+            // `it:` names the iterator: no expression starts with a name
+            // and one `:`.
+            let name = match (self.peek(), self.peek2()) {
+                (Tok::Ident(_), Tok::Colon) => {
+                    let name = self.ident()?;
+                    self.bump();
+                    Some(name)
+                }
+                _ => None,
+            };
             let iter = self.structs(false, Self::expr)?;
             let invariant = self.invariant()?;
             let body = self.block()?;
@@ -2927,6 +2937,7 @@ impl Parser {
                 label,
                 pat,
                 in_span,
+                name,
                 iter,
                 invariant,
                 body,

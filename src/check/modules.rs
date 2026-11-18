@@ -191,6 +191,10 @@ pub(crate) struct Modules {
     /// of its head, by its node (`Rewrite::for_loop`): of an iterator, it
     /// is the iterator itself, and the borrow checker leaves it out.
     pub(crate) for_heads: HashSet<NodeId>,
+    /// The pattern each `for` binds its iterator with, by its node
+    /// (`Rewrite::for_loop`): for saying what's wrong with the iterator as
+    /// the `for`'s, whether it's named or not.
+    pub(crate) for_iterators: HashSet<NodeId>,
     /// The pattern, `_`, of the `let _: ! = ..` each `let .. else` puts its
     /// `else` in, for saying what's wrong if it can finish.
     pub(crate) must_leave: HashSet<NodeId>,
@@ -2450,8 +2454,10 @@ impl Rewrite<'_> {
     /// }
     /// ```
     ///
-    /// with the `for`'s label and invariant on the `loop`, and `it` a name
-    /// no program can write. So `it` is thrown away when the loop ends,
+    /// with the `for`'s label and invariant on the `loop`, and `it` the
+    /// name the `for` gives its iterator (`for x in it: e`), in scope in
+    /// the invariant and the body, or else a name no program can write
+    /// (lemma N1 of docs/84-counting.md). So `it` is thrown away when the loop ends,
     /// which it can only be if it's `Discard`, and each value `pat` binds is
     /// the body's to use up, by the rules for any variable. `iter` is a
     /// `match`'s scrutinee, not a `let`'s initializer, so its temporaries
@@ -2509,19 +2515,29 @@ impl Rewrite<'_> {
         let k = f.label.as_ref().map_or(span.start, |l| l.head.end);
         let i = f.in_span.start;
         let at = Span::new;
-        let it = || ExprKind::Var(FOR_ITERATOR.into(), Vec::new());
+        // The iterator's variable: the name the `for` gives it, or one no
+        // program can write.
+        let (name, name_span) = match &f.name {
+            Some(n) => (n.name.clone(), n.span),
+            None => (FOR_ITERATOR.to_string(), f.iter.span),
+        };
+        let it = || ExprKind::Var(name.clone(), Vec::new());
         let iter_span = f.iter.span;
         let bind = Pattern {
-            kind: PatternKind::Bind(FOR_ITERATOR.into(), true),
-            span: iter_span,
+            kind: PatternKind::Bind(name.clone(), true),
+            span: name_span,
             id: self.id(),
         };
+        self.r.m.for_iterators.insert(bind.id);
+        // A name the program gave the iterator isn't written here: an
+        // empty span keeps editors from seeing it (`info::unwritten`).
+        let named = usize::from(f.name.is_none());
         let borrow = Expr {
             kind: ExprKind::Unary(
                 UnOp::RefMut,
                 Box::new(Expr {
                     kind: it(),
-                    span: at(i + 1, i + 2),
+                    span: at(i + 1, i + 1 + named),
                     id: self.id(),
                 }),
             ),

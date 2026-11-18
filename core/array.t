@@ -69,17 +69,19 @@ impl<T, const N: usize> [T; N] {
     export fn get_mut(&mut self, i: usize) -> Option<&mut T> { self.as_mut_slice().get_mut(i) }
 
     /// Its values, by reference, front to back.
-    export fn iter(&self) -> Iter<T> { self.as_slice().iter() }
+    export fn iter(&self) -> { it: Iter<T> | it.len() == N } { self.as_slice().iter() }
 
     /// Its values, to change, front to back.
-    export fn iter_mut(&mut self) -> IterMut<T> { self.as_mut_slice().iter_mut() }
+    export fn iter_mut(&mut self) -> { it: IterMut<T> | it.len() == N } {
+        self.as_mut_slice().iter_mut()
+    }
 }
 
 /// `for x in &a`: a reference to each of its values, front to back.
 impl<'a, T, const N: usize> IntoIterator for &'a [T; N] {
     type IntoIter = Iter<'a, T>;
 
-    fn into_iter(self) -> Iter<'a, T> { self.iter() }
+    fn into_iter(self) -> { it: Iter<'a, T> | it.len() == N } { self.iter() }
 }
 
 /// `for x in &mut a`: a reference to change each of its values through,
@@ -87,7 +89,7 @@ impl<'a, T, const N: usize> IntoIterator for &'a [T; N] {
 impl<'a, T, const N: usize> IntoIterator for &'a mut [T; N] {
     type IntoIter = IterMut<'a, T>;
 
-    fn into_iter(self) -> IterMut<'a, T> { self.iter_mut() }
+    fn into_iter(self) -> { it: IterMut<'a, T> | it.len() == N } { self.iter_mut() }
 }
 
 /// `for x in a`, for an array of copies: a copy of each of its values,
@@ -97,19 +99,31 @@ impl<'a, T, const N: usize> IntoIterator for &'a mut [T; N] {
 impl<T: Copy, const N: usize> IntoIterator for [T; N] {
     type IntoIter = IntoIter<T, N>;
 
-    fn into_iter(self) -> IntoIter<T, N> { IntoIter { values: self, next: 0 } }
+    fn into_iter(self) -> { it: IntoIter<T, N> | it.len() == N } {
+        IntoIter { values: self, next: 0 }
+    }
 }
 
 /// What `for x in a` goes through, for an array `a` of copies: each of its
 /// values, front to back, from index `next` on.
 #[derive(Copy where T: Copy, Discard where T: Discard)]
-export struct IntoIter<T, const N: usize> { values: [T; N], next: usize }
+export struct IntoIter<T, const N: usize> { values: [T; N], next: { i: usize | i <= values.len() } }
+
+impl<T, const N: usize> IntoIter<T, N> {
+    /// How many values it has yet to give. It's a measure: each value
+    /// `next` gives takes one off, and once it gives `None`, it's `0`.
+    #[measure]
+    export fn len(&self) -> usize { self.values.len() - self.next }
+}
 
 impl<T: Copy, const N: usize> Iterator for IntoIter<T, N> {
     type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
+    {
         let i = self.next;
         if i < self.values.len() {
             self.next = i + 1;

@@ -1605,6 +1605,52 @@ fn main() {
     stop(child, c);
 }
 
+/// The name a `for` gives its iterator is a variable like any other: in
+/// its invariant and its body, it goes to where it's named, hovers as the
+/// iterator's type, and is renamed everywhere it's used
+/// (docs/84-counting.md).
+#[test]
+fn renames_and_hovers_a_for_iterator() {
+    let (child, mut c) = start();
+    let src = "\
+fn count(a: &[u8]) -> usize {
+    let mut n: usize = 0;
+    for x in it: a.iter() invariant n + it.len() <= a.len() {
+        if *x > 1 && it.len() > 0 {
+            n = n + 1;
+        }
+    }
+    n
+}
+fn main() {
+    let _c = count(&[1, 2]);
+}
+";
+    let (mut d, diags) = Doc::open(&mut c, "file:///tmp/for_iterator.t", src);
+    assert_eq!(diags, Vec::<Value>::new());
+    let r = d.ask(
+        &mut c,
+        "textDocument/definition",
+        "it.len() >",
+        0,
+        json!({}),
+    );
+    assert_eq!(r["result"]["range"]["start"], d.at("it: a", 0), "{r}");
+    let r = d.ask(&mut c, "textDocument/hover", "it: a", 0, json!({}));
+    let hover = r["result"]["contents"]["value"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(hover.contains("Iter<u8>"), "{r}");
+    assert_eq!(
+        d.rename(&mut c, "it: a", 0, "rest").unwrap(),
+        src.replace("it: a", "rest: a")
+            .replace("n + it.len()", "n + rest.len()")
+            .replace("&& it.len()", "&& rest.len()")
+    );
+    stop(child, c);
+}
+
 /// A parameter named in `ensures`, in `old(..)` too, is renamed there,
 /// and a measure named there is found.
 #[test]

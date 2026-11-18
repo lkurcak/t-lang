@@ -138,7 +138,7 @@ structs! {
     Ident { name, span, id };
     TypeExpr { kind, span, id };
     Expr { kind, span, id };
-    ForLoop { label, pat, in_span, iter, invariant, body };
+    ForLoop { label, pat, in_span, name, iter, invariant, body };
     Label { name, head };
     LetCond { let_span, pat, expr };
     Lambda { id, moves, params, ret, body, captures };

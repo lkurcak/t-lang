@@ -967,12 +967,14 @@ module.exports = grammar({
       field('predicate', $._expression),
     ),
 
-    // `for x in 0..n { .. }`, maybe with a label.
+    // `for x in 0..n { .. }`, maybe with a label, and maybe naming the
+    // iterator for its invariant and body: `for x in it: l.iter() { .. }`.
     for_expression: $ => seq(
       optional(seq(field('label', $.lifetime), ':')),
       'for',
       field('pattern', $._pattern),
       'in',
+      optional(seq(field('iterator', $.identifier), ':')),
       field('value', $._expression),
       optional($.invariant_clause),
       field('body', $.block),

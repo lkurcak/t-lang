@@ -1939,6 +1939,10 @@ pub struct ForLoop {
     pub pat: Pattern,
     /// Where the `in` is.
     pub in_span: Span,
+    /// The name of the iterator the loop goes through, if it has one:
+    /// `it` in `for x in it: e`, which its invariant and body can use
+    /// (docs/84-counting.md).
+    pub name: Option<Ident>,
     pub iter: Expr,
     pub invariant: Invariant,
     pub body: Expr,

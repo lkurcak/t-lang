@@ -122,7 +122,6 @@ const DERIVED_SINK: &str = "{W}";
 pub const BOX: &str = "alloc::boxed::Box";
 
 pub(crate) use externs::PLATFORM_HOOKS;
-pub(crate) use modules::FOR_ITERATOR;
 
 /// The symbol of the core library's `Iterator`, which a `for` loop uses.
 pub(crate) const ITERATOR: &str = "core::iter::Iterator";

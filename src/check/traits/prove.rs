@@ -24,6 +24,12 @@ impl Checker {
         self.modules.for_heads.contains(&call)
     }
 
+    /// Is `bind` the pattern a `for` binds its iterator with, named or not
+    /// (`modules::Rewrite::for_loop`)?
+    pub(crate) fn is_for_iterator(&self, bind: NodeId) -> bool {
+        self.modules.for_iterators.contains(&bind)
+    }
+
     /// Is `t`, which has no type variables in it, an iterator, with the
     /// bounds in scope?
     pub(crate) fn implements_iterator(&self, t: &Type) -> bool {
