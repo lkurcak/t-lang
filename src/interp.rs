@@ -1159,6 +1159,15 @@ fn pred_op(op: BinOp, a: PredValue, b: PredValue) -> PredValue {
 }
 
 impl Refined {
+    /// Does it name anything behind a `&mut` (`behind_mut`), which may
+    /// change?
+    fn reads_behind_mut(&self, behind_mut: &HashSet<NodeId>) -> bool {
+        fn reads(e: &Expr, ids: &HashSet<NodeId>) -> bool {
+            ids.contains(&e.id) || e.children().into_iter().any(|c| reads(c, ids))
+        }
+        self.parts.iter().any(|p| reads(&p.pred, behind_mut))
+    }
+
     /// Stops the program, as the checker is wrong, unless it holds of `v`,
     /// which is `what`: each part of it, of each part of `v` it's of that
     /// `v` has, being those variants.
@@ -1397,10 +1406,12 @@ impl<'p> Interp<'p, '_> {
     }
 
     /// What value `v` is to the logic (lemma V1 of
-    /// docs/85-values-in-predicates.md), which `==` compares whole: a box
+    /// docs/85-values-in-predicates.md), which `==` compares whole, as a
+    /// value that's its own model, so a model taken twice is the same: a box
     /// by what it owns; what's in an `Unsafe`, a cell's, by nothing, as no
-    /// predicate can see it; a function by which it is; anything else by
-    /// its parts, a reference by where it points.
+    /// predicate can see it; a buffer by where it is and its capacity; a
+    /// function by which it is; anything else by its parts, a reference by
+    /// where it points.
     fn model(&self, v: &Value) -> Value {
         match v {
             Value::Box(p) => {
@@ -1429,6 +1440,21 @@ impl<'p> Interp<'p, '_> {
                     .collect(),
             }),
             Value::Fn(name, _) => Value::Fn(name.clone(), None),
+            // Where its slots are, and how many, which `cap` says; not
+            // what's in them, which no predicate can see.
+            Value::RawBuf(p) => {
+                let cap = match self.memory.get(p) {
+                    Value::Slots(slots) => slots.len() as i128,
+                    _ => -1,
+                };
+                Value::Struct(
+                    "{raw}".to_string(),
+                    vec![
+                        (String::new(), Value::Ref(p.clone())),
+                        ("cap".to_string(), Value::Int(cap, IntTy::Usize)),
+                    ],
+                )
+            }
             v => v.clone(),
         }
     }
@@ -1808,7 +1834,12 @@ impl<'p> Interp<'p, '_> {
                             &format!("argument `{}` of `{}`", p.name.name, decl.name.name),
                         );
                     }
-                    refined.push(r);
+                    // One of what's behind a `&mut` is what the argument
+                    // points to at the call, which the function may change:
+                    // it's only checked here. Any other's can't change, as
+                    // its parameter isn't `mut`, or names nothing behind a
+                    // `&mut` if it is.
+                    refined.push(r.filter(|r| !r.reads_behind_mut(&self.measures.behind_mut)));
                 }
                 // What an intrinsic gives is trusted, and so checked: its
                 // refinement too.

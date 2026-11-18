@@ -3122,6 +3122,8 @@ struct Post {
     scoped: Vec<Option<Place>>,
     targs: Vec<(String, Type)>,
     result: Val,
+    /// The result's type.
+    ret: Type,
     /// What it leaves at the positions of each place it's lent `&mut`.
     lent: Vec<(Place, targs::Tree)>,
 }
@@ -3997,7 +3999,7 @@ impl Walk<'_> {
                 return;
             }
             _ if !self.is_scalar(t) && *t != Type::Bool => {
-                if let Some(Val::Ref(o, _) | Val::Obj(o)) = &val {
+                if let Some(Val::Ref(o, _) | Val::Obj(o) | Val::Array(o, _)) = &val {
                     self.objs.insert(p.clone(), *o);
                 }
                 // What a box owns is a place in it, which has its value; and
@@ -5293,6 +5295,7 @@ impl Walk<'_> {
                 scoped: Vec::new(),
                 targs: Vec::new(),
                 result: Val::Other,
+                ret: Type::Unit,
                 lent: Vec::new(),
             };
             return Ok((self.measure(s, recv.clone()), post));
@@ -5359,6 +5362,7 @@ impl Walk<'_> {
             scoped,
             targs,
             result: result.clone(),
+            ret: ty.clone(),
             lent: trees.lent,
         };
         Ok((result, post))
@@ -5544,7 +5548,7 @@ impl Walk<'_> {
                 (post.scoped.iter().flatten()).any(|p| !self.constrained_around(p).is_empty());
             let was = self.proving_fields;
             self.proving_fields |= lent_field;
-            defined = self.definitions(sig, &post.scoped, &post.result, env);
+            defined = self.definitions(sig, &post.scoped, (&post.result, &post.ret), env);
             // What the call leaves at the positions of what it's lent holds
             // of what's defined there too, which writing it forgot.
             for (p, tree) in &post.lent {
@@ -5610,7 +5614,7 @@ impl Walk<'_> {
         &mut self,
         sig: &RefinedSig,
         scoped: &[Option<Place>],
-        result: &Val,
+        (result, ret): (&Val, &Type),
         env: Env,
     ) -> Option<Val> {
         let mut eqs = Vec::new();
@@ -5633,11 +5637,43 @@ impl Walk<'_> {
                 continue;
             };
             match target {
-                Target::Result => defined = Some(v),
-                Target::Place(p) => self.write(&p, Some(v), None),
+                Target::Result => defined = Some(self.left(v, ret)),
+                Target::Place(p) => {
+                    let t = self.place_ty(&p);
+                    let v = self.left(v, &t);
+                    self.write(&p, Some(v), None);
+                }
             }
         }
         defined
+    }
+
+    /// What's known at return of `v`, of type `t`, a value as the call
+    /// found it (lemma V5 of docs/85-values-in-predicates.md): it's the
+    /// same value, but what a `&mut` in it points to may have been written
+    /// through it since, so that isn't known. What a shared reference
+    /// points to can't have changed while it's borrowed, and what a box
+    /// owns is part of the value.
+    fn left(&mut self, v: Val, t: &Type) -> Val {
+        match (v, self.cx.solved(t)) {
+            (Val::Ref(o, _), Type::Ref(_, true, _)) => Val::Ref(o, Pointee::Unknown),
+            (Val::Ref(o, Pointee::Val(w)), Type::Ref(_, false, inner) | Type::Box(inner)) => {
+                let w = self.left(*w, &inner);
+                Val::Ref(o, Pointee::Val(Box::new(w)))
+            }
+            (Val::Struct(o, vals), t) => match struct_fields(&self.cx.adts, &t) {
+                Some(fields) if fields.len() == vals.len() => {
+                    let vals = (vals.into_iter().zip(fields))
+                        .map(|(v, (_, ft))| self.left(v, &ft))
+                        .collect();
+                    Val::Struct(o, vals)
+                }
+                // Its fields are found again, as of a value nothing's
+                // known of but which it is.
+                _ => Val::Obj(o),
+            },
+            (v, _) => v,
+        }
     }
 
     /// Each `==` of whole values in `e` that's `e` or one of its `&&`s,
