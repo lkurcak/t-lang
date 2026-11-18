@@ -32,8 +32,9 @@
 
 use super::*;
 use crate::borrowck::regions::Variance;
-use crate::traits::{COPY, DISCARD, SEND, SYNC};
+use sources::{Of, Shape, Signature, Site};
 use std::rc::Rc;
+use targs::Pos;
 use targs::{Cand, Disj, Tree};
 
 /// The name a loop's frame keeps an iterator's items by, as if it were one
@@ -42,9 +43,6 @@ use targs::{Cand, Disj, Tree};
 pub(super) const ITEMS: &str = "(items)";
 
 const ITERATOR: &str = crate::check::ITERATOR;
-
-/// `IntoIterator`, which every iterator is, as it is.
-const INTO_ITERATOR: &str = "core::iter::IntoIterator";
 
 /// `DoubleEndedIterator`, whose `next_back` is of the protocol too.
 const ITERATOR_DEI: &str = "core::iter::DoubleEndedIterator";
@@ -98,20 +96,6 @@ fn item_of(t: &Type) -> Option<&str> {
     }
 }
 
-/// Does `t` mention `P::Item` for a `P` in `ps`, or type parameter `u` in
-/// `us`?
-fn mentions(t: &Type, ps: &[String], us: &[String]) -> bool {
-    if item_of(t).is_some_and(|p| ps.iter().any(|q| q == p)) {
-        return true;
-    }
-    if let Type::Param(u, _) = t
-        && us.contains(u)
-    {
-        return true;
-    }
-    t.parts().any(|s| mentions(s, ps, us))
-}
-
 /// Does `t` mention type parameter `x`?
 fn mentions_param(t: &Type, x: &str) -> bool {
     matches!(t, Type::Param(p, _) if p == x) || t.parts().any(|s| mentions_param(s, x))
@@ -141,54 +125,6 @@ fn sources(item: &Type, at: &mut Vec<usize>, out: &mut Vec<(Vec<usize>, Type)>) 
         }
         t => out.push((at.clone(), t.clone())),
     }
-}
-
-/// Is `p`, one of an impl's or a function's bounds, one that lets it make
-/// no value of type parameter `x` (lemmas I3, I4)? Of `x` itself, the
-/// protocol's traits and markers, and `IntoIterator`, whose impl for an
-/// iterator is the blanket one, giving it back as it is; of its items,
-/// markers; of any other type with `x` in it, none: `Holder<X>: Make`
-/// could make one.
-fn harmless(p: &crate::traits::Pred, x: &str) -> bool {
-    let marker = [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str());
-    match &p.ty {
-        Type::Param(q, _) if q == x => {
-            marker
-                || p.trait_name == ITERATOR
-                || p.trait_name == ITERATOR_DEI
-                || p.trait_name == INTO_ITERATOR
-        }
-        t if item_of(t) == Some(x) => marker,
-        t => !mentions_param(t, x),
-    }
-}
-
-/// Do equality bounds `eqs` let code make no value of type parameter `x`,
-/// nor say what its items are? A closure's signature may take them, not
-/// give them; another projection may be them only if it's `x`'s own
-/// (`X::Item = u8` lets it make items, which is checked of an adapter's
-/// impl apart).
-fn harmless_eqs(eqs: &[(Type, Type)], x: &str) -> bool {
-    eqs.iter().all(|(a, b)| match (a, b) {
-        (Type::Proj(_, _, n), Type::Fn(fs)) if n == crate::traits::SIG => {
-            !mentions_param(&fs.ret, x)
-        }
-        // The blanket impl's own `IntoIter`, the iterator itself, which
-        // `into_iter` gives back as it is: but `X::Item = X` would let
-        // `next` make one.
-        (Type::Proj(base, tr, n), Type::Param(q, _))
-            if tr == INTO_ITERATOR
-                && n == "IntoIter"
-                && q == x
-                && matches!(&**base, Type::Param(p, _) if p == x) =>
-        {
-            true
-        }
-        (Type::Proj(base, ..), b) if matches!(&**base, Type::Param(q, _) if q == x) => {
-            !mentions_param(b, x)
-        }
-        (a, b) => !mentions_param(a, x) && !mentions_param(b, x),
-    })
 }
 
 /// What type `pattern`, of an impl's parameters, matches in `t` (`pattern`
@@ -447,21 +383,21 @@ impl Walk<'_> {
 
     /// What every value iterator `v`, of concrete type `t`, gives has of
     /// what's in it: where its impl's `Item` is one of its type
-    /// parameters `X` that's free there, its bounds markers alone, each
-    /// value of `X` it gives is one in it (lemma A2 of
-    /// docs/60-refined-type-arguments.md), at a position of its type where
-    /// nothing else can write it.
+    /// parameters `X` that's free there, and in each impl of its protocol
+    /// (`free_in_protocol`), each value of `X` it gives is one in it
+    /// (lemma A2 of docs/60-refined-type-arguments.md), at a position of
+    /// its type where nothing else can write it.
     fn carried_items(&mut self, v: &Val, t: &Type) -> Tree {
         let mut tree = Vec::new();
-        let Some((i, args)) = self.cx.traits.select(t, Some(ITERATOR), &[]) else {
+        let Some(impls) = self.protocol_impls(t) else {
             return tree;
         };
-        let d = self.cx.traits.impls[i].clone();
+        let d = self.cx.traits.impls[impls[0].0].clone();
         let Some((_, item)) = d.assoc.iter().find(|(n, _)| n == "Item") else {
             return tree;
         };
         let params = d.params.as_slice().to_vec();
-        if params.len() != args.len() {
+        if params.len() != impls[0].1.len() {
             return tree;
         }
         let mut leaves = Vec::new();
@@ -470,16 +406,7 @@ impl Walk<'_> {
             let Type::Param(x, _) = &leaf else {
                 continue;
             };
-            let free = (d.preds.iter()).all(|p| {
-                !mentions_param(&p.ty, x)
-                    || (matches!(&p.ty, Type::Param(q, _) if q == x)
-                        && [COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str()))
-            });
-            let free = free
-                && d.eqs
-                    .iter()
-                    .all(|(a, b)| !mentions_param(a, x) && !mentions_param(b, x));
-            if !free || !params.contains(x) {
+            if !params.contains(x) || !self.free_in_protocol(&impls, &d, x) {
                 continue;
             }
             let mut cases = Vec::new();
@@ -496,6 +423,50 @@ impl Walk<'_> {
             }
         }
         tree
+    }
+
+    /// The impls of `Iterator` and, if it is one, `DoubleEndedIterator`
+    /// for concrete type `t`, with their type arguments: every impl whose
+    /// methods give what an iterator of the type gives.
+    fn protocol_impls(&self, t: &Type) -> Option<Vec<(usize, Vec<Type>)>> {
+        let first = self.cx.traits.select(t, Some(ITERATOR), &[])?;
+        let mut out = vec![first];
+        if let Some(back) = self.cx.traits.select(t, Some(ITERATOR_DEI), &[]) {
+            out.push(back);
+        }
+        Some(out)
+    }
+
+    /// Is the type parameter `x` of impl `d` (the first of `impls`) free
+    /// in each of them: is the parameter where `x` is in `d`'s type, in
+    /// each, bounded by markers alone and in nothing but the type's
+    /// fields? Then none of their methods can make a value of it.
+    fn free_in_protocol(
+        &self,
+        impls: &[(usize, Vec<Type>)],
+        d: &crate::traits::ImplDef,
+        x: &str,
+    ) -> bool {
+        let paths = targs::param_paths(&d.self_ty, x);
+        if paths.is_empty() {
+            return false;
+        }
+        impls.iter().all(|(i, _)| {
+            let dd = &self.cx.traits.impls[*i];
+            let Some(y) = same_param_at(&dd.self_ty, &paths) else {
+                return false;
+            };
+            let sig = Signature::of_impl(self.cx, dd);
+            sig.occurrences(self.cx, &y).iter().all(|o| match o.site {
+                Site::Field(_) => o.shape != Shape::Hidden,
+                Site::Pred(_) => {
+                    o.of == Of::Itself && o.shape == Shape::Whole && sig.pred_is_marker(o)
+                }
+                Site::Param(_) | Site::Ret | Site::Eq(_) | Site::SigParam(..) | Site::SigRet(_) => {
+                    false
+                }
+            })
+        })
     }
 
     /// Which way each measure of iterator type `t` may move under each of
@@ -689,10 +660,10 @@ impl Walk<'_> {
     }
 
     /// Is `x`, a type parameter of a function of scheme `s`, at type
-    /// arguments `targs`, an iterator it can't make (lemma I3): its bounds
-    /// the protocol's traits and markers, its items' markers, none on any
-    /// other type with it in it, no equality bound or closure giving one,
-    /// and its impls the defaults? What it is there, if it is.
+    /// arguments `targs`, an iterator it can't make (lemma I3): bounded by
+    /// `Iterator` or `DoubleEndedIterator`, one it can only pass on
+    /// (`Signature::conserved`), and its impls the defaults? What it is
+    /// there, if it is.
     fn conserved(&self, s: &crate::types::Scheme, x: &str, targs: &[Type]) -> Option<Type> {
         let names = s.params.as_slice().to_vec();
         if names.len() != targs.len() {
@@ -704,8 +675,8 @@ impl Walk<'_> {
             matches!(&p.ty, Type::Param(q, _) if q == x)
                 && (p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI)
         });
-        let harmless = s.preds.iter().all(|p| harmless(p, x)) && harmless_eqs(&s.eqs, x);
-        (iterator && harmless && self.defaults_only(&at)).then_some(at)
+        let conserved = Signature::of_scheme(s).conserved(self.cx, x);
+        (iterator && conserved && self.defaults_only(&at)).then_some(at)
     }
 
     /// Does a call of `symbol` (resolved, at type arguments `targs`) keep
@@ -769,8 +740,9 @@ impl Walk<'_> {
 
     /// The items of `result`, of concrete type `ty`, which the callee,
     /// whose scheme is `s`, gives as its `ret`: if `ty` is an *adapter*,
-    /// whose impl of `Iterator` is generic in iterators and closures it
-    /// gets its items from alone (lemma I4), what those it was given give.
+    /// whose impls of the protocol are generic in iterators and closures
+    /// it gets its items from alone (lemmas I4 of docs/82, I4′ of
+    /// docs/83), what those it was given give.
     fn adapter_items(
         &mut self,
         s: &crate::types::Scheme,
@@ -779,156 +751,146 @@ impl Walk<'_> {
         vals: &[Val],
         ty: &Type,
     ) -> Option<Tree> {
-        let Type::Fn(sig) = &s.ty else {
-            return None;
-        };
-        let (i, _) = self.cx.traits.select(ty, Some(ITERATOR), &[])?;
-        let d = self.cx.traits.impls[i].clone();
-        let item = d.assoc.iter().find(|(n, _)| n == "Item")?.1.clone();
-        let mut leaves = Vec::new();
-        sources(&item, &mut Vec::new(), &mut leaves);
-        // Its iterators: its parameters bounded by the protocol's traits,
-        // and markers, alone; its items' bounds markers alone.
-        let params = d.params.as_slice().to_vec();
-        let mut iters: Vec<String> = Vec::new();
-        for p in &d.preds {
-            if let Type::Param(q, _) = &p.ty
-                && (p.trait_name == ITERATOR || p.trait_name == ITERATOR_DEI)
-                && !iters.contains(q)
-            {
-                iters.push(q.clone());
-            }
-        }
-        for x in &iters {
-            if !d.preds.iter().all(|p| harmless(p, x)) {
-                return None;
-            }
-            // Not even of its own items: `I: Iterator<Item = usize>` lets
-            // it make them.
-            let fixed = (d.eqs.iter()).any(|(a, b)| {
-                !matches!((a, b), (Type::Proj(_, _, n), Type::Fn(_)) if n == crate::traits::SIG)
-                    && (mentions_param(a, x) || mentions_param(b, x))
-            });
-            if fixed || !harmless_eqs(&d.eqs, x) {
-                return None;
-            }
-        }
-        // Its closures: each `F: FnMut(..) -> U` whose `U` is a parameter
-        // of its own.
-        let mut outs: Vec<(String, String)> = Vec::new();
-        for (a, b) in &d.eqs {
-            if let (Type::Proj(base, _, n), Type::Fn(fs)) = (a, b)
-                && n == crate::traits::SIG
-                && let Type::Param(f, _) = &**base
-                && let Type::Param(u, _) = &*fs.ret
-                && params.contains(u)
-            {
-                outs.push((u.clone(), f.clone()));
-            }
-        }
-        let us: Vec<String> = outs.iter().map(|(u, _)| u.clone()).collect();
-        // A closure's result may be a bound's subject only as a marker's.
-        for p in &d.preds {
-            if mentions(&p.ty, &[], &us)
-                && ![COPY, DISCARD, SEND, SYNC].contains(&p.trait_name.as_str())
-            {
-                return None;
-            }
-        }
-        // None of them is in its fields, where it could keep one it wasn't
-        // given by its iterator or closure; and it holds its iterators and
-        // closures itself, where nothing but it can write them, not behind
-        // a `&mut` or in a `Cell`, where another iterator could be put
-        // without its protocol (lemma I4).
-        let fields = struct_fields(&self.cx.adts, &d.self_ty)?;
-        if fields.iter().any(|(_, ft)| mentions(ft, &iters, &us)) {
-            return None;
-        }
-        let held: Vec<String> = (iters.iter().cloned())
-            .chain(outs.iter().map(|(_, f)| f.clone()))
-            .collect();
-        for (_, ft) in &fields {
-            for x in &held {
-                let (occ, hidden) = self.occurrences(ft, x);
-                if hidden || occ.iter().any(|(_, v)| !matches!(v, Variance::Co)) {
-                    return None;
-                }
-            }
-        }
+        let impls = self.protocol_impls(ty)?;
+        let roles = self.adapter_roles(&impls)?;
+        let d = self.cx.traits.impls[impls[0].0].clone();
         // What each of its parameters is, as the callee's.
         let mut at = HashMap::new();
         if !bind(&d.self_ty, ret, &mut at) {
             return None;
         }
+        let callee = Signature::of_scheme(s);
         let summaries: Vec<(usize, Rc<summary::Summary>)> = self
             .call_summaries
             .iter()
             .map(|(j, s)| (*j, s.clone()))
             .collect();
         let mut tree = Vec::new();
+        for (pos, role) in roles {
+            match role {
+                Role::Items(p) => {
+                    let Some(Type::Param(x, _)) = at.get(&p) else {
+                        continue;
+                    };
+                    let x = x.clone();
+                    if let Some(g) = self.given_items(s, &x, targs, vals) {
+                        tree.extend(shift(&g, &pos));
+                    }
+                }
+                Role::Output(f) => {
+                    // The closure is the one the callee was given for it,
+                    // its only source of them (lemma V5 of
+                    // docs/78-callable-values.md).
+                    let Some(Type::Param(g, _)) = at.get(&f) else {
+                        continue;
+                    };
+                    let Some(j) = callee.sole_source(self.cx, g) else {
+                        continue;
+                    };
+                    let summary = match summaries.iter().find(|(k, _)| *k == j) {
+                        Some((_, s)) => s.clone(),
+                        None => match vals.get(j).and_then(|v| self.callable(v)) {
+                            Some(summary::Callable::Closure(s)) => s,
+                            _ => continue,
+                        },
+                    };
+                    let cases: Vec<(Vec<Formula>, Cand)> = (0..summary.rets.len())
+                        .map(|k| {
+                            let made = summary::Made {
+                                summary: summary.clone(),
+                                ret: k,
+                                pos: Vec::new(),
+                            };
+                            (Vec::new(), Cand::Made(Rc::new(made)))
+                        })
+                        .collect();
+                    tree.push((pos, Disj(cases)));
+                }
+            }
+        }
+        Some(tree)
+    }
+
+    /// Of an adapter whose impls of the protocol are `impls` (`Iterator`'s
+    /// first): where each value it gives comes from, by position in its
+    /// `Item`, as its `Iterator` impl's parameters (lemma I4′ of docs/83).
+    /// A position whose values come from an iterator of its own, whose
+    /// items come from its protocol alone (`items_from_protocol`), or from
+    /// a closure it holds, the one source of its result type
+    /// (`closure_output`, `held`), in every impl of the protocol: the
+    /// parameter at the same place in each impl's type has the same role
+    /// there. `None` if the protocol's methods could get items from a
+    /// closure (`protocol_methods_harmless`).
+    fn adapter_roles(&self, impls: &[(usize, Vec<Type>)]) -> Option<Vec<(Pos, Role)>> {
+        if !sources::protocol_methods_harmless(self.cx) {
+            return None;
+        }
+        let d = &self.cx.traits.impls[impls[0].0];
+        let item = d.assoc.iter().find(|(n, _)| n == "Item")?.1.clone();
+        let mut leaves = Vec::new();
+        sources(&item, &mut Vec::new(), &mut leaves);
+        let sig = Signature::of_impl(self.cx, d);
+        let mut out = Vec::new();
         for (pos, leaf) in leaves {
+            // Of an iterator: the role is its place in the type.
             if let Some(p) = item_of(&leaf) {
-                if !iters.iter().any(|q| q == p) {
-                    continue;
+                let paths = targs::param_paths(&d.self_ty, p);
+                let good = !paths.is_empty()
+                    && impls.iter().all(|(i, _)| {
+                        let dd = &self.cx.traits.impls[*i];
+                        let Some(q) = same_param_at(&dd.self_ty, &paths) else {
+                            return false;
+                        };
+                        let iterator = dd.preds.iter().any(|pr| {
+                            matches!(&pr.ty, Type::Param(r, _) if *r == q)
+                                && (pr.trait_name == ITERATOR || pr.trait_name == ITERATOR_DEI)
+                        });
+                        iterator && Signature::of_impl(self.cx, dd).items_from_protocol(self.cx, &q)
+                    });
+                if !good {
+                    return None;
                 }
-                let Some(Type::Param(x, _)) = at.get(p) else {
-                    continue;
-                };
-                let x = x.clone();
-                if let Some(g) = self.given_items(s, &x, targs, vals) {
-                    tree.extend(shift(&g, &pos));
-                }
+                out.push((pos, Role::Items(p.to_string())));
                 continue;
             }
+            // Of a closure's result: the role is the closure's place.
             let Type::Param(u, _) = &leaf else {
                 continue;
             };
-            let Some((_, f)) = outs.iter().find(|(v, _)| v == u) else {
+            let Some(f) = sig.closure_output(self.cx, u) else {
                 continue;
             };
-            // The closure is the one the callee was given for it, its
-            // only source of them (lemma V5 of docs/78-callable-values.md).
-            let Some(Type::Param(g, _)) = at.get(f) else {
-                continue;
-            };
-            let given: Vec<usize> = (sig.params.iter().enumerate())
-                .filter(|(_, pt)| mentions_param(pt, g))
-                .map(|(j, _)| j)
-                .collect();
-            let [j] = given.as_slice() else {
-                continue;
-            };
-            if !matches!(&sig.params[*j], Type::Param(q, _) if q == g) {
-                continue;
-            }
-            let summary = match summaries.iter().find(|(k, _)| k == j) {
-                Some((_, s)) => s.clone(),
-                None => match vals.get(*j).and_then(|v| self.callable(v)) {
-                    Some(summary::Callable::Closure(s)) => s,
-                    _ => continue,
-                },
-            };
-            let cases: Vec<(Vec<Formula>, Cand)> = (0..summary.rets.len())
-                .map(|k| {
-                    let made = summary::Made {
-                        summary: summary.clone(),
-                        ret: k,
-                        pos: Vec::new(),
+            let paths = targs::param_paths(&d.self_ty, &f);
+            let good = !paths.is_empty()
+                && impls.iter().all(|(i, _)| {
+                    let dd = &self.cx.traits.impls[*i];
+                    let Some(g) = same_param_at(&dd.self_ty, &paths) else {
+                        return false;
                     };
-                    (Vec::new(), Cand::Made(Rc::new(made)))
-                })
-                .collect();
-            tree.push((pos, Disj(cases)));
+                    let dsig = Signature::of_impl(self.cx, dd);
+                    let output = match dsig.sig_of(&g).map(|fs| &*fs.ret) {
+                        Some(Type::Param(v, _)) => dsig.closure_output(self.cx, v),
+                        _ => None,
+                    };
+                    output.as_deref() == Some(g.as_str()) && dsig.held(self.cx, &g)
+                });
+            if !good {
+                return None;
+            }
+            out.push((pos, Role::Output(f)));
         }
-        Some(tree)
+        Some(out)
     }
 
     /// What each closure given straight to a call of `symbol` (resolved,
     /// at type arguments `targs`, with arguments `vals`), at argument
     /// index in `idx`, is given, by parameter, of the items of the
     /// iterators it's given with: a closure the callee may call with a
-    /// value of `X::Item`, for an iterator `X` it can't make, is called
-    /// only with what the iterators it was given give (lemmas I3, I4).
+    /// value of `X::Item`, for an iterator `X` it can't make whose items
+    /// come from its protocol alone, is called only with what the
+    /// iterators it was given give (lemmas I3, I4 of docs/82, I3′ of
+    /// docs/83); but only one the callee can't keep, to be called later
+    /// with anything, or keeps in a sealed adapter (`sealed_in_result`).
     pub(super) fn item_params(
         &mut self,
         symbol: &str,
@@ -944,43 +906,271 @@ impl Walk<'_> {
         if s.params.as_slice().len() != targs.len() {
             return out;
         }
+        let callee = Signature::of_scheme(&s);
         for &j in idx {
             let Some(Type::Param(f, _)) = sig.params.get(j) else {
                 continue;
             };
-            let Some(Type::Fn(fs)) = (s.eqs.iter())
-                .find(|(a, _)| {
-                    matches!(a, Type::Proj(b, _, n)
-                        if n == crate::traits::SIG
-                            && matches!(&**b, Type::Param(q, _) if q == f))
-                })
-                .map(|(_, b)| b)
-            else {
+            let Some(fs) = callee.sig_of(f).cloned() else {
                 continue;
             };
             let mut trees = Vec::new();
             for pt in &fs.params {
-                // The item itself, or what a `&` to it points to.
+                // The item itself, or what a reference to it points to.
                 let (x, at) = match pt {
                     t if item_of(t).is_some() => (item_of(t), Vec::new()),
                     Type::Ref(_, _, inner) => (item_of(inner), vec![0]),
                     _ => (None, Vec::new()),
                 };
                 let g = match x {
-                    Some(x) => {
+                    Some(x) if callee.items_from_protocol(self.cx, x) => {
                         let x = x.to_string();
                         self.given_items(&s, &x, targs, vals)
                     }
-                    None => None,
+                    _ => None,
                 };
                 trees.push(g.map(|g| shift(&g, &at)).unwrap_or_default());
             }
-            if trees.iter().any(|t| !t.is_empty()) {
-                out.insert(j, trees);
+            if trees.iter().all(|t| t.is_empty()) {
+                continue;
             }
+            if callee.kept(self.cx, f, j) && !self.sealed_in_result(&s, &callee, f, j, targs, &fs) {
+                continue;
+            }
+            out.insert(j, trees);
         }
         out
     }
+
+    /// Does the callee, of scheme `s` (`callee`), keep the closure it's
+    /// given as parameter `j`, of type parameter `f` (signature `fs`),
+    /// only in a *sealed* adapter it gives back (lemma S of docs/83)? Its
+    /// result is an adapter `S<.., F, ..>`, `f` only there and nowhere else
+    /// it could be kept; `S` is sealed (`sealed`); and in each impl of
+    /// `S`'s protocol, the closure there is called with what an iterator
+    /// there gives, items from its protocol alone, where the callee's
+    /// closure is with an `X::Item`, at the place in `S`'s type where the
+    /// callee puts its `X`.
+    fn sealed_in_result(
+        &self,
+        s: &crate::types::Scheme,
+        callee: &Signature,
+        f: &str,
+        j: usize,
+        targs: &[Type],
+        fs: &crate::types::FnType,
+    ) -> bool {
+        if callee.sole_source(self.cx, f) != Some(j) {
+            return false;
+        }
+        let Some(ret) = callee.ret() else {
+            return false;
+        };
+        let Type::Adt(symbol, _, args) = ret else {
+            return false;
+        };
+        // In the result only as one of the adapter's type arguments.
+        let only_there = args
+            .iter()
+            .all(|a| matches!(a, Type::Param(g, _) if g == f) || !free::mentions(a, f));
+        let elsewhere = callee.occurrences(self.cx, f).iter().any(|o| match o.site {
+            Site::Pred(k) => {
+                !(o.of == Of::Itself && o.shape == Shape::Whole && callee.pred_is_fn_or_marker(k))
+            }
+            Site::Param(i) => i != j,
+            Site::SigParam(k, _) => !callee.sig_is(k, f),
+            Site::Ret => false,
+            Site::Field(_) | Site::Eq(_) | Site::SigRet(_) => true,
+        });
+        if !only_there || elsewhere || sources::has_opaque(ret) || !self.sealed(symbol) {
+            return false;
+        }
+        // The adapter's type, as the callee gives it at this call.
+        let names = s.params.as_slice().to_vec();
+        if names.len() != targs.len() {
+            return false;
+        }
+        let subst = crate::types::Subst::new(&names, targs);
+        let ty = self.cx.solved(&subst.apply(ret));
+        let Some(impls) = self.protocol_impls(&ty) else {
+            return false;
+        };
+        let paths = targs::param_paths(ret, f);
+        impls.iter().all(|(i, _)| {
+            let dd = &self.cx.traits.impls[*i];
+            let Some(g) = same_param_at(&dd.self_ty, &paths) else {
+                return false;
+            };
+            let dsig = Signature::of_impl(self.cx, dd);
+            let Some(gs) = dsig.sig_of(&g) else {
+                return false;
+            };
+            if !dsig.held(self.cx, &g) || gs.params.len() != fs.params.len() {
+                return false;
+            }
+            // Each parameter the callee's closure is given an item at, the
+            // adapter's is too, of an iterator at the same place.
+            let mut at = HashMap::new();
+            if !bind(&dd.self_ty, ret, &mut at) {
+                return false;
+            }
+            fs.params.iter().zip(&gs.params).all(|(mine, theirs)| {
+                let item = |t: &Type| match t {
+                    t if item_of(t).is_some() => item_of(t).map(|x| (x.to_string(), false)),
+                    Type::Ref(_, m, inner) => item_of(inner).map(|x| (x.to_string(), *m)),
+                    _ => None,
+                };
+                let Some((x, m)) = item(mine) else {
+                    return true;
+                };
+                let Some((p, n)) = item(theirs) else {
+                    return false;
+                };
+                m == n
+                    && matches!(at.get(&p), Some(Type::Param(y, _)) if *y == x)
+                    && dsig.items_from_protocol(self.cx, &p)
+            })
+        })
+    }
+
+    /// Is struct or enum `symbol` *sealed* where the walk is (lemma S of
+    /// docs/83): its fields are seen in its module alone, which the code
+    /// walked isn't in; and no function of that module (or one inside it)
+    /// takes a value of it, or of a type that holds one, but the methods of
+    /// its impls of the protocol, and impls derived for markers and
+    /// `Discard`? Then what its values hold is reached only through those.
+    fn sealed(&self, symbol: &str) -> bool {
+        let cx = self.cx;
+        let Some(def) = cx.types.iter().find(|d| d.symbol == symbol) else {
+            return false;
+        };
+        if cx.modules.within(cx.module, def.module) {
+            return false;
+        }
+        if def
+            .fields
+            .iter()
+            .any(|(_, level)| *level != crate::ast::Level::Module)
+        {
+            return false;
+        }
+        // It, and every type whose fields hold one of these.
+        let mut holders = vec![symbol.to_string()];
+        loop {
+            let more: Vec<String> = (cx.types.iter())
+                .filter(|t| !holders.contains(&t.symbol))
+                .filter(|t| {
+                    declared_fields(cx, &t.symbol)
+                        .iter()
+                        .any(|f| holds(f, &holders))
+                })
+                .map(|t| t.symbol.clone())
+                .collect();
+            if more.is_empty() {
+                break;
+            }
+            holders.extend(more);
+        }
+        // The methods that may take one.
+        let mut allowed: Vec<&str> = Vec::new();
+        for d in &cx.traits.impls {
+            let Type::Adt(of, ..) = &d.self_ty else {
+                continue;
+            };
+            let protocol =
+                of == symbol && matches!(d.trait_name.as_deref(), Some(ITERATOR | ITERATOR_DEI));
+            let derived = d.derived
+                && holders.contains(of)
+                && d.trait_name.as_deref().is_some_and(sources::marker);
+            if protocol || derived {
+                allowed.extend(d.methods.iter().map(|(_, m)| m.as_str()));
+            }
+        }
+        cx.fns.iter().all(|f| {
+            !cx.modules.within(f.module, def.module)
+                || allowed.contains(&f.symbol.as_str())
+                || !takes(&f.scheme, &holders)
+        })
+    }
+}
+
+/// Where each value an adapter gives comes from (`Walk::adapter_roles`).
+enum Role {
+    /// The items of its iterator parameter `.0`.
+    Items(String),
+    /// What its closure parameter `.0` gives.
+    Output(String),
+}
+
+/// The type parameter at each of `paths` in `t`, if it's one and the
+/// same.
+fn same_param_at(t: &Type, paths: &[Pos]) -> Option<String> {
+    let mut out: Option<String> = None;
+    for p in paths {
+        let Some(Type::Param(q, _)) = at_path(t, p) else {
+            return None;
+        };
+        match &out {
+            Some(o) if o != q => return None,
+            _ => out = Some(q.clone()),
+        }
+    }
+    out
+}
+
+/// The type at position `p` of `t`, as `targs::param_paths` numbers them.
+fn at_path<'t>(t: &'t Type, p: &[usize]) -> Option<&'t Type> {
+    let Some((&k, rest)) = p.split_first() else {
+        return Some(t);
+    };
+    let child = match t {
+        Type::Adt(_, _, args) => args.get(k)?,
+        Type::Box(i) | Type::Ref(_, _, i) | Type::Slice(i) | Type::Array(i, _) if k == 0 => i,
+        Type::Tuple(ts) => ts.get(k)?,
+        _ => return None,
+    };
+    at_path(child, rest)
+}
+
+/// The types of struct or enum `symbol`'s fields, as declared.
+fn declared_fields(cx: &Checker, symbol: &str) -> Vec<Type> {
+    let Some(def) = cx.adts.get(symbol) else {
+        return Vec::new();
+    };
+    let params: Vec<Type> = (def.params.as_slice().iter())
+        .map(|p| def.params.ty(p))
+        .collect();
+    let lifetimes = (def.lifetimes.iter()).map(|l| crate::types::Region::Named(l.clone()));
+    let t = Type::Adt(symbol.to_string(), lifetimes.collect(), params);
+    match &def.kind {
+        crate::types::AdtKind::Struct(_) => (struct_fields(&cx.adts, &t))
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(_, f)| f)
+            .collect(),
+        crate::types::AdtKind::Enum(vs) => (0..vs.len())
+            .flat_map(|v| crate::types::variant_fields(&cx.adts, &t, v))
+            .collect(),
+    }
+}
+
+/// Does `t` mention one of the structs or enums `symbols`?
+fn holds(t: &Type, symbols: &[String]) -> bool {
+    matches!(t, Type::Adt(s, ..) if symbols.contains(s)) || t.parts().any(|p| holds(p, symbols))
+}
+
+/// Does a function of scheme `s` take a value of one of `symbols`, or get
+/// one any way but making it: is one in its signature anywhere but its
+/// result?
+fn takes(s: &crate::types::Scheme, symbols: &[String]) -> bool {
+    let Type::Fn(sig) = &s.ty else {
+        return true;
+    };
+    sig.params.iter().any(|p| holds(p, symbols))
+        || s.preds.iter().any(|p| holds(&p.ty, symbols))
+        || s.eqs
+            .iter()
+            .any(|(a, b)| holds(a, symbols) || holds(b, symbols))
 }
 
 /// `core::option::Option`'s symbol.

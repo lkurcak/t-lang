@@ -20,7 +20,7 @@ fn each<I: Iterator, F: FnMut(I::Item) -> bool>(iter: I, f: F) -> Each<I, F> whe
 
 fn main() {
     let e = each(0..8, |x: usize| { need8(x); true });
-    let mut f = e.into_f();
+    let f = e.into_f();
     let _ = f(100);
 }
 // error: can't prove `r < 8`

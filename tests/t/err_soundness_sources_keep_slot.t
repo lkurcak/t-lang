@@ -12,7 +12,7 @@ fn main() {
     let mut slot = None;
     h(&mut x, |r: &mut usize| need8(*r), |f| slot = Some(f));
     match slot {
-        Some(mut f) => {
+        Some(f) => {
             let mut y = 100usize;
             f(&mut y)
         }

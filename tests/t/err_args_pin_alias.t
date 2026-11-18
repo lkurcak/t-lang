@@ -16,4 +16,4 @@ fn main() {
     let mut b = Game { x: 0 };
     f(&mut a, &mut b);
 }
-// error: `g` is mutably borrowed
+// error: cannot use `g` while `g` is mutably borrowed

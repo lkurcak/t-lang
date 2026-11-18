@@ -42,6 +42,24 @@ pub(crate) struct Loan {
     pub(crate) why: Option<String>,
 }
 
+/// A place a borrow an argument waits for is found through (lemma A5 of
+/// docs/83-sources.md): a reference or box it dereferences. From where the
+/// argument is (`from`) until the borrows are taken (`until`), nothing may
+/// give it a new value, so that finding the place then finds the one it
+/// would have where the argument is. The statements in between are the
+/// later arguments', in the block `from` is in and those made from
+/// `first_block` on.
+pub(crate) struct Pin {
+    pub(crate) place: Place,
+    /// The place borrowed, through it.
+    pub(crate) borrowed: Place,
+    pub(crate) from: Point,
+    pub(crate) first_block: usize,
+    pub(crate) until: Option<Point>,
+    /// The argument's.
+    pub(crate) span: Span,
+}
+
 /// An argument of a call, worked out: a value, or a place to borrow,
 /// `&mut` or not, just before the call (see `Builder::call_into`), and
 /// maybe then coerced, as the checker says: reborrowed through `.0` more
@@ -69,6 +87,8 @@ pub(crate) struct Builder<'a> {
     pub(crate) body: Body,
     pub(crate) regions: Regions,
     pub(crate) loans: Vec<Loan>,
+    /// What the borrows arguments wait for go through (`Pin`).
+    pub(crate) pins: Vec<Pin>,
     pub(crate) closures: Vec<ClosureUse<'a>>,
     /// Is the body a closure's?
     pub(crate) closure: bool,
@@ -149,6 +169,7 @@ impl<'a> Builder<'a> {
             },
             regions,
             loans: Vec::new(),
+            pins: Vec::new(),
             closures: Vec::new(),
             closure: false,
             members: Vec::new(),
@@ -876,6 +897,37 @@ impl<'a> Builder<'a> {
         }
     }
 
+    /// Pins what place `place`, an argument's borrow that waits for the
+    /// later arguments, is found through (`Pin`): each reference or box it
+    /// dereferences, read here, where the argument is (so a `&mut` to it
+    /// in use here clashes: `loans::check`), and changed by none of the
+    /// later arguments (`loans::pins`). Nothing's added to the body: what
+    /// runs is as before.
+    fn pin(&mut self, place: &Place, span: Span) {
+        let mut t = self.body.locals[place.local.0].ty.clone();
+        let mut through = Vec::new();
+        for (i, p) in place.proj.iter().enumerate() {
+            if *p == Proj::Deref && matches!(t, Type::Ref(..) | Type::Box(_)) {
+                through.push(Place {
+                    local: place.local,
+                    proj: place.proj[..i].to_vec(),
+                });
+            }
+            t = project(self.adts(), &t, *p);
+        }
+        let (from, first_block) = (self.point(), self.body.blocks.len());
+        for q in through {
+            self.pins.push(Pin {
+                place: q,
+                borrowed: place.clone(),
+                from,
+                first_block,
+                until: None,
+                span,
+            });
+        }
+    }
+
     /// A call of `f`, of type `ft`, with arguments `args`, after `first`
     /// if there is one: a method's receiver, or what's called, for a
     /// closure or what a bound says can be called.
@@ -921,6 +973,10 @@ impl<'a> Builder<'a> {
             .map(|_| Region::Var(self.regions.fresh()))
             .collect();
         let (params, ret) = sig.instantiate(&vars);
+        let pins = self.pins.len();
+        if let Some(Arg::Borrow(place, _, _, at, _)) = &first {
+            self.pin(place, *at);
+        }
         let mut pending: Vec<Arg> = first.into_iter().collect();
         for a in args {
             let coerced = self.cx.typed().coerced.get(&a.id).copied();
@@ -930,7 +986,7 @@ impl<'a> Builder<'a> {
                 pending.push(Arg::Value(o, t, a.span));
                 continue;
             }
-            pending.push(match (&a.kind, coerced) {
+            let arg = match (&a.kind, coerced) {
                 (ExprKind::Unary(op @ (UnOp::Ref | UnOp::RefMut), x), _) => {
                     let m = *op == UnOp::RefMut;
                     let text = m.then(|| crate::pretty::expr_text(x));
@@ -954,7 +1010,17 @@ impl<'a> Builder<'a> {
                     let (o, t) = self.operand(a);
                     Arg::Value(o, t, a.span)
                 }
-            });
+            };
+            if let Arg::Borrow(place, _, _, at, _) = &arg {
+                self.pin(place, *at);
+            }
+            pending.push(arg);
+        }
+        // The later arguments are worked out: the borrows are taken now.
+        // (The pins of calls in the arguments are theirs, ended already.)
+        let until = self.point();
+        for pin in &mut self.pins[pins..] {
+            pin.until.get_or_insert(until);
         }
         let mut ops = Vec::new();
         let mut spans = Vec::new();

@@ -144,18 +144,36 @@ const MAKER: &[(&str, &str, &str, &str, &str)] = &[
         "&mut (100..101)",
     ),
     ("x_two", "", "y: X", "let _ = x; y", "100..101"),
+    ("x_fn_param", "", "g: fn() -> X", "let _ = x; g()", "far"),
+    (
+        "x_bound_make",
+        "+ Make",
+        "_u: ()",
+        "let _ = x; X::make()",
+        "()",
+    ),
 ];
 
 fn maker(bound: &str, param: &str, body: &str, arg: &str) -> String {
-    let b = if bound.is_empty() {
-        String::new()
-    } else {
-        format!(", {bound}")
+    let b = match bound {
+        "" => String::new(),
+        more if more.starts_with('+') => format!(" {more}"),
+        other => format!(", {other}"),
     };
     fill(
         "fn mk<X: Iterator + Discard@B@>(x: X, @P@) -> X where X::Item: Discard {
     @BODY@
 }
+
+trait Make {
+    fn make() -> Self;
+}
+
+impl Make for $R {
+    fn make() -> $R { 100..101 }
+}
+
+fn far() -> $R { 100..101 }
 
 fn main() {
     let a: [u8; 8] = [0; 8];
@@ -687,6 +705,49 @@ fn main() {{
 ",
             adapter.replace("{ iter: I, f: F }", "{ iter: I, pub f: F }")
         ),
+    );
+    add(
+        "kept_opaque",
+        "fn keep<X: Iterator + Discard, F: FnMut(X::Item) + Discard>(it: X, f: F) -> impl FnMut(X::Item) + Discard {
+    let _ = it;
+    let mut f = f;
+    move |v| f(v)
+}
+
+fn main() {
+    let mut g = keep(0..8, |x: usize| need8(x));
+    g(100);
+}
+",
+    );
+    add(
+        "kept_sealed_eq",
+        "mod m {
+    #[derive(Discard)]
+    pub struct Each<I, F> { iter: I, f: F }
+
+    impl<I: Iterator<Item = usize>, F: FnMut(usize)> Iterator for Each<I, F> {
+        type Item = usize;
+        effect e = I::e;
+
+        fn next(&mut self) -> Option<usize> with I::e {
+            match self.iter.next() {
+                Some(_x) => {
+                    (self.f)(100);
+                    None
+                }
+                None => None,
+            }
+        }
+    }
+
+    pub fn each<I: Iterator, F: FnMut(I::Item)>(iter: I, f: F) -> Each<I, F> { Each { iter, f } }
+}
+
+fn main() {
+    for _ in m::each(0..8, |x: usize| need8(x)) {}
+}
+",
     );
     add(
         "w7_slot",
