@@ -1109,7 +1109,7 @@ fn dropped(
         .with_note(span, "the call ends here"),
         // A `for` loop's iterator (see `modules::Rewrite::for_loop`), which
         // the checker usually says this of first.
-        Dropped::Dead if decl.name.as_deref() == Some(crate::check::FOR_ITERATOR) => Error::ty(
+        Dropped::Dead if b.for_iterator(q.local) => Error::ty(
             decl.span,
             format!(
                 "a `for` throws its iterator away when it ends, and `{t}` isn't `{DISCARD}`; to \

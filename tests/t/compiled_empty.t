@@ -13,7 +13,7 @@ enum One { Only }
 
 fn count<T>(s: &[T]) -> usize { s.len() }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let none: [i64; 0] = [];
     out.line(&none.len())?;                       // expect: 0

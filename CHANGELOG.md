@@ -1,5 +1,33 @@
 # Changelog
 
+## Unreleased
+
+Step 84: counting in loops. See [docs/84-counting.md](docs/84-counting.md).
+
+### Added
+
+- `for x in it: e` names the iterator a `for` goes through: its invariant
+  and its body can use `it`, a `mut` variable like any other, so a body
+  can skip a value with `it.next()`.
+- Iterators over slices, arrays and lists say what they have left: a
+  measure `len()` on `slice::Iter`, `IterMut` and `Copied` and
+  `array::IntoIter` (list's `IntoIter` had it), which each value `next` or
+  `next_back` gives takes one off, and `iter`, `iter_mut`, `copied` and
+  `into_iter` start as long as what they go through. So `for x in it:
+  l.iter() invariant n + it.len() <= l.len()` proves a count kept in the
+  loop doesn't overflow, and `i + it.len() == a.len()` that an index kept
+  beside it is in bounds.
+- A range's `next` says it moves `start()` on by one when it gives a
+  value, and not at all when it doesn't; `next_back` the same of `end()`.
+- The refinement checker knows `swap(a, b)` exchanges what the two places
+  hold: what was known of each is known of the other after.
+
+### Changed
+
+- A loop over a list or slice known to be empty is known not to run its
+  body, so what it would do there (a `panic`) isn't an effect the function
+  has.
+
 ## 0.98.0 (2026-11-18)
 
 Step 83: where values come from (retrospective 13). See

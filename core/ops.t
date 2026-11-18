@@ -59,6 +59,8 @@ impl<T: Int> Iterator for Range<T> {
     ensures
         self.end() == old(self.end()),
         self.start() >= old(self.start()),
+        (self.start() == old(self.start()) + 1 && old(self.start()) < self.end())
+            || (self.start() == old(self.start()) && old(self.start()) >= self.end()),
     {
         if self.start < self.end {
             let n = self.start;
@@ -79,6 +81,8 @@ impl<T: Int> DoubleEndedIterator for Range<T> {
     ensures
         self.start() == old(self.start()),
         self.end() <= old(self.end()),
+        (self.end() + 1 == old(self.end()) && self.start() < old(self.end()))
+            || (self.end() == old(self.end()) && self.start() >= old(self.end())),
     {
         if self.start < self.end {
             self.end = self.end - 1;

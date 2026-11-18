@@ -152,12 +152,13 @@ impl<T> List<T> {
     export fn last(&self) -> Option<&T> { self.as_slice().last() }
 
     /// Its values, by reference, front to back.
-    export fn iter(&self) -> Iter<T> { self.as_slice().iter() }
+    export fn iter(&self) -> { it: Iter<T> | it.len() == self.len() } { self.as_slice().iter() }
 
     /// Its values, to change, front to back.
-    export fn iter_mut(&mut self) -> IterMut<T> ensures self.len() == old(self.len()) {
-        self.as_mut_slice().iter_mut()
-    }
+    export fn iter_mut(&mut self) -> { it: IterMut<T> | it.len() == old(self.len()) }
+    ensures
+        self.len() == old(self.len()),
+    { self.as_mut_slice().iter_mut() }
 
     /// Swaps the values at `i` and `j`, which are less than `len()`, as
     /// `l[i]` is.
@@ -186,7 +187,7 @@ impl<T> List<T> {
 impl<'a, T> IntoIterator for &'a List<T> {
     type IntoIter = Iter<'a, T>;
 
-    fn into_iter(self) -> Iter<'a, T> { self.iter() }
+    fn into_iter(self) -> { it: Iter<'a, T> | it.len() == self.len() } { self.iter() }
 }
 
 /// `for x in &mut l`: a reference to change each of its values through,
@@ -195,7 +196,10 @@ impl<'a, T> IntoIterator for &'a List<T> {
 impl<'a, T> IntoIterator for &'a mut List<T> {
     type IntoIter = IterMut<'a, T>;
 
-    fn into_iter(self) -> IterMut<'a, T> ensures self.len() == old(self.len()) { self.iter_mut() }
+    fn into_iter(self) -> { it: IterMut<'a, T> | it.len() == old(self.len()) }
+    ensures
+        self.len() == old(self.len()),
+    { self.iter_mut() }
 }
 
 /// `for x in l`: its values, front to back, taken out of it. What the

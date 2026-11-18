@@ -234,7 +234,9 @@ fn f(n: usize) with alloc {
 - A `for`'s or `while let`'s invariant can't name the pattern's
   variables, so `for x in a..b` still doesn't know `a <= x`
   (docs/53-refined-type-arguments.md); a `while` with its own counter
-  can say it.
+  can say it. Since step 84 a `for` can name its iterator, `for x in it:
+  e`, and its invariant say what's left of it, `it.len()`
+  (docs/84-counting.md).
 - Nothing says a loop ends. A `with {}` function's loop may still run for
   ever; T has no `div` effect yet (step 7).
 - `continue` exits aren't joined; nothing needs them to be, as they go to

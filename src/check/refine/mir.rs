@@ -43,6 +43,10 @@ use crate::mir::{
     Statement, StmtKind, StmtNote, Term,
 };
 
+/// The symbol of `core::mem::swap`, which the walk knows exchanges what
+/// its two places hold.
+const SWAP: &str = "core::mem::swap";
+
 /// What a local that's no variable holds: a temporary's value, and, if
 /// it's a borrow, `&mut` or not, of a place, which place.
 #[derive(Debug, Clone, PartialEq)]
@@ -741,13 +745,16 @@ impl Walk<'_> {
                 Loc::Val(..) => None,
             },
         };
+        // The iterator a `for` goes through, named or not.
+        let for_iterator = place.proj.is_empty()
+            && (fr.id(place.local)).is_some_and(|id| self.cx.is_for_iterator(id));
         let short = self.cx.traits.shorten(&ty.to_string());
         // The refined type, as the impl says it: `{ l: List<Fd> | .. }`.
         let says = |binder: &str, text: &str| {
             let only =
                 format!("`{{ {binder}: {short} | {text} }}` is, which can't be proved of it");
             match name.as_deref() {
-                Some(crate::check::FOR_ITERATOR) => format!(
+                _ if for_iterator => format!(
                     "the `for` may stop before its iterator is used up, and drops it then: \
                      `{short}` isn't `Discard`, only {only}"
                 ),
@@ -764,8 +771,8 @@ impl Walk<'_> {
         // `for` (`modules::Rewrite::for_loop`): at what it goes through. A
         // `return` or `?` in its body is where that is.
         let decl = fr.body.locals[place.local.0].span;
-        let span = match name.as_deref() {
-            Some(crate::check::FOR_ITERATOR) if span.start < decl.start => decl,
+        let span = match for_iterator {
+            true if span.start < decl.start => decl,
             _ => span,
         };
         let env = Env::Call(std::slice::from_ref(&v), &targs);
@@ -2083,6 +2090,15 @@ impl Walk<'_> {
             }
             _ => (None, None),
         };
+        // `core::mem::swap` exchanges what its two places hold, which the
+        // borrow checker keeps apart (lemma M1 of docs/84-counting.md): so
+        // what's known of each is known of the other after.
+        let swapped = match (symbol.as_deref(), &places[..]) {
+            (Some(SWAP), [Some(p), Some(q)]) if self.reachable => {
+                Some((p.clone(), self.read_place(p), q.clone(), self.read_place(q)))
+            }
+            _ => None,
+        };
         let resolved = symbol.map(|s| self.callee_at(&s, targs));
         if !closures.is_empty() || !fns.is_empty() {
             let trees = match &resolved {
@@ -2159,6 +2175,10 @@ impl Walk<'_> {
         for p in places.iter().flatten() {
             self.invalidate(p, span, "mutable lending");
             self.kill(p);
+        }
+        if let Some((p, a, q, b)) = swapped {
+            self.write(&p, Some(b), None);
+            self.write(&q, Some(a), None);
         }
         self.post_now(post, span)?;
         if let (Some(g), Some(Some(p)), Some(pre)) = (items, places.first(), pre) {

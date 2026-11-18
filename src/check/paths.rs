@@ -27,7 +27,9 @@ impl Checker {
         // Notes are for the name, not any `::<..>` after it.
         // A format string names the calls it means where its holes are, and
         // where it is (`Rewrite::format`).
-        let at = match self.modules.formats.contains(&span) {
+        // A name a rewrite made, which the program doesn't have, has an
+        // empty span: and keeps it (`info::unwritten`).
+        let at = match self.modules.formats.contains(&span) || span.start == span.end {
             true => span,
             false => Span::new(span.start, span.start + name.len()),
         };

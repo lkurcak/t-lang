@@ -127,10 +127,12 @@ impl<T> [T] {
     }
 
     /// Its values, by reference, front to back.
-    export fn iter(&self) -> Iter<T> { Iter { rest: self } }
+    export fn iter(&self) -> { it: Iter<T> | it.len() == self.len() } { Iter { rest: self } }
 
     /// Its values, to change, front to back.
-    export fn iter_mut(&mut self) -> IterMut<T> { IterMut { rest: self } }
+    export fn iter_mut(&mut self) -> { it: IterMut<T> | it.len() == old(self.len()) } {
+        IterMut { rest: self }
+    }
 }
 
 impl<T: Copy> [T] {
@@ -186,7 +188,7 @@ export fn empty_mut<'a, T>() -> { s: &'a mut [T] | s.len() == 0 };
 impl<'a, T> IntoIterator for &'a [T] {
     type IntoIter = Iter<'a, T>;
 
-    fn into_iter(self) -> Iter<'a, T> { self.iter() }
+    fn into_iter(self) -> { it: Iter<'a, T> | it.len() == self.len() } { self.iter() }
 }
 
 /// `for x in s`, for a slice `s` to change: a reference to change each of
@@ -194,45 +196,56 @@ impl<'a, T> IntoIterator for &'a [T] {
 impl<'a, T> IntoIterator for &'a mut [T] {
     type IntoIter = IterMut<'a, T>;
 
-    fn into_iter(self) -> IterMut<'a, T> { self.iter_mut() }
+    fn into_iter(self) -> { it: IterMut<'a, T> | it.len() == old(self.len()) } { self.iter_mut() }
 }
 
 /// What `iter` gives: a reference to each value of `rest`, front to back.
 #[derive(Discard, Send where T: Sync, Sync where T: Sync)]
 export struct Iter<'a, T> { rest: &'a [T] }
 
-/// Safe code over `split_at`: each value is the head of what's left.
+impl<'a, T> Iter<'a, T> {
+    /// How many values it has yet to give. It's a measure: each value
+    /// `next` or `next_back` gives takes one off, and once they give
+    /// `None`, it's `0`. So a `for` can count what it's been through:
+    /// `for x in it: s.iter() invariant n + it.len() <= s.len()`.
+    #[measure]
+    export fn len(&self) -> usize { self.rest.len() }
+}
+
+/// Safe code over `cut`: each value is the head of what's left, which
+/// is one shorter after.
 impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
     effect e = {};
 
-    fn next(&mut self) -> Option<&'a T> {
+    fn next(&mut self) -> { r: Option<&'a T> | r.is_some() == (old(self.len()) > 0) }
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
+    {
         let rest: &'a [T] = self.rest;
-        match rest.split_at(1) {
-            Some((head, tail)) => {
-                self.rest = tail;
-                head.get(0)
-            },
-            None => None,
+        if rest.len() == 0 {
+            return None;
         }
+        let (head, tail) = rest.cut(1);
+        self.rest = tail;
+        Some(&head[0])
     }
 }
 
 /// From the back: each value is the tail of what's left.
 impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
-    fn next_back(&mut self) -> Option<&'a T> {
+    fn next_back(&mut self) -> { r: Option<&'a T> | r.is_some() == (old(self.len()) > 0) }
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
+    {
         let rest: &'a [T] = self.rest;
         let n = rest.len();
         if n == 0 {
             return None;
         }
-        match rest.split_at(n - 1) {
-            Some((head, tail)) => {
-                self.rest = head;
-                tail.get(0)
-            },
-            None => None,
-        }
+        let (head, tail) = rest.cut(n - 1);
+        self.rest = head;
+        Some(&tail[0])
     }
 }
 
@@ -241,61 +254,94 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
 #[derive(Discard, Send where T: Send, Sync where T: Sync)]
 export struct IterMut<'a, T> { rest: &'a mut [T] }
 
-/// Safe code over `split_at_mut`: it takes what's left out of the
-/// iterator, leaving an empty slice, and keeps the tail. So each value it
-/// gives is in no slice it has any more, and nothing it gives later can
-/// be that value too.
+impl<'a, T> IterMut<'a, T> {
+    /// How many values it has yet to give, as `Iter::len`.
+    #[measure]
+    export fn len(&self) -> usize { self.rest.len() }
+}
+
+/// Safe code over `cut_mut`: it takes what's left out of the iterator,
+/// leaving an empty slice, and keeps the tail. So each value it gives is
+/// in no slice it has any more, and nothing it gives later can be that
+/// value too.
 impl<'a, T> Iterator for IterMut<'a, T> {
     type Item = &'a mut T;
     effect e = {};
 
-    fn next(&mut self) -> Option<&'a mut T> {
-        let rest: &'a mut [T] = mem::replace(&mut self.rest, empty_mut());
-        match rest.split_at_mut(1) {
-            Some((head, tail)) => {
-                self.rest = tail;
-                head.get_mut(0)
-            },
-            None => None,
+    fn next(&mut self) -> { r: Option<&'a mut T> | r.is_some() == (old(self.len()) > 0) }
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
+    {
+        let mut rest: &'a mut [T] = empty_mut();
+        mem::swap(&mut self.rest, &mut rest);
+        if rest.len() == 0 {
+            self.rest = rest;
+            return None;
         }
+        let (head, tail) = rest.cut_mut(1);
+        self.rest = tail;
+        Some(&mut head[0])
     }
 }
 
 /// From the back, as `next` from the front: what it gives is in no slice
 /// it keeps.
 impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
-    fn next_back(&mut self) -> Option<&'a mut T> {
-        let rest: &'a mut [T] = mem::replace(&mut self.rest, empty_mut());
+    fn next_back(&mut self) -> { r: Option<&'a mut T> | r.is_some() == (old(self.len()) > 0) }
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
+    {
+        let mut rest: &'a mut [T] = empty_mut();
+        mem::swap(&mut self.rest, &mut rest);
         let n = rest.len();
         if n == 0 {
+            self.rest = rest;
             return None;
         }
-        match rest.split_at_mut(n - 1) {
-            Some((head, tail)) => {
-                self.rest = head;
-                tail.get_mut(0)
-            },
-            None => None,
-        }
+        let (head, tail) = rest.cut_mut(n - 1);
+        self.rest = head;
+        Some(&mut tail[0])
     }
 }
 
 impl<'a, T: Copy> Iter<'a, T> {
     /// Its values copied, not references to them: `a.iter().copied()`.
-    export fn copied(self) -> Copied<'a, T> { Copied { iter: self } }
+    export fn copied(self) -> { c: Copied<'a, T> | c.len() == self.len() } { Copied { iter: self } }
 }
 
 /// What `Iter::copied` gives: a copy of each value of `iter`.
 #[derive(Discard, Send where T: Sync, Sync where T: Sync)]
 export struct Copied<'a, T> { iter: Iter<'a, T> }
 
+impl<'a, T> Copied<'a, T> {
+    /// How many values it has yet to give, as `Iter::len`.
+    #[measure]
+    export fn len(&self) -> usize { self.iter.len() }
+}
+
 impl<'a, T: Copy> Iterator for Copied<'a, T> {
     type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> Option<T> { self.iter.next().copied() }
+    fn next(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
+    {
+        match self.iter.next() {
+            Some(x) => Some(*x),
+            None => None,
+        }
+    }
 }
 
 impl<'a, T: Copy> DoubleEndedIterator for Copied<'a, T> {
-    fn next_back(&mut self) -> Option<T> { self.iter.next_back().copied() }
+    fn next_back(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
+    {
+        match self.iter.next_back() {
+            Some(x) => Some(*x),
+            None => None,
+        }
+    }
 }
