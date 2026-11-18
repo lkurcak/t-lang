@@ -257,6 +257,12 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
   signature.
 - The pattern's variables still aren't in the invariant's scope: it's
   checked before they're bound.
+- A `for` over values that aren't `Discard` (docs/80) can stop early once
+  its body has used up what's left, `while let Some(x) = it.next() {..}`
+  and then `break`. Moving `it` instead, into a `for` of its own, isn't
+  understood: where the loops' ends meet, `it` is moved on one path and
+  empty on the other, and the check of what's dropped there doesn't know
+  which (`while let` over a variable was refused the same way before).
 
 ## Decisions
 
