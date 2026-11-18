@@ -790,6 +790,110 @@ fn main() {
 }
 ",
     );
+    // An inherent method of the adapter's module calls the closure.
+    add(
+        "kept_inherent",
+        "mod m {
+    #[derive(Discard)]
+    pub struct Each<I, F> { iter: I, f: F }
+
+    impl<I: Iterator, F: FnMut(I::Item)> Iterator for Each<I, F> where I::Item: Discard {
+        type Item = I::Item;
+        effect e = I::e;
+
+        fn next(&mut self) -> Option<I::Item> with I::e {
+            match self.iter.next() {
+                Some(x) => {
+                    (self.f)(x);
+                    None
+                }
+                None => None,
+            }
+        }
+    }
+
+    impl<I: Iterator<Item = usize>, F: FnMut(usize)> Each<I, F> {
+        pub fn poke(&mut self) {
+            (self.f)(100);
+        }
+    }
+
+    pub fn each<I: Iterator, F: FnMut(I::Item)>(iter: I, f: F) -> Each<I, F> where I::Item: Discard {
+        Each { iter, f }
+    }
+}
+
+fn main() {
+    let mut e = m::each(0..8, |x: usize| need8(x));
+    e.poke();
+    let _ = e;
+}
+",
+    );
+    // The adapter's impl gives the closure another iterator's items.
+    add(
+        "kept_sealed_other_iter",
+        "mod m {
+    #[derive(Discard)]
+    pub struct Each<I, J, F> { iter: I, other: J, f: F }
+
+    impl<I: Iterator, J: Iterator, F: FnMut(J::Item)> Iterator for Each<I, J, F> where J::Item: Discard {
+        type Item = J::Item;
+        effect e = J::e;
+
+        fn next(&mut self) -> Option<J::Item> with J::e {
+            match self.other.next() {
+                Some(x) => {
+                    (self.f)(x);
+                    None
+                }
+                None => None,
+            }
+        }
+    }
+
+    pub fn each<I: Iterator, J: Iterator, F: FnMut(I::Item)>(iter: I, other: J, f: F) -> Each<I, J, F> {
+        Each { iter, other, f }
+    }
+}
+
+fn main() {
+    for _ in m::each(0usize..8, 100usize..101, |x: usize| need8(x)) {}
+}
+",
+    );
+    // The adapter's impl fixes its iterator's items, and makes one.
+    add(
+        "kept_sealed_eq_item",
+        "mod m {
+    #[derive(Discard)]
+    pub struct Each<I, F> { iter: I, f: F }
+
+    impl<I: Iterator<Item = usize>, F: FnMut(I::Item)> Iterator for Each<I, F> {
+        type Item = usize;
+        effect e = I::e;
+
+        fn next(&mut self) -> Option<usize> with I::e {
+            match self.iter.next() {
+                Some(_x) => {
+                    (self.f)(100);
+                    None
+                }
+                None => None,
+            }
+        }
+    }
+
+    pub fn each<I: Iterator, F: FnMut(I::Item)>(iter: I, f: F) -> Each<I, F> where I::Item: Discard {
+        Each { iter, f }
+    }
+}
+
+fn main() {
+    for _ in m::each(0..8, |x: usize| need8(x)) {}
+}
+",
+    );
     add(
         "w7_slot",
         "fn h<T, F: FnMut(&mut T), H: FnOnce(F)>(_x: &mut T, f: F, g: H) {
@@ -946,6 +1050,58 @@ fn main() {
     let a: [u8; 8] = [0; 8];
     let it = Once { v: Some(3usize) };
     for r in it.rev() {
+        let _ = a[r];
+        break;
+    }
+}
+"
+            .to_string(),
+        ),
+        (
+            "carried_eq",
+            "#[derive(Discard)]
+struct Once<T, I> { v: Option<T>, it: I }
+
+impl<T: Discard, I: Iterator<Item = T>> Iterator for Once<T, I> {
+    type Item = T;
+    effect e = I::e;
+
+    fn next(&mut self) -> Option<T> with I::e {
+        let _ = core::mem::replace(&mut self.v, None);
+        self.it.next()
+    }
+}
+
+fn main() {
+    let a: [u8; 8] = [0; 8];
+    let it = Once { v: Some(3usize), it: 100usize..101 };
+    for r in it {
+        let _ = a[r];
+        break;
+    }
+}
+"
+            .to_string(),
+        ),
+        (
+            "carried_closure",
+            "#[derive(Discard)]
+struct Gen<T, F> { v: Option<T>, f: F }
+
+impl<T: Discard, F: FnMut() -> T> Iterator for Gen<T, F> {
+    type Item = T;
+    effect e = {};
+
+    fn next(&mut self) -> Option<T> {
+        let _ = core::mem::replace(&mut self.v, None);
+        Some((self.f)())
+    }
+}
+
+fn main() {
+    let a: [u8; 8] = [0; 8];
+    let it = Gen { v: Some(3usize), f: || 100usize };
+    for r in it {
         let _ = a[r];
         break;
     }
