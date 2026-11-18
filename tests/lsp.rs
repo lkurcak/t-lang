@@ -1628,10 +1628,19 @@ fn main() {
 ";
     let (mut d, diags) = Doc::open(&mut c, "file:///tmp/for_iterator.t", src);
     assert_eq!(diags, Vec::<Value>::new());
-    let r = d.ask(&mut c, "textDocument/definition", "it.len() >", 0, json!({}));
+    let r = d.ask(
+        &mut c,
+        "textDocument/definition",
+        "it.len() >",
+        0,
+        json!({}),
+    );
     assert_eq!(r["result"]["range"]["start"], d.at("it: a", 0), "{r}");
     let r = d.ask(&mut c, "textDocument/hover", "it: a", 0, json!({}));
-    let hover = r["result"]["contents"]["value"].as_str().unwrap_or_default().to_string();
+    let hover = r["result"]["contents"]["value"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     assert!(hover.contains("Iter<u8>"), "{r}");
     assert_eq!(
         d.rename(&mut c, "it: a", 0, "rest").unwrap(),

@@ -313,7 +313,13 @@ fn every_iterator_counts_what_it_has_left() {
                     None => continue,
                 },
             };
-            let src = program(&head, &body, &code);
+            // Named in the program, which a failure prints.
+            let src = format!(
+                "// {} / {}\n{}",
+                head.name,
+                body.name,
+                program(&head, &body, &code)
+            );
             match (body.expected)() {
                 Ok(n) => accepted(&src, &format!("{n}\n")),
                 Err(message) => rejected(&src, message),

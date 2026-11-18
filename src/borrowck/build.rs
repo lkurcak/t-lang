@@ -144,8 +144,7 @@ impl<'a> Builder<'a> {
     /// Is local `l` the iterator a `for` goes through, named or not
     /// (`modules::Rewrite::for_loop`)?
     pub(crate) fn for_iterator(&self, l: Local) -> bool {
-        (self.notes.ids.get(l.0).copied().flatten())
-            .is_some_and(|id| self.cx.is_for_iterator(id))
+        (self.notes.ids.get(l.0).copied().flatten()).is_some_and(|id| self.cx.is_for_iterator(id))
     }
 
     /// A builder for a body whose regions are `regions`. `adts` must be
