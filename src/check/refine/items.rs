@@ -29,6 +29,12 @@
 //!   second parts and `Zip<A, B>`'s parts are what `I`, `A`, `B` give;
 //!   `Map<I, F>`'s are what the closure given to `map` gives
 //!   (docs/74-refined-instantiation.md).
+//!
+//! Which parameters of a signature can give a value, and how, is never
+//! listed here: every such question is `sources.rs`'s (docs/83-sources.md),
+//! which refuses what it doesn't know to be harmless. Each impl of an
+//! iterator's protocol is asked, `DoubleEndedIterator`'s too
+//! (`Walk::protocol_impls`).
 
 use super::*;
 use crate::borrowck::regions::Variance;

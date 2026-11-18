@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.98.0 (2026-11-18)
 
 Step 83: where values come from (retrospective 13). See
 [docs/83-sources.md](docs/83-sources.md).
