@@ -210,9 +210,12 @@ So an adapter is *sealed* where a call is (`Walk::sealed`) if:
 - the code isn't in its module, nor in one inside it;
 - its fields are private;
 - no function of its module, nor of one inside it, takes one of it, or of
-  a type that holds one, anywhere in its signature but its result, except
-  the methods of its impls of the protocol and impls derived for markers
-  and `Discard`;
+  a type that holds one, except the methods of its impls of the protocol
+  and impls derived for markers and `Discard`: such a type is in no
+  parameter, bound or equality, and in a result only the adapter itself,
+  as plain data, which makes one; not a type holding one, nor a function
+  or an `impl` type, which could take one (`-> impl FnMut(&mut S)`
+  returns a way in);
 - and in each impl of its protocol, the closure there is called with what
   the iterator at the callee's `X`'s place gives, whose items come from its
   protocol alone (`Walk::sealed_in_result`).
@@ -396,11 +399,14 @@ it of each other end.
   that's its result type's one source, then by I3′ and C1/C2 of docs/74
   each value is one of those (I4, now of each impl).
 - **S (sealed).** Outside its module, a struct with private fields is an
-  existential type (Mitchell and Plotkin): only its module's functions get
-  at what it holds. Of those, only one whose signature, but for its
-  result, has a type of it or one holding it, can get a value of it (P1,
-  with the struct as the type); so only the protocol's methods, and the
-  derived impls of markers and `Discard`, which call no closure. Those,
+  existential type (Mitchell and Plotkin): only its module's code gets at
+  what it holds, its functions and the closures they make. A value of it
+  gets to that code only through a function's parameter (P1, with the
+  struct as the type), or a closure or function value of the module's,
+  which the code outside gets only from a result that has a function or
+  `impl` type, or a type holding one; so only the protocol's methods, and
+  the derived impls of markers and `Discard`, which call no closure, get
+  one. Those,
   by I4′, call the closure only with what the iterator at the callee's
   `X`'s place gives, which is what the walk gave the closure.
 - **A5 (pins).** If nothing on the way to a place, its references and

@@ -691,6 +691,47 @@ fn main() {{
         ),
     );
     add(
+        "kept_poker_result",
+        &format!(
+            "mod m {{
+    {adapter}
+    pub fn poker<I: Iterator<Item = usize>, F: FnMut(usize)>() -> impl FnMut(&mut Each<I, F>) + Discard {{
+        |e: &mut Each<I, F>| (e.f)(100)
+    }}
+}}
+
+fn main() {{
+    let mut e = m::each(0..8, |x: usize| need8(x));
+    let mut p = m::poker();
+    p(&mut e);
+    let _ = e;
+}}
+"
+        ),
+    );
+    add(
+        "kept_poker_field",
+        &format!(
+            "mod m {{
+    {adapter}
+    #[derive(Discard)]
+    pub struct Poker<I, F> {{ pub p: fn(&mut Each<I, F>) }}
+
+    pub fn poker<I: Iterator<Item = usize>, F: FnMut(usize)>() -> Poker<I, F> {{
+        Poker {{ p: |e: &mut Each<I, F>| (e.f)(100) }}
+    }}
+}}
+
+fn main() {{
+    let mut e = m::each(0..8, |x: usize| need8(x));
+    let p = m::poker();
+    (p.p)(&mut e);
+    let _ = e;
+}}
+"
+        ),
+    );
+    add(
         "kept_pub_field",
         &format!(
             "mod m {{

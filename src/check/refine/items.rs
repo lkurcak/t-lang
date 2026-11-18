@@ -1095,7 +1095,7 @@ impl Walk<'_> {
         cx.fns.iter().all(|f| {
             !cx.modules.within(f.module, def.module)
                 || allowed.contains(&f.symbol.as_str())
-                || !takes(&f.scheme, &holders)
+                || !takes(&f.scheme, symbol, &holders)
         })
     }
 }
@@ -1165,18 +1165,37 @@ fn holds(t: &Type, symbols: &[String]) -> bool {
     matches!(t, Type::Adt(s, ..) if symbols.contains(s)) || t.parts().any(|p| holds(p, symbols))
 }
 
-/// Does a function of scheme `s` take a value of one of `symbols`, or get
-/// one any way but making it: is one in its signature anywhere but its
-/// result?
-fn takes(s: &crate::types::Scheme, symbols: &[String]) -> bool {
-    let Type::Fn(sig) = &s.ty else {
-        return true;
+/// Does a function (or `const` or `static`) of scheme `s`, of struct or
+/// enum `symbol`'s module, give a way to one of `symbol`'s values, whose
+/// holders (it, and the types that hold one) are `holders`: is one of
+/// them anywhere in its signature, but `symbol` itself in its result as
+/// plain data? A result that is or holds a function or an `impl` type
+/// taking one (`-> impl FnMut(&mut S)`), or another type holding one, is a
+/// way too: its caller could hand it one.
+fn takes(s: &crate::types::Scheme, symbol: &str, holders: &[String]) -> bool {
+    let (params, ret) = match &s.ty {
+        Type::Fn(sig) => (&sig.params[..], &*sig.ret),
+        t => (&[][..], t),
     };
-    sig.params.iter().any(|p| holds(p, symbols))
-        || s.preds.iter().any(|p| holds(&p.ty, symbols))
+    params.iter().any(|p| holds(p, holders))
+        || s.preds.iter().any(|p| holds(&p.ty, holders))
         || s.eqs
             .iter()
-            .any(|(a, b)| holds(a, symbols) || holds(b, symbols))
+            .any(|(a, b)| holds(a, holders) || holds(b, holders))
+        || way_in(ret, symbol, holders)
+}
+
+/// Is `t`, a result, a way to a value of `symbol`'s: does it hold one of
+/// `holders` but `symbol`, or `symbol` inside a function's type or a type
+/// not worked out? An `impl` type is one whatever it holds: what it
+/// implements, which isn't in it, may take one.
+fn way_in(t: &Type, symbol: &str, holders: &[String]) -> bool {
+    match t {
+        Type::Adt(s, ..) if s != symbol && holders.contains(s) => true,
+        Type::Opaque(..) => true,
+        Type::Fn(_) | Type::Proj(..) | Type::Inferred(..) | Type::Var(_) => holds(t, holders),
+        t => t.parts().any(|p| way_in(p, symbol, holders)),
+    }
 }
 
 /// `core::option::Option`'s symbol.
