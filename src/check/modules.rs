@@ -2529,6 +2529,11 @@ impl Rewrite<'_> {
             id: self.id(),
         };
         self.r.m.for_iterators.insert(bind.id);
+        if let Some(n) = &f.name
+            && f.pat.binds().contains(&n.name)
+        {
+            self.r.m.warnings.push(super::lints::shadowed_iterator(n));
+        }
         // A name the program gave the iterator isn't written here: an
         // empty span keeps editors from seeing it (`info::unwritten`).
         let named = usize::from(f.name.is_none());

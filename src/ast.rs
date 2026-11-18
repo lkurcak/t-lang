@@ -81,6 +81,10 @@ pub struct Measures {
     /// what's behind a `&mut`, which may change: in a postcondition, only
     /// those are found at return; the rest are what they were at the call.
     pub behind_mut: std::collections::HashSet<NodeId>,
+    /// The nodes of the `==`s and `!=`s in predicates of whole values that
+    /// aren't integers or `bool`s, which are equal if they're the same
+    /// value, as the logic sees values (see docs/85-values-in-predicates.md).
+    pub values: std::collections::HashSet<NodeId>,
 }
 
 /// One node of the way to the values at a position of a value (see

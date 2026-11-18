@@ -250,6 +250,20 @@ enum Sort {
     Bool,
 }
 
+/// What a postcondition's side of an `==` is at return, which the call
+/// defines (`Walk::definitions`): its result, or a place of the caller's.
+enum Target {
+    Result,
+    Place(Place),
+}
+
+/// What a side of a predicate's `==` or `!=` is: of a sort of the logic,
+/// or a whole value of a type that isn't in it (docs/85-values-in-predicates.md).
+enum Operand {
+    Sort(Sort),
+    Value(Type),
+}
+
 impl std::fmt::Display for Sort {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         f.write_str(match self {
@@ -1641,11 +1655,41 @@ impl Checker {
                     want(self, r, Sort::Int)?;
                     Ok(Sort::Bool)
                 }
-                BinOp::Eq | BinOp::Ne => {
-                    let t = self.pred_type(l, scope)?;
-                    want(self, r, t)?;
-                    Ok(Sort::Bool)
-                }
+                // Of integers or `bool`s, in the logic; or of two whole
+                // values of another type, which are equal if they're the
+                // same value (lemma V1 of docs/85-values-in-predicates.md).
+                BinOp::Eq | BinOp::Ne => match self.pred_operand(l, scope)? {
+                    Operand::Sort(t) => {
+                        want(self, r, t)?;
+                        Ok(Sort::Bool)
+                    }
+                    Operand::Value(lt) => {
+                        let text = crate::pretty::expr_text;
+                        let rt = match self.pred_operand(r, scope)? {
+                            Operand::Value(rt) => rt,
+                            Operand::Sort(s) => {
+                                return Err(Error::ty(
+                                    r.span,
+                                    format!("expected a value of type `{lt}`, found {s}"),
+                                ));
+                            }
+                        };
+                        if lt.erased() != rt.erased() {
+                            return Err(Error::ty(
+                                e.span,
+                                format!(
+                                    "{} can't compare `{}`, of type `{lt}`, with `{}`, of type \
+                                     `{rt}`: only values of the same type",
+                                    self.pred_a(),
+                                    text(l),
+                                    text(r)
+                                ),
+                            ));
+                        }
+                        self.info.measures.values.insert(e.id);
+                        Ok(Sort::Bool)
+                    }
+                },
                 BinOp::And | BinOp::Or => {
                     want(self, l, Sort::Bool)?;
                     want(self, r, Sort::Bool)?;
@@ -1656,33 +1700,17 @@ impl Checker {
                 if matches!(&callee.kind, ExprKind::Var(n, t) if n == "old" && t.is_empty())
                     && args.len() == 1 =>
             {
-                if self.pred_post.is_none() {
-                    return Err(Error::ty(
-                        e.span,
-                        "`old(..)` can only be in a postcondition: `ensures`, or a result's \
-                         refinement",
-                    ));
-                }
-                if self.pred_in_old {
-                    return Err(Error::ty(e.span, "`old(..)` inside `old(..)`"));
-                }
+                self.enter_old(e)?;
                 self.pred_in_old = true;
                 let got = self.pred_type(&args[0], scope);
                 self.pred_in_old = false;
                 got
             }
-            ExprKind::Field(..) => {
-                let at = self.pred_place(e, scope)?;
-                let t = self.solved(&at.ty);
-                let sort = match self.scalar_sort(&t) {
-                    Some(sort) => sort,
-                    None => return Err(self.not_scalar(e, &crate::pretty::expr_text(e), &t)),
-                };
-                self.pred_mutable(e.span, &at, "a field", None)?;
-                if at.through_mut {
-                    self.info.measures.behind_mut.insert(e.id);
+            ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
+                match self.pred_path(e, scope, false)? {
+                    Operand::Sort(sort) => Ok(sort),
+                    Operand::Value(t) => Err(self.not_scalar(e, &crate::pretty::expr_text(e), &t)),
                 }
-                Ok(sort)
             }
             ExprKind::MethodCall(x, m, targs, args) if targs.is_empty() && args.is_empty() => {
                 let mut at = self.pred_place(x, scope)?;
@@ -1716,12 +1744,89 @@ impl Checker {
             _ => Err(Error::ty(
                 e.span,
                 format!(
-                    "{} can only use literals, names, fields, measures, `+`, `-`, `*`, `/` and \
-                     `%` by a constant, comparisons, `&&`, `||` and `!`",
+                    "{} can only use literals, names, fields, what references point to (`*r`), \
+                     measures, `+`, `-`, `*`, `/` and `%` by a constant, comparisons, `&&`, `||` \
+                     and `!`",
                     self.pred_a()
                 ),
             )),
         }
+    }
+
+    /// Fails unless `old(..)`, `e`, can be where it is: in a
+    /// postcondition, and not in another.
+    fn enter_old(&self, e: &Expr) -> Result<(), Error> {
+        if self.pred_post.is_none() {
+            return Err(Error::ty(
+                e.span,
+                "`old(..)` can only be in a postcondition: `ensures`, or a result's refinement",
+            ));
+        }
+        if self.pred_in_old {
+            return Err(Error::ty(e.span, "`old(..)` inside `old(..)`"));
+        }
+        Ok(())
+    }
+
+    /// What `e`, a side of a predicate's `==` or `!=`, is: of a sort of
+    /// the logic, or a whole value of a type that isn't in it, a name, a
+    /// field, what a reference points to, or one of those in `old(..)`,
+    /// which only those compare (docs/85-values-in-predicates.md).
+    fn pred_operand(
+        &mut self,
+        e: &Expr,
+        scope: &dyn Fn(&str) -> Option<Named>,
+    ) -> Result<Operand, Error> {
+        match &e.kind {
+            ExprKind::Var(name, targs) if targs.is_empty() => {
+                match self.pred_name(e, name, scope) {
+                    Some(Named::Value(t, ..)) if self.scalar_sort(&t).is_none() => {
+                        let at = self.pred_place(e, scope)?;
+                        Ok(Operand::Value(self.solved(&at.ty)))
+                    }
+                    _ => self.pred_type(e, scope).map(Operand::Sort),
+                }
+            }
+            ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => self.pred_path(e, scope, true),
+            ExprKind::Call(callee, args)
+                if matches!(&callee.kind, ExprKind::Var(n, t) if n == "old" && t.is_empty())
+                    && args.len() == 1 =>
+            {
+                self.enter_old(e)?;
+                self.pred_in_old = true;
+                let got = self.pred_operand(&args[0], scope);
+                self.pred_in_old = false;
+                got
+            }
+            _ => self.pred_type(e, scope).map(Operand::Sort),
+        }
+    }
+
+    /// What field or `*` `e` of a predicate is: of a sort of the logic, or
+    /// a whole value, which only `==` and `!=` take (`whole`), and is an
+    /// error elsewhere. What's behind a `&mut` is as `pred_mutable` says.
+    fn pred_path(
+        &mut self,
+        e: &Expr,
+        scope: &dyn Fn(&str) -> Option<Named>,
+        whole: bool,
+    ) -> Result<Operand, Error> {
+        let at = self.pred_place(e, scope)?;
+        let t = self.solved(&at.ty);
+        let got = match self.scalar_sort(&t) {
+            Some(sort) => Operand::Sort(sort),
+            None if whole => Operand::Value(t),
+            None => return Err(self.not_scalar(e, &crate::pretty::expr_text(e), &t)),
+        };
+        let noun = match e.kind {
+            ExprKind::Field(..) => "a field",
+            _ => "what a reference points to",
+        };
+        self.pred_mutable(e.span, &at, noun, None)?;
+        if at.through_mut {
+            self.info.measures.behind_mut.insert(e.id);
+        }
+        Ok(got)
     }
 
     /// The sort of a value of type `t` in the logic, if it's in it: an
@@ -1750,12 +1855,20 @@ impl Checker {
         while let Type::Ref(_, _, inner) | Type::Box(inner) = peeled {
             peeled = inner;
         }
+        // A `*x` is `(*x)` before a `.`.
+        let base = match text.starts_with('*') {
+            true => format!("({text})"),
+            false => text.to_string(),
+        };
         let by = match struct_fields(&self.adts, peeled) {
             Some(_) => format!(
-                "by its fields and measures: `{text}.f`, or `{text}.m()`, where `m` is a \
-                 `#[measure]`"
+                "by its fields and measures: `{base}.f`, or `{base}.m()`, where `m` is a \
+                 `#[measure]`; or whole, with `==` or `!=`"
             ),
-            None => format!("by its measures: `{text}.m()`, where `m` is a `#[measure]`"),
+            None => format!(
+                "by its measures: `{base}.m()`, where `m` is a `#[measure]`; or whole, with `==` \
+                 or `!=`"
+            ),
         };
         Error::ty(
             e.span,
@@ -1841,6 +1954,42 @@ impl Checker {
                 }
                 self.pred_fields.insert(e.id, (derefs, i));
                 at.ty = ft;
+                Ok(at)
+            }
+            // What a reference or a box points to, which has a size: of a
+            // slice or a `str`, the reference says what's known of it.
+            ExprKind::Unary(UnOp::Deref, x) => {
+                let mut at = self.pred_place(x, scope)?;
+                let inner = match self.solved(&at.ty) {
+                    Type::Ref(_, mutable, inner) => {
+                        at.through_mut |= mutable;
+                        self.solved(&inner)
+                    }
+                    Type::Box(inner) => self.solved(&inner),
+                    t => {
+                        return Err(Error::ty(
+                            e.span,
+                            format!(
+                                "`{}` is a `{t}`, which isn't a reference or a box, so it can't \
+                                 be dereferenced",
+                                crate::pretty::expr_text(x)
+                            ),
+                        ));
+                    }
+                };
+                if inner.is_unsized() {
+                    return Err(Error::ty(
+                        e.span,
+                        format!(
+                            "{} can't name `{}`, a `{inner}`, which has no size: name it by the \
+                             reference's measures, `{}.len()`",
+                            self.pred_a(),
+                            crate::pretty::expr_text(e),
+                            crate::pretty::expr_text(x)
+                        ),
+                    ));
+                }
+                at.ty = inner;
                 Ok(at)
             }
             _ => Err(Error::ty(
@@ -4055,6 +4204,20 @@ impl Walk<'_> {
                     .ok_or(Failure::ArithmeticLimit)?,
             ),
             ExprKind::Unary(UnOp::Not, x) => Val::Bool(boolean(self.term(x, binder, env)?)?.not()),
+            // What a reference or box points to (docs/85-values-in-predicates.md).
+            ExprKind::Unary(UnOp::Deref, x) => {
+                let v = self.term(x, binder, env)?;
+                self.pointee(v)
+            }
+            // Two whole values, which are equal if they're the same value.
+            ExprKind::Binary(op, l, r) if self.cx.info.measures.values.contains(&e.id) => {
+                let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
+                let same = self.value_eq(&a, &b);
+                Val::Bool(match op {
+                    BinOp::Ne => same.not(),
+                    _ => same,
+                })
+            }
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
                 self.logic_op(*op, a, b)?
@@ -5324,7 +5487,10 @@ impl Walk<'_> {
     /// call-scoped `&mut`s, which are what it left there, as nothing it
     /// made from them outlives it; and the refinements of the struct of
     /// each field a refinement is about it lent, proved again.
-    fn post_now(&mut self, post: Post, span: Span) -> Result<(), Error> {
+    /// Learns what call `post` is of ensures and says of its result, once
+    /// what it was lent is forgotten. Gives the result's value, if a
+    /// postcondition defines it (`definitions`).
+    fn post_now(&mut self, post: Post, span: Span) -> Result<Option<Val>, Error> {
         for (p, tree) in &post.lent {
             self.lent_trees.insert(p.clone(), tree.clone());
         }
@@ -5350,6 +5516,7 @@ impl Walk<'_> {
                 reprove.push((p.clone(), local, own));
             }
         }
+        let mut defined = None;
         if let Some(sig) = &post.sig {
             // What's behind a call-scoped `&mut` is what the call left
             // there: at the place lent, or, if that isn't known, a value
@@ -5377,9 +5544,16 @@ impl Walk<'_> {
                 (post.scoped.iter().flatten()).any(|p| !self.constrained_around(p).is_empty());
             let was = self.proving_fields;
             self.proving_fields |= lent_field;
+            defined = self.definitions(sig, &post.scoped, &post.result, env);
+            // What the call leaves at the positions of what it's lent holds
+            // of what's defined there too, which writing it forgot.
+            for (p, tree) in &post.lent {
+                self.lent_trees.insert(p.clone(), tree.clone());
+            }
+            let result = defined.clone().unwrap_or_else(|| post.result.clone());
             let mut facts = Vec::new();
             if let Some(r) = &sig.ret
-                && let Some(f) = self.pred(r, &post.result, env)
+                && let Some(f) = self.pred(r, &result, env)
             {
                 facts.push(f);
             }
@@ -5419,7 +5593,182 @@ impl Walk<'_> {
             }
             self.assume_tree(&v, &t, &tree);
         }
-        Ok(())
+        Ok(defined)
+    }
+
+    /// What a call's postconditions, of signature `sig`, define (lemma V5
+    /// of docs/85-values-in-predicates.md): each `==` of whole values
+    /// that's a part of one, or one of a part's `&&`s, with a side *at
+    /// return*: the result, or what a call-scoped `&mut` parameter points
+    /// to, at `scoped`, or a field or a `*` of that. The other side, with
+    /// names from `env`, is its value: a place's is written, so it's then
+    /// that value, its object, which nothing else knew; the result's is
+    /// given back. The callee proved it (or it's an intrinsic's, trusted
+    /// and checked by the interpreter), of the value it left, which is the
+    /// value after, as the parameter is call-scoped.
+    fn definitions(
+        &mut self,
+        sig: &RefinedSig,
+        scoped: &[Option<Place>],
+        result: &Val,
+        env: Env,
+    ) -> Option<Val> {
+        let mut eqs = Vec::new();
+        for r in sig.ret.iter().chain(&sig.ensures) {
+            for part in &r.parts {
+                if !part.carried && part.ways.len() == 1 && part.ways[0].is_empty() {
+                    self.equations(&part.pred, &mut eqs);
+                }
+            }
+        }
+        let mut defined: Option<Val> = None;
+        for (l, r) in eqs {
+            let (target, other) = match (self.at_return(&l, scoped), self.at_return(&r, scoped)) {
+                (Some(t), _) => (t, r),
+                (None, Some(t)) => (t, l),
+                (None, None) => continue,
+            };
+            let binder = defined.clone().unwrap_or_else(|| result.clone());
+            let Ok(v) = self.term(&other, &binder, env) else {
+                continue;
+            };
+            match target {
+                Target::Result => defined = Some(v),
+                Target::Place(p) => self.write(&p, Some(v), None),
+            }
+        }
+        defined
+    }
+
+    /// Each `==` of whole values in `e` that's `e` or one of its `&&`s,
+    /// as its two sides.
+    fn equations(&self, e: &Expr, out: &mut Vec<(Expr, Expr)>) {
+        match &e.kind {
+            ExprKind::Binary(BinOp::And, l, r) => {
+                self.equations(l, out);
+                self.equations(r, out);
+            }
+            ExprKind::Binary(BinOp::Eq, l, r) if self.cx.info.measures.values.contains(&e.id) => {
+                out.push(((**l).clone(), (**r).clone()));
+            }
+            _ => {}
+        }
+    }
+
+    /// Where `e`, a side of a postcondition's `==`, is at return, if it's
+    /// what a call can define: the result, or a place of the caller's,
+    /// what a call-scoped `&mut` parameter points to, `scoped`, or a
+    /// field or `*` in that. Not what's in `old(..)`.
+    fn at_return(&self, e: &Expr, scoped: &[Option<Place>]) -> Option<Target> {
+        let lent = |x: &Expr| match (&x.kind, self.cx.pred_names.get(&x.id)) {
+            (ExprKind::Var(..), Some(PredName::Param(i))) => scoped.get(*i).cloned().flatten(),
+            _ => None,
+        };
+        match &e.kind {
+            ExprKind::Var(..) => match self.cx.pred_names.get(&e.id) {
+                Some(PredName::Binder) => Some(Target::Result),
+                _ => None,
+            },
+            ExprKind::Unary(UnOp::Deref, x) => match &x.kind {
+                ExprKind::Var(..) => lent(x).map(Target::Place),
+                _ => match self.at_return(x, scoped)? {
+                    Target::Place(q) => Some(Target::Place(self.deref(q))),
+                    Target::Result => None,
+                },
+            },
+            ExprKind::Field(x, _) => {
+                let &(mut derefs, i) = self.cx.pred_fields.get(&e.id)?;
+                let mut q = match &x.kind {
+                    ExprKind::Var(..) if derefs > 0 => {
+                        derefs -= 1;
+                        lent(x)?
+                    }
+                    ExprKind::Var(..) => return None,
+                    _ => match self.at_return(x, scoped)? {
+                        Target::Place(q) => q,
+                        Target::Result => return None,
+                    },
+                };
+                for _ in 0..derefs {
+                    q = self.deref(q);
+                }
+                Some(Target::Place(q.then(Proj::Field(i))))
+            }
+            _ => None,
+        }
+    }
+
+    /// That `a` and `b` are the same value, as the logic sees values
+    /// (lemmas V3 and V4 of docs/85-values-in-predicates.md): true of one
+    /// object; of structs, that their fields are; of enums, that they're
+    /// the same variant, with the same fields; of integers and `bool`s, as
+    /// the logic says; and then, of two objects, that what's known of the
+    /// measures of each is of the other's too, as a measure is a function
+    /// of the value. Of anything else, a `bool` of its own, which proves
+    /// nothing, and refutes nothing.
+    fn value_eq(&mut self, a: &Val, b: &Val) -> Formula {
+        let obj = |v: &Val| match v {
+            Val::Struct(o, _) | Val::Ref(o, _) | Val::Obj(o) | Val::Array(o, _) => Some(*o),
+            _ => None,
+        };
+        let (x, y) = (obj(a), obj(b));
+        if x.is_some() && x == y {
+            return Formula::True;
+        }
+        let mut all = match (a, b) {
+            (Val::Int(a), Val::Int(b)) => match Formula::eq(a, b) {
+                Some(f) => return f,
+                None => return self.atom(),
+            },
+            (Val::Bool(a), Val::Bool(b)) => return Formula::iff(a.clone(), b.clone()),
+            (Val::Struct(_, f), Val::Struct(_, g)) if f.len() == g.len() => {
+                let mut all = Vec::new();
+                for (f, g) in f.iter().zip(g) {
+                    all.push(self.value_eq(f, g));
+                }
+                all
+            }
+            (Val::Obj(x), Val::Obj(y)) => {
+                match (self.parts.get(x).cloned(), self.parts.get(y).cloned()) {
+                    (Some(p), Some(q))
+                        if p.symbol == q.symbol && p.fields.len() == q.fields.len() =>
+                    {
+                        let Some(tags) = Formula::eq(&p.tag, &q.tag) else {
+                            return self.atom();
+                        };
+                        let mut all = vec![tags];
+                        for (k, (f, g)) in p.fields.iter().zip(&q.fields).enumerate() {
+                            let n = i128::try_from(k).expect("few variants");
+                            let Some(is) = Formula::eq(&p.tag, &Lin::constant(n)) else {
+                                return self.atom();
+                            };
+                            let mut same = Vec::new();
+                            for (f, g) in f.iter().zip(g) {
+                                same.push(self.value_eq(f, g));
+                            }
+                            all.push(Formula::or([is.not(), Formula::and(same)]));
+                        }
+                        all
+                    }
+                    _ => return self.atom(),
+                }
+            }
+            _ => return self.atom(),
+        };
+        if let (Some(x), Some(y)) = (x, y) {
+            all.extend(self.same_measures(x, y));
+            all.extend(self.same_measures(y, x));
+        }
+        Formula::and(all)
+    }
+
+    /// A `bool` of the logic nothing's known of, as a formula.
+    fn atom(&mut self) -> Formula {
+        let v = self.fresh(Kind::Bool);
+        match self.var(v) {
+            Val::Bool(f) => f,
+            _ => Formula::False,
+        }
     }
 
     /// After a write to `p`, a part of a refined local, at `span`: the

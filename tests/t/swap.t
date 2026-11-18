@@ -23,7 +23,7 @@ fn my_replace<T>(r: &mut T, v: T) -> T {
 #[derive(Discard)]
 struct Pair { a: i64, b: i64 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = String::new();
     let mut x = Fd { n: 1 };
     let mut y = Fd { n: 2 };

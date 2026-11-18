@@ -11,4 +11,4 @@ fn f(n: usize) {
 }
 
 fn main() {}
-// error: an invariant can only use literals, names, fields, measures, `+`, `-`, `*`, `/` and `%` by a constant, comparisons, `&&`, `||` and `!`
+// error: an invariant can only use literals, names, fields, what references point to (`*r`), measures, `+`, `-`, `*`, `/` and `%` by a constant, comparisons, `&&`, `||` and `!`

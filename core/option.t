@@ -48,7 +48,9 @@ impl<T> Option<T> {
     }
 
     /// Takes what's in it out, leaving `None`.
-    export fn take(&mut self) -> Option<T> { crate::mem::replace(self, None) }
+    export fn take(&mut self) -> { r: Option<T> | r == old(*self) } ensures self.is_none() {
+        crate::mem::replace(self, None)
+    }
 
     /// What's in the `Some`, as an `Ok`, or else `err`, as the `Err`: so
     /// `?` can give an error where there's nothing.

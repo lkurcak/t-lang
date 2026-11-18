@@ -315,6 +315,9 @@ pub enum Lint {
     /// overflow, a division by zero, an `as` that doesn't fit. Off unless
     /// `#[warn(..)]` turns it on.
     ImplicitPanics,
+    /// A `for` whose pattern binds the name it gives its iterator, `for x
+    /// in x: e`: the body sees the value, the invariant the iterator.
+    ShadowedIterators,
 }
 
 impl Lint {
@@ -345,10 +348,11 @@ impl Lint {
             Lint::FormatHoleExpressions => "format_hole_expressions",
             Lint::FormatHoleEffects => "format_hole_effects",
             Lint::ImplicitPanics => "implicit_panics",
+            Lint::ShadowedIterators => "shadowed_iterators",
         }
     }
 
-    pub const ALL: [Lint; 25] = [
+    pub const ALL: [Lint; 26] = [
         Lint::UnreachablePatterns,
         Lint::OverlappingRanges,
         Lint::MergeableRanges,
@@ -374,6 +378,7 @@ impl Lint {
         Lint::FormatHoleExpressions,
         Lint::FormatHoleEffects,
         Lint::ImplicitPanics,
+        Lint::ShadowedIterators,
     ];
 
     /// Is it on where no `#[allow(..)]` or `#[warn(..)]` says? The lints

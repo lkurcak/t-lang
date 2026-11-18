@@ -142,6 +142,25 @@ pub(super) fn unused_import(import: &super::modules::Import) -> Warning {
     }
 }
 
+/// A `for` whose pattern binds `name`, the name it gives its iterator
+/// (`for x in x: e`): in the body the name is the value, in the invariant
+/// the iterator (docs/85-values-in-predicates.md).
+pub(super) fn shadowed_iterator(name: &Ident) -> Warning {
+    let n = &name.name;
+    Warning {
+        notes: vec![format!(
+            "the invariant names the iterator `{n}`, and the body the value the pattern binds: \
+             give the iterator another name"
+        )],
+        lint: Lint::ShadowedIterators,
+        span: name.span,
+        message: format!(
+            "the `for`'s pattern binds `{n}`, which hides the iterator `{n}` in its body"
+        ),
+        fixes: Vec::new(),
+    }
+}
+
 /// A loop's label that no `break` or `continue` uses. The fix removes it.
 pub(super) fn unused_label(label: &Label) -> Warning {
     let name = &label.name.name;
