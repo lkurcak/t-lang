@@ -31,11 +31,12 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&(*c))?;                                              // expect: 1
 
     // A place whose root is a variable is followed when the borrow is
-    // taken, so after `r` is changed.
+    // taken, so after what's behind `r` is changed. (`r` itself can't be:
+    // which place it is would depend on when it's found, docs/83.)
     let mut x = Box::new(1);
-    let mut y = Box::new(2);
-    let mut r = &mut x;
-    out.line(&g(&mut *r, { r = &mut y; 10 }))?; // expect: 12
-    out.line(&(*x + *y))?;                        // expect: 3
+    let y = Box::new(2);
+    let r = &mut x;
+    out.line(&g(&mut *r, { *r = Box::new(5); 10 }))?; // expect: 15
+    out.line(&(*x + *y))?;                              // expect: 7
     Ok(())
 }

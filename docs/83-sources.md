@@ -248,7 +248,7 @@ fn main() {
         need8(x);
         true
     });
-    let mut f = e.into_f();
+    let f = e.into_f();
     let _ = f(100);
 }
 // error: can't prove `r < 8` for argument `_r` of `need8`

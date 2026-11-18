@@ -20,3 +20,4 @@ fn main() {
     }
 }
 // error: can't prove `r < 8`
+// error: can't prove `v < 8` of what this may write
