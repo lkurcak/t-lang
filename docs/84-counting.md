@@ -4,7 +4,8 @@ Code: the name in `Parser::loop_expr` (`src/parser.rs`) and
 `modules::Rewrite::for_loop`; `len` and the `next`/`next_back` of
 `Iter`, `IterMut` and `Copied` in `core/slice.t`, of `IntoIter` in
 `core/array.t`; `Range`'s `next`/`next_back` in `core/ops.t`; `swap` in
-`Walk::mir_call` (`src/check/refine/mir.rs`).
+`Walk::mir_call` (`src/check/refine/mir.rs`), until step 85 gave it a
+signature (docs/85-values-in-predicates.md).
 
 A count kept in a `for` couldn't be proved not to overflow. t-chess
 counts how many times a position has stood on the board, and wrote
@@ -205,6 +206,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
 `a[0]` there is refused: `a` is the empty one now
 (`err_soundness_swap_exchanged.t`).
 
+Since step 85 it's no special case: `swap`'s signature says it, `ensures
+*a == old(*b), *b == old(*a)`, and `replace`'s says which value it gives
+back (docs/85-values-in-predicates.md).
+
 ## Why it's sound
 
 - **N1 (a name, no rule).** `for x in it: e invariant p { body }` is
@@ -254,7 +259,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
   they have left.
 - `mem::replace` still gives back a `T` it says nothing of. It's
   `swap` that the walk knows, and a function's callers only see its
-  signature.
+  signature. (Step 85: no longer; `replace` says it gives back
+  `old(*dest)`, docs/85-values-in-predicates.md.)
 - The pattern's variables still aren't in the invariant's scope: it's
   checked before they're bound.
 - A `for` over values that aren't `Discard` (docs/80) can stop early once
@@ -278,7 +284,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
   already said. The range's step is said in `ensures`, which the
   formatter can lay out, rather than in the result's refinement.
 - `swap` in the walk, rather than in a signature: what it says, "the
-  other's value", is no predicate a signature can write.
+  other's value", is no predicate a signature can write. (Until step 85,
+  which made it one: `*a == old(*b)`, docs/85-values-in-predicates.md.)
 
 ## Exercises
 

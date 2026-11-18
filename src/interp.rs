@@ -1159,6 +1159,15 @@ fn pred_op(op: BinOp, a: PredValue, b: PredValue) -> PredValue {
 }
 
 impl Refined {
+    /// Does it name anything behind a `&mut` (`behind_mut`), which may
+    /// change?
+    fn reads_behind_mut(&self, behind_mut: &HashSet<NodeId>) -> bool {
+        fn reads(e: &Expr, ids: &HashSet<NodeId>) -> bool {
+            ids.contains(&e.id) || e.children().into_iter().any(|c| reads(c, ids))
+        }
+        self.parts.iter().any(|p| reads(&p.pred, behind_mut))
+    }
+
     /// Stops the program, as the checker is wrong, unless it holds of `v`,
     /// which is `what`: each part of it, of each part of `v` it's of that
     /// `v` has, being those variants.
@@ -1210,6 +1219,11 @@ impl Refined {
 
     fn eval(&self, i: &Interp, e: &Expr, binder: &str, v: &Value) -> PredValue {
         let go = |e: &Expr| self.eval(i, e, binder, v);
+        // What was found at the call: a whole value `==` compares, as the
+        // logic sees it (`Interp::model`).
+        if let Some(m) = self.measured.get(&e.id) {
+            return m.clone();
+        }
         match &e.kind {
             ExprKind::Int(n, _) => PredValue::Int(i128::from(*n)),
             ExprKind::Bool(b) => PredValue::Bool(*b),
@@ -1220,6 +1234,21 @@ impl Refined {
             },
             ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-go(x).int()),
             ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!go(x).boolean()),
+            ExprKind::Unary(UnOp::Deref, x) => PredValue::of(&i.pred_deref(go(x).val())),
+            // Two whole values: the same value, as the logic sees values
+            // (lemma V1 of docs/85-values-in-predicates.md).
+            ExprKind::Binary(op, l, r) if i.measures.values.contains(&e.id) => {
+                let same = match (go(l), go(r)) {
+                    (PredValue::Val(a), PredValue::Val(b)) => i.model(&a) == i.model(&b),
+                    (PredValue::Int(a), PredValue::Int(b)) => a == b,
+                    (PredValue::Bool(a), PredValue::Bool(b)) => a == b,
+                    _ => unsound("`==` of whole values of two kinds"),
+                };
+                PredValue::Bool(match op {
+                    BinOp::Ne => !same,
+                    _ => same,
+                })
+            }
             ExprKind::Binary(op, l, r) => pred_op(*op, go(l), go(r)),
             ExprKind::MethodCall(x, ..) => match self.measured.get(&e.id) {
                 Some(m) => m.clone(),
@@ -1248,7 +1277,9 @@ fn each_measure_call<'e>(
     out: &mut Vec<(&'e Expr, &'e str)>,
 ) {
     match &e.kind {
-        ExprKind::MethodCall(..) | ExprKind::Field(..) if !post || !at_return.contains(&e.id) => {
+        ExprKind::MethodCall(..) | ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _)
+            if !post || !at_return.contains(&e.id) =>
+        {
             if let Some(root) = path_root(e) {
                 out.push((e, root));
             }
@@ -1267,9 +1298,46 @@ fn each_measure_call<'e>(
 fn path_root(e: &Expr) -> Option<&str> {
     match &e.kind {
         ExprKind::Var(name, _) => Some(name),
-        ExprKind::Field(x, _) | ExprKind::MethodCall(x, ..) => path_root(x),
+        ExprKind::Field(x, _) | ExprKind::MethodCall(x, ..) | ExprKind::Unary(UnOp::Deref, x) => {
+            path_root(x)
+        }
         _ => None,
     }
+}
+
+/// Each side of an `==` or `!=` of whole values in predicate `e` (in
+/// `values`) that's what it was at the call: in a postcondition (`post`),
+/// those in `old(..)`, and those not of what's behind a `&mut`
+/// (`at_return` has those); in any other predicate, all of them.
+fn each_value_side<'e>(
+    e: &'e Expr,
+    post: bool,
+    at_return: &HashSet<NodeId>,
+    values: &HashSet<NodeId>,
+    out: &mut Vec<&'e Expr>,
+) {
+    match &e.kind {
+        ExprKind::Binary(_, l, r) if values.contains(&e.id) => {
+            for side in [l, r] {
+                if !post || !at_return.contains(&side.id) {
+                    out.push(side);
+                }
+            }
+        }
+        ExprKind::Call(_, args) if args.len() == 1 => {
+            return each_value_side(&args[0], false, at_return, values, out);
+        }
+        _ => {}
+    }
+    for c in e.children() {
+        each_value_side(c, post, at_return, values, out);
+    }
+}
+
+/// Does `e` name `name`?
+fn names(e: &Expr, name: &str) -> bool {
+    matches!(&e.kind, ExprKind::Var(n, _) if n == name)
+        || e.children().into_iter().any(|c| names(c, name))
 }
 
 impl<'p> Interp<'p, '_> {
@@ -1316,8 +1384,79 @@ impl<'p> Interp<'p, '_> {
                     r.measured.insert(e.id, m);
                 }
             }
+            // A whole value `==` compares, as it is now, what a box owns
+            // too, which may change by when it's checked.
+            let mut sides = Vec::new();
+            each_value_side(
+                pred,
+                post,
+                &self.measures.behind_mut,
+                &self.measures.values,
+                &mut sides,
+            );
+            for side in sides {
+                if !names(side, binder)
+                    && let PredValue::Val(v) = r.eval(self, side, binder, &Value::Unit)
+                {
+                    r.measured.insert(side.id, PredValue::Val(self.model(&v)));
+                }
+            }
         }
         r
+    }
+
+    /// What value `v` is to the logic (lemma V1 of
+    /// docs/85-values-in-predicates.md), which `==` compares whole, as a
+    /// value that's its own model, so a model taken twice is the same: a box
+    /// by what it owns; what's in an `Unsafe`, a cell's, by nothing, as no
+    /// predicate can see it; a buffer by where it is and its capacity; a
+    /// function by which it is; anything else by its parts, a reference by
+    /// where it points.
+    fn model(&self, v: &Value) -> Value {
+        match v {
+            Value::Box(p) => {
+                let owned = self.model(self.memory.get(p));
+                Value::Struct("{box}".to_string(), vec![(String::new(), owned)])
+            }
+            Value::Struct(ty, _) if ty.split("::<").next() == Some(crate::check::UNSAFE) => {
+                Value::Unit
+            }
+            Value::Struct(ty, fields) => Value::Struct(
+                ty.clone(),
+                (fields.iter())
+                    .map(|(n, f)| (n.clone(), self.model(f)))
+                    .collect(),
+            ),
+            Value::Variant(ty, name, fields) => Value::Variant(
+                ty.clone(),
+                name.clone(),
+                fields.iter().map(|f| self.model(f)).collect(),
+            ),
+            Value::Slots(values) => Value::Slots(values.iter().map(|v| self.model(v)).collect()),
+            Value::Closure(c) => Value::Closure(Closure {
+                code: c.code.clone(),
+                env: (c.env.iter())
+                    .map(|(n, v)| (n.clone(), self.model(v)))
+                    .collect(),
+            }),
+            Value::Fn(name, _) => Value::Fn(name.clone(), None),
+            // Where its slots are, and how many, which `cap` says; not
+            // what's in them, which no predicate can see.
+            Value::RawBuf(p) => {
+                let cap = match self.memory.get(p) {
+                    Value::Slots(slots) => slots.len() as i128,
+                    _ => -1,
+                };
+                Value::Struct(
+                    "{raw}".to_string(),
+                    vec![
+                        (String::new(), Value::Ref(p.clone())),
+                        ("cap".to_string(), Value::Int(cap, IntTy::Usize)),
+                    ],
+                )
+            }
+            v => v.clone(),
+        }
     }
 
     /// What the measure call at `node`, in a predicate or a measure's body,
@@ -1695,7 +1834,12 @@ impl<'p> Interp<'p, '_> {
                             &format!("argument `{}` of `{}`", p.name.name, decl.name.name),
                         );
                     }
-                    refined.push(r);
+                    // One of what's behind a `&mut` is what the argument
+                    // points to at the call, which the function may change:
+                    // it's only checked here. Any other's can't change, as
+                    // its parameter isn't `mut`, or names nothing behind a
+                    // `&mut` if it is.
+                    refined.push(r.filter(|r| !r.reads_behind_mut(&self.measures.behind_mut)));
                 }
                 // What an intrinsic gives is trusted, and so checked: its
                 // refinement too.

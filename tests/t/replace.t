@@ -24,7 +24,7 @@ fn rotate<T>(a: &mut T, b: &mut T, c: T) -> T {
 #[derive(Discard)]
 struct Holder<'a> { r: &'a mut i64 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = String::new();
     let mut slot = Fd { n: 1 };
     out.line(&close(swap_in(&mut slot, 2))); // expect: 1

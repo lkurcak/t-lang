@@ -74,12 +74,12 @@ fn main() {
     swap(&mut a, &mut b);
 }
 // error: can't prove `v > 1` of what `swap` may write behind argument `b`
+// error: can't prove `v > 1` for `b` after the call to `swap`
 ```
 
-The error is the instantiation's: `a`'s 1 may end up in `b`. Until step
-84 a second one said the refinement of `b`, proved again after the call,
-couldn't be; the checker now knows `swap` put `a`'s value there
-(docs/84-counting.md), which the first is about.
+The first error is the instantiation's: `a`'s 1 may end up in `b`. The
+second is the refinement of `b` proved again after the call: `swap` says
+it leaves `a`'s value there (docs/85-values-in-predicates.md), which is 1.
 
 A field's refinement may name the struct's other fields
 (docs/08.1-field-refinements.md): what the call is lent of it is the

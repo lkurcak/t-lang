@@ -86,9 +86,10 @@ fn all(l: List<u64>) -> usize with {} {
 }
 
 /// The pattern may have the iterator's name: in the body, it's the value.
+/// That warns (docs/85-values-in-predicates.md).
 fn shadow(a: &[u64]) -> u64 with {} {
     let mut s: u64 = 0;
-    'outer: for it in it: a.iter().copied() invariant it.len() <= a.len() {
+    'outer: for it in it: a.iter().copied() invariant it.len() <= a.len() { // warning: the `for`'s pattern binds `it`, which hides the iterator `it` in its body
         s = s | it;
         if s > 100 {
             break 'outer;

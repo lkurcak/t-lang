@@ -42,13 +42,16 @@ trait DiscardWhen {
 export trait Copy: Discard {}
 
 /// Exchanges the values `a` and `b` point to. Nothing is made, and nothing
-/// thrown away, so it works for any type, `Discard` or not.
+/// thrown away, so it works for any type, `Discard` or not. What was
+/// known of each is known of the other after.
 #[intrinsic]
-export fn swap<T>(a: &mut T, b: &mut T);
+export fn swap<T>(a: &mut T, b: &mut T) ensures *a == old(*b), *b == old(*a);
 
 /// Puts `src` where `dest` points and gives back what was there: how to
-/// change what's behind a `&mut` whose type isn't `Discard`.
-export fn replace<T>(dest: &mut T, mut src: T) -> T {
-    swap(dest, &mut src);
-    src
+/// change what's behind a `&mut` whose type isn't `Discard`. What was known
+/// of each is known of where it is after.
+export fn replace<T>(dest: &mut T, src: T) -> { r: T | r == old(*dest) } ensures *dest == src {
+    let mut s = src;
+    swap(dest, &mut s);
+    s
 }

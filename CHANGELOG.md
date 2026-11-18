@@ -1,5 +1,44 @@
 # Changelog
 
+## 0.100.0 (2026-11-19)
+
+Step 85: values in predicates. See
+[docs/85-values-in-predicates.md](docs/85-values-in-predicates.md).
+
+### Added
+
+- `*r` in a predicate names what a reference or a box points to, as a
+  field is named: `ensures *r == old(*r) + 1` for an `r: &mut u8`.
+- `==` and `!=` in a predicate compare two values of any one type whole:
+  equal if they're the same value, as the logic sees values (fields and
+  variants by their parts, a reference by where it points, a box by what
+  it owns, what's in a cell not at all). It's not the type's `Eq`.
+- A postcondition's `*a == old(*b)`, or a result's `r == old(*dest)`,
+  tells the caller which value is where after the call, with everything
+  known of it.
+- `swap` says it exchanges its two values (`ensures *a == old(*b), *b ==
+  old(*a)`), `replace` that it gives back what was there and leaves what
+  it's given, and `Option::take` that it gives back what was there and
+  leaves `None`. So `let old = replace(&mut l, List::new())` knows how long
+  `old` is.
+- A warning, `shadowed_iterators`, for `for x in x: e`, whose pattern hides
+  the name it gives its iterator in the body.
+
+### Changed
+
+- The refinement checker no longer knows `swap` by name: its signature
+  says what it does, which the interpreter now checks at every call.
+- A variable given an array keeps what's known of the array's values, as
+  it does of a struct's: `let a: [{ v: u8 | v < 20 }; 2] = [3, 3]` knows
+  they're 3s.
+
+### Fixed
+
+- The interpreter checked a parameter's refinement of what's behind its
+  `&mut` (`x: { x: &mut Pair | x.lo == 1 }`) each time the parameter was
+  used, and stopped a program that changed it as unsound; it's what holds
+  at the call, and is checked there.
+
 ## 0.99.0 (2026-11-18)
 
 Step 84: counting in loops. See [docs/84-counting.md](docs/84-counting.md).

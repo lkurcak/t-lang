@@ -43,10 +43,6 @@ use crate::mir::{
     Statement, StmtKind, StmtNote, Term,
 };
 
-/// The symbol of `core::mem::swap`, which the walk knows exchanges what
-/// its two places hold.
-const SWAP: &str = "core::mem::swap";
-
 /// What a local that's no variable holds: a temporary's value, and, if
 /// it's a borrow, `&mut` or not, of a place, which place.
 #[derive(Debug, Clone, PartialEq)]
@@ -2090,15 +2086,6 @@ impl Walk<'_> {
             }
             _ => (None, None),
         };
-        // `core::mem::swap` exchanges what its two places hold, which the
-        // borrow checker keeps apart (lemma M1 of docs/84-counting.md): so
-        // what's known of each is known of the other after.
-        let swapped = match (symbol.as_deref(), &places[..]) {
-            (Some(SWAP), [Some(p), Some(q)]) if self.reachable => {
-                Some((p.clone(), self.read_place(p), q.clone(), self.read_place(q)))
-            }
-            _ => None,
-        };
         let resolved = symbol.map(|s| self.callee_at(&s, targs));
         if !closures.is_empty() || !fns.is_empty() {
             let trees = match &resolved {
@@ -2176,11 +2163,12 @@ impl Walk<'_> {
             self.invalidate(p, span, "mutable lending");
             self.kill(p);
         }
-        if let Some((p, a, q, b)) = swapped {
-            self.write(&p, Some(b), None);
-            self.write(&q, Some(a), None);
+        // What its postconditions define, its result too: `swap`'s and
+        // `replace`'s say which values they leave where
+        // (docs/85-values-in-predicates.md).
+        if let Some(v) = self.post_now(post, span)? {
+            result = v;
         }
-        self.post_now(post, span)?;
         if let (Some(g), Some(Some(p)), Some(pre)) = (items, places.first(), pre) {
             let post = self.keep_items(p, g.clone());
             let t = self.place_ty(p);
@@ -2259,7 +2247,7 @@ impl Walk<'_> {
         // may write, `closures_given`), says nothing here.
         let errors = self.errors.len();
         let called = (self.call_at(&site, vals, vec![None; n]))
-            .and_then(|(val, post)| self.post_now(post, span).map(|()| val));
+            .and_then(|(val, post)| self.post_now(post, span).map(|d| d.unwrap_or(val)));
         let facts = self.facts.clone();
         self.put_state(here);
         let failed = self.errors.len() > errors;

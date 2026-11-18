@@ -94,7 +94,13 @@ fn need(v: { v: u8 | v < 10 }) -> u8 { v }
 /// A program copying two `n`s, declared as `source` says, the way `copy`
 /// does, into places of digits, and reading them as digits.
 fn program(source: Source, copy: Copy, n: u8) -> String {
-    let src = format!("let src: [{}; 2] = [{n}, {n}];", source.ty());
+    // From a function, so that what's known of them is what's declared
+    // (a literal's values would be known, since step 85).
+    let given = format!(
+        "fn given(x: {t}) -> [{t}; 2] {{ [x, x] }}\n\n",
+        t = source.ty()
+    );
+    let src = format!("let src: [{}; 2] = given({n});", source.ty());
     let (code, read) = match copy {
         Copy::Array => (
             "let mut dst: [{ v: u8 | v < 10 }; 2] = [0, 0];\n    \
@@ -127,7 +133,7 @@ fn program(source: Source, copy: Copy, n: u8) -> String {
         ),
     };
     format!(
-        "{ITEMS}fn main() with alloc {{\n    {src}\n    {code}\n    let (a, b) = {read};\n    \
+        "{ITEMS}{given}fn main() with alloc {{\n    {src}\n    {code}\n    let (a, b) = {read};\n    \
          let _ = (need(a), need(b));\n}}\n"
     )
 }
