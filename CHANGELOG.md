@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.100.0 (2026-11-19)
 
 Step 85: values in predicates. See
 [docs/85-values-in-predicates.md](docs/85-values-in-predicates.md).
