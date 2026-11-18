@@ -253,6 +253,13 @@ refuses to take as one:
 - its iterator behind a `&mut`, or in a `Cell`, where another could be put
   without its protocol (`err_soundness_items_by_ref.t`).
 
+That list missed some ways (retrospective 13): a closure that can put an
+iterator or an item back through a parameter, a second closure giving
+`U`, a `DoubleEndedIterator` impl with bounds of its own. Since step 83
+there's no list: one analysis finds every place a type parameter is in a
+signature, and refuses what it doesn't know to be harmless
+(docs/83-sources.md).
+
 And an iterator whose impl overrides a default method could give anything
 through it, `any` its closure, so its own signatures say nothing
 (`err_soundness_items_override.t`).

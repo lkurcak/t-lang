@@ -938,8 +938,10 @@ impl<'a> Builder<'a> {
     /// Only the borrow waits. What the place is made from, if it isn't a
     /// variable's (`&mut make().f`), is worked out in order, so nothing a
     /// program does happens later than it's written. And finding a place
-    /// is only following fields and `*`s, so when it's done can't be
-    /// seen, except by the borrow checker, which then sees no clash.
+    /// is only following fields and `*`s, whose references and boxes the
+    /// later arguments may not change (`pin`, lemma A5 of
+    /// docs/83-sources.md), so when it's done can't be seen, except by the
+    /// borrow checker, which then sees no clash.
     ///
     /// And as this is what runs, that's when the program does it. A
     /// borrow the checker made, by a coercion, waits too: `r` used as a

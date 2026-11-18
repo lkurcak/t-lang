@@ -10,7 +10,9 @@
 //! writing, moving or dropping clashes with any.
 //!
 //! A call's borrows of places are made after its other arguments (see
-//! `Builder::call_into`), so `v.push(v.len())` needs nothing special here.
+//! `Builder::call_into`), so `v.push(v.len())` needs nothing special here;
+//! but what such a place is found through mustn't change in between
+//! (`pins`).
 
 use super::build::{self, Builder, Loan, project};
 use super::describe;

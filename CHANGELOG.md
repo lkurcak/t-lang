@@ -1,5 +1,46 @@
 # Changelog
 
+## Unreleased
+
+Step 83: where values come from (retrospective 13). See
+[docs/83-sources.md](docs/83-sources.md).
+
+### Fixed
+
+- Rules that rest on parametricity (what a generic call gives back of a
+  refined type argument, which closure gives a value, what a closure in a
+  call can count on of what it's given, what an iterator made by an
+  adapter gives) each listed the parts of a signature that could give a
+  value, and each list missed some, so programs that broke a type at run
+  time were accepted. Since 0.97.0: a closure that can put an iterator or
+  an item back through a `&mut` parameter or a `Cell`; a second closure
+  giving an adapter's result type; a closure given to a function that
+  makes the one `map` gets; an equality bound saying what an iterator's
+  items are (`X: Iterator<Item = usize>`), with a closure given them; an
+  adapter's or an iterator's `DoubleEndedIterator` impl with bounds of
+  its own (`nine(0..8).rev()` gave 9); a closure kept by the function
+  it's given to, or by an adapter whose module can get it out, walked
+  knowing what it's given. Since 0.89.0: a closure given to another
+  closure that keeps it. Now one analysis finds every place a type
+  parameter is in a signature, and every such rule asks it, refusing what
+  it doesn't know to be harmless.
+- Calling a closure whose parameter is a projection an equality bound
+  says (`F: FnMut(X::Item)` with `X::Item = usize`) stopped the borrow
+  checker.
+
+### Changed
+
+- A later argument can't give a reference or box that an earlier
+  argument's waiting borrow goes through a new value, lend it `&mut` or
+  move it: `put(g, { g = b; 1 })` is refused. Which place was borrowed
+  depended on when it was found (0.95.0 wrote `a`, 0.96.0 `b`). A `&mut`
+  to such a reference in use where the argument is clashes too.
+- A closure kept in an adapter a call gives back is walked knowing what
+  the iterator gives only if the adapter is sealed: from another module,
+  its fields private, and nothing in its module taking one but its
+  `Iterator` and `DoubleEndedIterator` impls. `core`'s `Map` and `Filter`
+  are.
+
 ## 0.97.0 (2026-11-16)
 
 Step 82: what an iterator gives, through its adapters. See
