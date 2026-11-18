@@ -4026,13 +4026,14 @@ impl Walk<'_> {
         let v = self.fresh(kind);
         self.cur.insert(p.clone(), v);
         match val {
-            Some(val) => {
+            // A value nothing's known of has what's declared there, as
+            // `None` does.
+            Some(val) if val != Val::Other => {
                 for f in equal(&self.var(v), &val) {
                     self.fact(f);
                 }
             }
-            // A value nothing's known of has what's declared there.
-            None => {
+            _ => {
                 let tree = self.place_read(p);
                 let now = self.var(v);
                 self.assume_tree(&now, t, &tree);
@@ -5633,9 +5634,14 @@ impl Walk<'_> {
                 (None, None) => continue,
             };
             let binder = defined.clone().unwrap_or_else(|| result.clone());
+            // Of a value nothing's known of, the place is better read anew,
+            // which has what's declared there.
             let Ok(v) = self.term(&other, &binder, env) else {
                 continue;
             };
+            if v == Val::Other {
+                continue;
+            }
             match target {
                 Target::Result => defined = Some(self.left(v, ret)),
                 Target::Place(p) => {

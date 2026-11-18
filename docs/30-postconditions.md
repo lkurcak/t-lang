@@ -336,7 +336,7 @@ worked out at the call, and an intrinsic's too.
 | `ensures` on a trait's methods | an impl's would have to promise no less | — |
 | what a closure ensures | closures have no signatures to write it in | — |
 | a map's `len` is the sum of its buckets' | sums over a list, or quantifiers, in the logic | — |
-| `*r` in a predicate, for an `r: &mut i64` | dereferences in the logic, as measures of a reference | — |
+| `*r` in a predicate, for an `r: &mut i64` | dereferences in the logic, as measures of a reference | 85: `*r`, and whole values compared with `==` |
 
 ## Exercises
 
