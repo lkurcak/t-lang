@@ -1372,8 +1372,13 @@ pub fn normalise(impls: &Impls, anon: &Anon, local: &[(Type, Type)], t: &Type) -
     let Type::Proj(s, tr, name) = &t else {
         return t;
     };
+    // What a bound says it is, itself worked out with the others: `F::SIG
+    // = fn(X::Item)` beside `X::Item = usize` is `fn(usize)`. Each bound is
+    // used once on the way, so bounds that say it of each other (`X::Item
+    // = Y::Item`, `Y::Item = X::Item`) end.
     if let Some((_, u)) = local.iter().find(|(p, _)| *p == t) {
-        return u.clone();
+        let rest: Vec<(Type, Type)> = (local.iter()).filter(|(p, _)| *p != t).cloned().collect();
+        return normalise(impls, anon, &rest, u);
     }
     match project(impls, anon, local, s, tr, name) {
         Some(u) => normalise(impls, anon, local, &u),
