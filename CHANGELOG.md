@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.99.0 (2026-11-18)
 
 Step 84: counting in loops. See [docs/84-counting.md](docs/84-counting.md).
 
