@@ -845,9 +845,44 @@ fn main() {
     out
 }
 
-/// Iterators whose `DoubleEndedIterator` impl has bounds of its own.
+/// Iterators whose `DoubleEndedIterator` impl has bounds of its own; and
+/// an adapter whose second closure can write its `U`, made by a function
+/// that says nothing of that closure, so no closure given it is checked.
 fn back_impls() -> Vec<(&'static str, String)> {
     vec![
+        (
+            "adapter_u_mut_unbound",
+            "#[derive(Discard)]
+struct Ad<I, F, G> { iter: I, f: F, g: G }
+
+impl<I: Iterator, U, F: FnMut(I::Item) -> U, G: FnMut(&mut U)> Iterator for Ad<I, F, G> where U: Discard {
+    type Item = U;
+    effect e = I::e;
+
+    fn next(&mut self) -> Option<U> with I::e {
+        match self.iter.next() {
+            Some(x) => {
+                let mut u = (self.f)(x);
+                (self.g)(&mut u);
+                Some(u)
+            }
+            None => None,
+        }
+    }
+}
+
+fn ad<I: Iterator, U, F: FnMut(I::Item) -> U, G>(iter: I, f: F, g: G) -> Ad<I, F, G> { Ad { iter, f, g } }
+
+fn main() {
+    let a: [u8; 8] = [0; 8];
+    let g = |u: &mut usize| *u = 100;
+    for r in ad(0..100, |x: usize| x % 8, g) {
+        let _ = a[r];
+    }
+}
+"
+            .to_string(),
+        ),
         (
             "adapter_dei_eq",
             "#[derive(Discard)]
