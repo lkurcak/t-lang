@@ -234,6 +234,10 @@ file's check what the operating system says (which keeps it), as an
   the reference.
 - A measure of a trait that's one of several traits a type implements,
   with the same name, can't be named in a predicate.
+- A blanket impl through a reference, `impl<'a, T: Tr> Tr for &'a T`,
+  can't give a measure of the trait's: a measure's body can't write `*`,
+  and `self.size()` there would be its own (through a `&mut`, it couldn't
+  read anyway, H1).
 - An impl's method can't promise less of what's behind a `&mut` than its
   trait's does, at return, if what it gives back may still borrow it.
 
