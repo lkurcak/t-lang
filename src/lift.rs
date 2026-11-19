@@ -78,7 +78,9 @@ pub(crate) fn lift_program(prog: &Program, info: &Info) -> Program {
                 .map(|m| TraitMethod {
                     decl: match m.provided {
                         true => cx.method(&m.decl, &mut fns),
-                        false => m.decl.clone(),
+                        // Its signature, named by symbols, whose contract
+                        // each impl's has (docs/86-trait-contracts.md).
+                        false => cx.lifted(&m.decl).0,
                     },
                     provided: m.provided,
                 })

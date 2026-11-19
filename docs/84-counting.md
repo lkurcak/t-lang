@@ -254,7 +254,9 @@ back (docs/85-values-in-predicates.md).
   and `zip` are generic in their iterator, and a measure can't be a
   trait's method yet, which `len` would have to be for `Rev<I>` to
   say it of `I`. So `Iterator::count`, and `enumerate`'s counter, still
-  say `with panic`.
+  say `with panic`. (Step 86 lets a measure be a trait's method; what's
+  still missing is a law of `next` that a trait other than `Iterator`
+  states, docs/86-trait-contracts.md.)
 - The iterators of a `str` (`chars`, `split`, `lines`) say nothing of what
   they have left.
 - `mem::replace` still gives back a `T` it says nothing of. It's

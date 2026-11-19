@@ -63,7 +63,7 @@ with {alloc, R::e}
             return Ok(total);
         }
         let mut i = 0usize;
-        while i < n && i < chunk.len() {
+        while i < n {
             buf.push(chunk[i]);
             i = i + 1;
         }

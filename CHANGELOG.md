@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.101.0 (2026-11-19)
+
+Step 86: trait contracts. See
+[docs/86-trait-contracts.md](docs/86-trait-contracts.md).
+
+### Added
+
+- A trait's method can refine its parameters and result, and say what it
+  `ensures`, as a function can. Each impl's method has its trait's
+  contract without writing it: its body is checked to keep the trait's
+  promises, and generic code counts on them.
+- An impl's method may ask less of a parameter than its trait's does, if
+  what the trait's asks is enough for it, which is proved where the impl
+  is; and it may promise more, which calls known to be of it learn.
+- A trait's method can be a measure, `#[measure] fn len(&self) -> usize;`,
+  with a default if it has a body; each impl's must be a measure too.
+  Generic code knows it by what the trait says of it; at a known type,
+  it's that type's impl's.
+- `io::Read::read` says it reads at most `buf.len()` bytes:
+  `Result<{ n: usize | n <= buf.len() }, Error>`. The standard input's
+  and a file's check what the operating system says, which keeps to it.
+
+### Changed
+
+- `alloc::io::read_to_end` no longer checks `i < chunk.len()` again.
+- An impl's measure can't call, of `self`, measures that come back to it
+  through its trait's defaults: it would never end.
+
+### Fixed
+
+- A measure could read through a `&mut` field (`self.r.len()` of a
+  `r: &'a mut List<u8>`), and outside its module kept its value after a
+  write through the field: `m.r.push(1)` left `m.n() == 0` known. A
+  measure's body can't read through a `&mut` now, but for a slice's or a
+  string's length, which is the reference's own. (Unsound since 0.34.0.)
+
 ## 0.100.0 (2026-11-19)
 
 Step 85: values in predicates. See

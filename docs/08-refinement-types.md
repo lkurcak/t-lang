@@ -51,20 +51,25 @@ of its values would it mean?
 
 Not inside another type (`Option<{ v: i64 | v > 0 }>`: since step 53, a
 type argument of an enum can be one, see
-docs/53-refined-type-arguments.md), not a closure's parameter, and not in
-a trait's methods, nor an impl's of a trait (since step 53, an impl's
-method's result can be refined):
+docs/53-refined-type-arguments.md), and not a closure's parameter: that
+would need refinements inside other types, which is more to get right,
+and can come later without changing what's here. A trait's method can
+have them since step 86, which each impl's has too
+(docs/86-trait-contracts.md):
 
 ```rust,error
 trait Half {
-    fn half(self, by: { b: i64 | b > 0 }) -> i64;
+    fn half(self, by: i64) -> i64;
 }
-// error: refinements can't be in a trait's methods yet
-```
 
-Each of those would need refinements inside other types, or an impl's
-method to ask no more than its trait's, which is more to get right, and
-can come later without changing what's here.
+impl Half for i64 {
+    // A call through the trait wouldn't check it.
+    fn half(self, by: { b: i64 | b > 0 }) -> i64 { self / by }
+}
+
+fn main() {}
+// error: can't prove `b > 0` from what trait `Half` asks of `by`
+```
 
 ## What a predicate can say
 
@@ -311,7 +316,7 @@ the checker proved, which must not panic. Either failing stops it with
 |---|---|---|
 | refinements on struct fields, facts through field reads | needs facts about places, not just variables | 8.1 ([docs](08.1-field-refinements.md)) |
 | refinements inside other types, `Option<{ v: i64 \| v > 0 }>` | needs subtyping inside type constructors, and refinements on type parameters | 53 ✅ (enums' type arguments; [docs](53-refined-type-arguments.md)) |
-| refined trait methods | an impl's must ask no more and promise no less | — (53: an impl's results) |
+| refined trait methods | an impl's must ask no more and promise no less | 86 ✅ ([docs](86-trait-contracts.md)) |
 | `&mut` to a refined value | writes through it must keep the refinement | — |
 | functions in predicates (`r.start() <= r.end()`) | needs pure functions, *measures* | 21 ✅ |
 | inferring loop invariants | Liquid types' fixed point | — |

@@ -178,7 +178,12 @@ impl Checker {
                     ty: Type::Param("Self".into(), false),
                     trait_name: t.name.name.clone(),
                 };
-                let mut scheme = self.method_scheme(f, &Outer::default(), Some(this), None)?;
+                let symbol = trait_method_symbol(&t.name.name, &f.name.name);
+                self.sig_owner = (symbol, f.name.name.clone());
+                self.sig_trait = Some((t.name.name.clone(), t.vis, m.provided));
+                let scheme = self.method_scheme(f, &Outer::default(), Some(this), None);
+                self.sig_trait = None;
+                let mut scheme = scheme?;
                 scheme.params.insert_type("Self".into());
                 scheme.preds.insert(
                     0,

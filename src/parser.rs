@@ -1430,12 +1430,17 @@ impl Parser {
         let mut effects = Vec::new();
         let mut methods = Vec::new();
         while *self.peek() != Tok::RBrace {
-            let head = (self.head()?.no_derives()?.no_intrinsic()?).no_measure(TRAIT_MEASURE)?;
-            let head = head.no_test()?;
+            let head = (self.head()?.no_derives()?.no_intrinsic()?).no_test()?;
             self.no_pub("a trait's methods are public wherever the trait is")?;
             match self.peek() {
-                Tok::Type => assoc.push(self.assoc_decl(head.no_blame_caller()?)?),
-                Tok::Effect => effects.push(self.effect_decl(head.no_blame_caller()?)?),
+                Tok::Type => {
+                    let head = head.no_blame_caller()?.no_measure(NOT_METHOD)?;
+                    assoc.push(self.assoc_decl(head)?)
+                }
+                Tok::Effect => {
+                    let head = head.no_blame_caller()?.no_measure(NOT_METHOD)?;
+                    effects.push(self.effect_decl(head)?)
+                }
                 Tok::Fn => {
                     let (decl, provided) = self.function(head, true, true, None)?;
                     methods.push(TraitMethod { decl, provided });
@@ -1650,7 +1655,7 @@ impl Parser {
             let head = self.head()?.no_derives()?.no_test()?;
             let head = match trait_name {
                 None => head,
-                Some(_) => head.no_intrinsic()?.no_measure(TRAIT_MEASURE)?,
+                Some(_) => head.no_intrinsic()?,
             };
             let vis = match trait_name {
                 Some(_) => {
@@ -1660,8 +1665,14 @@ impl Parser {
                 None => self.vis(),
             };
             match self.peek() {
-                Tok::Type => assoc.push(self.assoc_def(head.no_blame_caller()?)?),
-                Tok::Effect => effects.push(self.effect_def(head.no_blame_caller()?)?),
+                Tok::Type => {
+                    let head = head.no_blame_caller()?.no_measure(NOT_METHOD)?;
+                    assoc.push(self.assoc_def(head)?)
+                }
+                Tok::Effect => {
+                    let head = head.no_blame_caller()?.no_measure(NOT_METHOD)?;
+                    effects.push(self.effect_def(head)?)
+                }
                 Tok::Fn => {
                     let mut f = self.function(head, true, false, None)?.0;
                     f.vis = vis;
@@ -3645,8 +3656,6 @@ const NOT_BLAMING: &str = "`#[blame_caller]` can only be on a function with a bo
 
 /// Why a `#[measure]` can't be where it is.
 const NOT_METHOD: &str = "only a method of `&self` can be a measure";
-const TRAIT_MEASURE: &str =
-    "a trait's method can't be a measure: each impl's body would have to be the same";
 
 struct Head {
     doc: Option<DocComment>,

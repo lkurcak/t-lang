@@ -167,8 +167,8 @@ A reborrow, `&*s`, is the same object too.
 += v` or `&mut x[i]`, `*x.index_mut(i)`. The choice is the syntax's: the
 place being assigned or borrowed `&mut`, and what it's in, through fields
 and `*`s. They're methods found by name, so any type can be indexed, as
-`List` is; a trait would do it better, once a trait's method can have a
-refinement (`Index`, later).
+`List` is; a trait would do it better, now that a trait's method can have
+a refinement (`Index`, later; docs/86-trait-contracts.md).
 
 What an assignment assigns is evaluated before the place, as in Rust, so
 `s[0] = s[1]` reads `s[1]` before `index_mut` borrows `s`.
@@ -278,8 +278,9 @@ soundness violated".
   they need the caller to know when the borrow ends, as prophecies
   (RustHorn) or strong references (Flux) do. (Step 30 has them for a
   borrow that ends at the call.)
-- **`x[i]` by name, not a trait.** A trait's method can't carry a
-  refinement yet: an impl's would have to ask no more than the trait's.
+- **`x[i]` by name, not a trait.** A trait's method couldn't carry a
+  refinement: an impl's would have to ask no more than the trait's
+  (since step 86 it can, docs/86-trait-contracts.md).
 
 ## Deliberately missing (coming later)
 
@@ -289,7 +290,7 @@ soundness violated".
 | what a `&mut self` method leaves as it was, `old(self.len())` | postconditions on what's behind a `&mut`, which need to know when the borrow ends | 30 ✅ |
 | measures with arguments, `s.is_char_boundary(i)` | a function symbol of several arguments, and its congruence | — |
 | refinements in type arguments, `Option<{ s: &str \| s.len() > 0 }>` | `split_at` relating its halves to what it split | 53 ✅ (enums') |
-| `Index` as a trait | refinements in a trait's methods | — |
+| `Index` as a trait | refinements in a trait's methods | 86 ✅ can be written; `x[i]` still by name |
 | `&s[1..3]` | a range, as an index | — |
 
 ## Exercises
