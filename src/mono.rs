@@ -85,6 +85,11 @@ pub struct Executable {
     intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
     /// Which intrinsic each copy of one is, by name.
     intrinsics: HashMap<String, crate::intrinsic::Intrinsic>,
+    /// For each copy of an impl's method of a trait whose method says what
+    /// it asks and gives, by name: that method's declaration, at the
+    /// copy's types, whose contract the copy has too
+    /// (docs/86-trait-contracts.md), for the interpreter to check.
+    inherited: HashMap<String, FnDecl>,
 }
 
 /// What a struct, enum or closure type holds, at a copy's types, for a
@@ -143,6 +148,12 @@ impl Executable {
     /// The types of the parameters and result of intrinsic copy `name`.
     pub(crate) fn intrinsic_sig(&self, name: &str) -> Option<&(Vec<Type>, Type)> {
         self.intrinsic_sigs.get(name)
+    }
+
+    /// The trait's method's declaration, whose contract copy `name` has
+    /// too, if it's an impl's method of a trait whose method has one.
+    pub(crate) fn inherited(&self, name: &str) -> Option<&FnDecl> {
+        self.inherited.get(name)
     }
 
     /// Which intrinsic copy `name` is a copy of, if it's one.
@@ -275,6 +286,7 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
         closure_bodies: mono.closure_bodies,
         intrinsic_sigs: mono.intrinsic_sigs,
         intrinsics: mono.intrinsics,
+        inherited: mono.inherited,
     }
 }
 
@@ -302,6 +314,7 @@ pub(crate) fn rooted(prog: &Program, info: &Info, root: &str) -> (Executable, Ro
         closure_bodies: mono.closure_bodies,
         intrinsic_sigs: mono.intrinsic_sigs,
         intrinsics: mono.intrinsics,
+        inherited: mono.inherited,
     };
     (exe, missing)
 }
@@ -414,6 +427,16 @@ struct Mono<'p> {
     intrinsic_sigs: HashMap<String, (Vec<Type>, Type)>,
     /// `Executable::intrinsics`.
     intrinsics: HashMap<String, crate::intrinsic::Intrinsic>,
+    /// The measure calls the copies' predicates make whose measures depend
+    /// on the type they're of, each a new node for the copy's: of which
+    /// measure's copy, as `Measures::calls` (`Mono::measure_copy`).
+    measure_calls: HashMap<NodeId, (String, usize, Option<bool>)>,
+    /// The bodies of the copies of those measures, by name.
+    measure_bodies: HashMap<String, Option<Expr>>,
+    /// The behind-a-`&mut` ones of those calls (`Measures::behind_mut`).
+    measure_behind_mut: HashSet<NodeId>,
+    /// `Executable::inherited`.
+    inherited: HashMap<String, FnDecl>,
     /// What to start from, if it's not everything that isn't generic: to
     /// work out a const's value, only what it needs (`crate::consts`).
     /// Then everything is copied only where it's needed.
@@ -558,6 +581,10 @@ impl<'p> Mono<'p> {
             roots: None,
             missing: Default::default(),
             unchecked: Default::default(),
+            measure_calls: HashMap::new(),
+            measure_bodies: HashMap::new(),
+            measure_behind_mut: HashSet::new(),
+            inherited: HashMap::new(),
         }
     }
 
@@ -609,13 +636,25 @@ impl<'p> Mono<'p> {
                 let d = &self.fns[copy.of.as_str()];
                 let (f, params) = (d.f, d.params.clone());
                 let lifetimes = d.lifetimes.clone();
+                let self_ty = d.self_ty.clone();
                 let mut s = Subst::new(&params, &copy.args.clone());
-                if let Some(t) = &d.self_ty {
+                if let Some(t) = &self_ty {
                     let t = s.apply(t);
                     s = s.with_type("Self", t);
                 }
                 let mut decl = self.function(f, &s, &params, Some(&name));
                 decl.generics.lifetimes.splice(0..0, lifetimes);
+                // Its own type arguments, after its impl's.
+                let n = names(&f.generics).as_slice().len();
+                let args = &self.copies[&name].args;
+                let own = args[args.len() - n.min(args.len())..].to_vec();
+                if let Some(t) = &self_ty {
+                    let self_ty = s.apply(t);
+                    let symbol = f.name.name.clone();
+                    if let Some(c) = self.contract(&symbol, &self_ty, &own) {
+                        self.inherited.insert(name.clone(), c);
+                    }
+                }
                 fns.insert(name, decl);
             } else if let Some((name, args)) = self.type_queue.pop() {
                 let d = self.types[name.as_str()];
@@ -641,7 +680,7 @@ impl<'p> Mono<'p> {
             target: prog.target,
             next_id: self.next_id,
             proved: prog.proved.clone(),
-            measures: prog.measures.clone(),
+            measures: self.measures(),
         };
         for d in &prog.types {
             let name = &d.name().name;
@@ -672,6 +711,131 @@ impl<'p> Mono<'p> {
         roots.extend(rooted.into_iter().flatten());
         self.without_unused_core(&mut out, roots);
         out
+    }
+
+    /// The measures of the program, with the copies the copies' predicates
+    /// call (`measure_copy`).
+    fn measures(&self) -> Measures {
+        let mut m = self.prog.measures.clone();
+        m.calls.extend(self.measure_calls.clone());
+        m.bodies.extend(self.measure_bodies.clone());
+        m.behind_mut.extend(self.measure_behind_mut.iter().copied());
+        m
+    }
+
+    /// What measure `symbol`, of a value of type `ty`, is in a copy, if it
+    /// depends on the type (`Measures::typed`): for a trait's, the impl's
+    /// for `ty`, or the trait's default; a copy of its body at its type
+    /// parameters' types there, if those matter to it, whose own calls
+    /// are as they are at those (docs/86-trait-contracts.md).
+    fn measure_copy(&mut self, symbol: &str, ty: &Type) -> Option<String> {
+        if !self.info.measures.typed.contains(symbol) {
+            return None;
+        }
+        let traits = &self.info.traits;
+        let (of, names, args) = match self.info.measures.of_trait.get(symbol) {
+            Some((tr, name)) => match traits.implements(ty, tr, &[], &[]) {
+                Ok(Source::Impl(i, args)) if !traits.impls[i].derived => {
+                    let d = &traits.impls[i];
+                    match d.methods.iter().find(|(n, _)| n == name) {
+                        Some((_, s)) => (s.clone(), d.params.as_slice().to_vec(), args),
+                        None => (symbol.to_string(), vec!["Self".into()], vec![ty.clone()]),
+                    }
+                }
+                _ => (symbol.to_string(), vec!["Self".into()], vec![ty.clone()]),
+            },
+            None => {
+                let d = (traits.impls.iter()).find(|d| {
+                    d.trait_name.is_none() && d.methods.iter().any(|(_, s)| s == symbol)
+                })?;
+                let mut found = HashMap::new();
+                if !crate::traits::matches(&d.self_ty, ty, d.params.as_slice(), &mut found) {
+                    return None;
+                }
+                let names = d.params.as_slice().to_vec();
+                let args: Option<Vec<Type>> = names.iter().map(|n| found.get(n).cloned()).collect();
+                (symbol.to_string(), names, args?)
+            }
+        };
+        if args.is_empty() || !self.info.measures.typed.contains(&of) {
+            return Some(of);
+        }
+        let copy = format!("{} at {}", of, mangle("", &args));
+        if self.measure_bodies.contains_key(&copy) {
+            return Some(copy);
+        }
+        let body = self.info.measures.bodies.get(&of).cloned().flatten();
+        // Before its body's copy: a measure doesn't call itself, of the
+        // same value (`Checker::measure_loops`), but may of a field.
+        self.measure_bodies.insert(copy.clone(), body.clone());
+        if let Some(body) = body {
+            let s = Subst::new(&names, &args);
+            let mut cx = Cx {
+                m: self,
+                s: &s,
+                params: Params::types(names.clone()),
+            };
+            let body = *cx.pred(&body);
+            self.measure_bodies.insert(copy.clone(), Some(body));
+        }
+        Some(copy)
+    }
+
+    /// The contract trait method `symbol`'s impl's has of its trait's, if
+    /// the trait's says anything (D1 of docs/86-trait-contracts.md): the
+    /// trait's method's declaration at `Self` = `self_ty` and its own type
+    /// parameters `own`, for the interpreter to check of the impl's copy.
+    fn contract(&mut self, symbol: &str, self_ty: &Type, own: &[Type]) -> Option<FnDecl> {
+        let d =
+            (self.info.traits.impls.iter()).find(|d| d.methods.iter().any(|(_, s)| s == symbol))?;
+        let tr = d.trait_name.clone()?;
+        let name = d.methods.iter().find(|(_, s)| s == symbol)?.0.clone();
+        let theirs = self.info.traits.method(&tr, &name)?.symbol.clone();
+        let t = self.prog.traits.iter().find(|t| t.name.name == tr)?;
+        let f = &(t.methods.iter())
+            .find(|m| m.decl.name.name == theirs || m.decl.name.name == name)?
+            .decl;
+        let refined = |t: &TypeExpr| {
+            let written = self.info.written.get(&t.id);
+            !written.unwrap_or(t).refinements().is_empty()
+        };
+        if !f.params.iter().any(|p| refined(&p.ty)) && !refined(&f.ret) && f.ensures.is_empty() {
+            return None;
+        }
+        let mut params = Params::types(vec!["Self".into()]).concat(&names(&f.generics));
+        let own_names: Vec<String> = params.as_slice()[1..].to_vec();
+        if own_names.len() != own.len() {
+            return None;
+        }
+        let mut all = vec![self_ty.clone()];
+        all.extend(own.iter().cloned());
+        let s = Subst::new(params.as_slice(), &all);
+        params.push_type("Self".into());
+        let mut cx = Cx {
+            m: self,
+            s: &s,
+            params,
+        };
+        Some(FnDecl {
+            params: (f.params.iter())
+                .map(|p| Param {
+                    doc: None,
+                    allows: Vec::new(),
+                    mutable: p.mutable,
+                    vis: Vis::Private,
+                    name: p.name.clone(),
+                    ty: cx.ty(&p.ty),
+                })
+                .collect(),
+            ret: cx.ty(&f.ret),
+            ensures: f.ensures.iter().map(|e| *cx.pred(e)).collect(),
+            body: Expr {
+                kind: ExprKind::Block(Vec::new(), None),
+                span: f.body.span,
+                id: f.body.id,
+            },
+            ..f.clone()
+        })
     }
 
     /// `out` without the core library's functions, structs and enums that
@@ -1088,9 +1252,27 @@ impl Cx<'_, '_, '_> {
     }
 
     /// Predicate `e` of a refinement, as it is in the copy: with the length
-    /// each const parameter it names is.
-    fn pred(&self, e: &Expr) -> Box<Expr> {
-        fn go(cx: &Cx, e: &mut Expr) {
+    /// each const parameter it names is, and each measure it calls that
+    /// depends on the type it's of the copy for the type it is here
+    /// (`Mono::measure_copy`).
+    fn pred(&mut self, e: &Expr) -> Box<Expr> {
+        fn go(cx: &mut Cx, e: &mut Expr) {
+            if let ExprKind::MethodCall(..) = &e.kind
+                && let Some((symbol, derefs, by)) = cx.m.info.measures.calls.get(&e.id).cloned()
+                && let Some(recv) = cx.m.info.measures.recv.get(&e.id).cloned()
+            {
+                let ty = cx.subst(&recv);
+                if let Some(copy) = cx.m.measure_copy(&symbol, &ty)
+                    && copy != symbol
+                {
+                    let id = cx.m.id();
+                    if cx.m.info.measures.behind_mut.contains(&e.id) {
+                        cx.m.measure_behind_mut.insert(id);
+                    }
+                    cx.m.measure_calls.insert(id, (copy, derefs, by));
+                    e.id = id;
+                }
+            }
             if let Some(name) = cx.m.info.consts.get(&e.id) {
                 if let Type::Nat(n) = cx.subst(&Type::Param(name.clone(), false)) {
                     e.kind = ExprKind::Int(n, Some(crate::types::IntTy::Usize));

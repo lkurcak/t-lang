@@ -268,6 +268,10 @@ impl Checker {
             unreachable!("the borrow checker keeps the MIR of each body it passes")
         };
         let fr = Frame::new(body, notes);
+        if let Some(asked) = sig.as_ref().and_then(|s| s.asked.as_ref()) {
+            let sig = sig.as_ref().expect("asked is of one");
+            failed.append(&mut self.asks_no_more(f, sig, asked));
+        }
         let mut w = self.new_walk(f);
         for (i, p) in f.params.iter().enumerate() {
             if let Some(r) = sig.as_ref().and_then(|s| s.params[i].clone()) {
@@ -297,6 +301,41 @@ impl Checker {
         let proved = std::mem::take(&mut w.proved);
         let failures = std::mem::take(&mut w.failures);
         Ok((proved, failures))
+    }
+}
+
+impl Checker {
+    /// The proofs that what trait `asked.tr`'s method asks of each
+    /// parameter is enough for what impl method `f`, of signature `sig`,
+    /// asks of those it refines itself (D1 of docs/86-trait-contracts.md):
+    /// so a call through the trait, which proves only the trait's, gives
+    /// its body what that assumes. Those that fail.
+    fn asks_no_more(&self, f: &FnDecl, sig: &RefinedSig, asked: &Asked) -> Vec<Error> {
+        let mut w = self.new_walk(f);
+        for (i, p) in f.params.iter().enumerate() {
+            if let Some(Some(r)) = asked.params.get(i) {
+                w.declare(p.name.id, r, &p.name.name);
+            }
+            w.bind(p.name.id, None);
+        }
+        for (i, p) in f.params.iter().enumerate() {
+            let (Some(true), Some(Some(mine))) = (asked.own.get(i), sig.params.get(i)) else {
+                continue;
+            };
+            let v = w.read_place(&Place::local(p.name.id));
+            let (tr, name) = (&asked.tr, &p.name.name);
+            if mine.has_carried() {
+                let what = format!("`{name}` from what trait `{tr}` asks of it");
+                if let Err(e) = w.need(mine, &v, Env::Here, p.ty.span, what) {
+                    w.errors.push(e);
+                }
+            } else {
+                w.need_parts(mine, &v, Env::Here, p.ty.span, &|_, text| {
+                    format!("can't prove `{text}` from what trait `{tr}` asks of `{name}`")
+                });
+            }
+        }
+        std::mem::take(&mut w.errors)
     }
 }
 

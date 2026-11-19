@@ -97,8 +97,9 @@ export trait Read {
     /// most `buf.len()`, and at least one unless `buf` is empty or the
     /// input has ended. So `Ok(0)` for a `buf` that isn't empty says
     /// there's no more. It gives what's there, without waiting for more
-    /// to fill `buf`.
-    fn read(&mut self, buf: &mut [u8]) -> Result<usize, Error> with Self::e;
+    /// to fill `buf`. Each impl's keeps the count under `buf.len()`, which
+    /// generic code can count on.
+    fn read(&mut self, buf: &mut [u8]) -> Result<{ n: usize | n <= buf.len() }, Error> with Self::e;
 
     /// Reads exactly enough bytes to fill `buf`, or else fails: with
     /// `UnexpectedEnd` if the input ends first. What was read before a

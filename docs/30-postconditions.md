@@ -333,7 +333,7 @@ worked out at the call, and an intrinsic's too.
 | Missing | Why it's missing | Step |
 |---|---|---|
 | `ensures` on what a borrow that outlives the call leaves, in a program's own functions (`index_mut` keeps `len()`, so `l[i] = v` too) | prophecies the callee can prove (RustHorn, Creusot) | 59: when the result writes only free type parameters' values (parametricity) |
-| `ensures` on a trait's methods | an impl's would have to promise no less | — |
+| `ensures` on a trait's methods | an impl's would have to promise no less | 86 ✅ ([docs](86-trait-contracts.md)) |
 | what a closure ensures | closures have no signatures to write it in | — |
 | a map's `len` is the sum of its buckets' | sums over a list, or quantifiers, in the logic | — |
 | `*r` in a predicate, for an `r: &mut i64` | dereferences in the logic, as measures of a reference | 85: `*r`, and whole values compared with `==` |

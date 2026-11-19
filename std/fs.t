@@ -162,7 +162,7 @@ impl Read for ReadFile {
         let r = self.os_read(buf);
         match crate::io::failure(r) {
             Some(e) => Err(e),
-            None => Ok(core::num::wrap(r)),
+            None => crate::io::counted(r, buf.len()),
         }
     }
 }

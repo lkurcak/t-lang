@@ -1817,16 +1817,43 @@ impl<'p> Interp<'p, '_> {
                 // A result's refinement and `ensures` are about what's
                 // behind the arguments at return.
                 let ret = self.type_refined(&decl.ret, &env, true);
-                let ensures: Vec<Refined> = (decl.ensures.iter())
+                let mut ensures: Vec<Refined> = (decl.ensures.iter())
                     .map(|e| self.refined_at(&[(String::new(), e)], env.clone(), true))
                     .collect();
+                // An impl's method of a trait has the trait's method's
+                // contract too, with its names (D1 of
+                // docs/86-trait-contracts.md): what it asks of a parameter
+                // the impl's doesn't refine itself, what it gives back,
+                // what it ensures.
+                let exe = self.exe;
+                let theirs = exe.inherited(&name);
+                let their_env: Vec<(String, Value)> = match theirs {
+                    Some(t) => (t.params.iter())
+                        .zip(&args)
+                        .map(|(p, v)| (p.name.name.clone(), v.clone()))
+                        .collect(),
+                    None => Vec::new(),
+                };
+                let their_ret = theirs.and_then(|t| self.type_refined(&t.ret, &their_env, true));
+                if let Some(t) = theirs {
+                    ensures.extend(
+                        (t.ensures.iter()).map(|e| {
+                            self.refined_at(&[(String::new(), e)], their_env.clone(), true)
+                        }),
+                    );
+                }
                 // The arguments as they're given, if a free theorem says
                 // what the result is of them.
                 let free = self.measures.free.get(&decl.name.id);
                 let given = free.map(|_| args.clone());
                 let mut refined = Vec::new();
-                for (p, v) in decl.params.iter().zip(&args) {
-                    let r = refinement(self, &p.ty);
+                for (i, (p, v)) in decl.params.iter().zip(&args).enumerate() {
+                    let mut r = refinement(self, &p.ty);
+                    if r.is_none()
+                        && let Some(q) = theirs.and_then(|t| t.params.get(i))
+                    {
+                        r = self.type_refined(&q.ty, &their_env, false);
+                    }
                     if let Some(r) = &r {
                         r.check(
                             self,
@@ -1867,6 +1894,10 @@ impl<'p> Interp<'p, '_> {
                 };
                 if let (Ok(v), Some(r)) = (&result, ret) {
                     r.check(self, v, &format!("the result of `{}`", decl.name.name));
+                }
+                if let (Ok(v), Some(r)) = (&result, their_ret) {
+                    let what = format!("the result of `{}`, as its trait's says", decl.name.name);
+                    r.check(self, v, &what);
                 }
                 if let (Ok(v), Some(free), Some(given)) = (&result, free, &given) {
                     free_theorems(free, given, v, &decl.name.name);

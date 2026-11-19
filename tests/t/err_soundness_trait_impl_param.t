@@ -1,4 +1,5 @@
-// Called through the trait, as in `call`, nothing would check `by`.
+// An impl's method can't ask more than its trait's: called through the
+// trait, as in `call`, nothing would check `by` (docs/86-trait-contracts.md).
 trait Half {
     fn half(self, by: i64) -> i64;
 }
@@ -11,7 +12,7 @@ fn call<T: Half>(x: T) -> i64 { x.half(0) }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    out.line(&call(4))?;
+    out.line(&call(4i64))?;
     Ok(())
 }
-// error: an impl's method of a trait can't have refined parameters
+// error: can't prove `b > 0` from what trait `Half` asks of `by`

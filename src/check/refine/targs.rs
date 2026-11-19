@@ -42,6 +42,10 @@ pub(super) type Pos = Vec<usize>;
 pub(super) struct Closed {
     pub(super) pred: Expr,
     pub(super) names: HashMap<NodeId, Val>,
+    /// What the types written in it are where it was said, in order: of
+    /// an impl's that has it of its trait's, and at a call, the callee's
+    /// type arguments (`Walk::pred_measure`).
+    pub(super) types: Vec<std::sync::Arc<crate::types::Subst>>,
 }
 
 /// What a value is: one value; one a predicate is true of; one each of
@@ -815,7 +819,7 @@ impl Walk<'_> {
             }
             Cand::Pred(closed) => {
                 let closed = closed.clone();
-                match self.term(&closed.pred, v, Env::Closed(&closed.names)) {
+                match self.term(&closed.pred, v, Env::Closed(&closed)) {
                     Ok(Val::Bool(f)) => Some(f),
                     _ if strict => None,
                     _ => Some(Formula::True),
@@ -886,12 +890,28 @@ impl Walk<'_> {
     /// Refinement part `part`, of a type argument, its names other than its
     /// binder bound to their values as `env` says now (lemma A1), if the
     /// logic can say them.
-    pub(super) fn close(&mut self, pred: &Expr, env: Env) -> Option<Rc<Closed>> {
+    pub(super) fn close(&mut self, part: &super::Part, env: Env) -> Option<Rc<Closed>> {
         let mut names = HashMap::new();
-        self.close_names(pred, env, &mut names).ok()?;
+        let outer = std::mem::replace(&mut self.pred_types, part.scope.clone());
+        let closed = self.close_names(&part.pred, env, &mut names);
+        self.pred_types = outer;
+        closed.ok()?;
+        let mut types: Vec<std::sync::Arc<crate::types::Subst>> =
+            part.scope.iter().cloned().collect();
+        match env {
+            Env::Call(_, targs) | Env::Fields(_, targs) | Env::Post(_, _, targs)
+                if !targs.is_empty() =>
+            {
+                let (n, a): (Vec<String>, Vec<Type>) = targs.iter().cloned().unzip();
+                types.push(std::sync::Arc::new(crate::types::Subst::new(&n, &a)));
+            }
+            Env::Closed(c) => types = c.types.clone(),
+            _ => {}
+        }
         Some(Rc::new(Closed {
-            pred: pred.clone(),
+            pred: part.pred.clone(),
             names,
+            types,
         }))
     }
 
@@ -930,7 +950,7 @@ impl Walk<'_> {
     pub(super) fn carried_tree(&mut self, r: &Refinement, env: Env) -> Tree {
         let mut out = Vec::new();
         for part in r.parts.iter().filter(|p| p.carried) {
-            let d = match self.close(&part.pred, env) {
+            let d = match self.close(part, env) {
                 Some(c) => Disj::one(Cand::Pred(c)),
                 None => continue,
             };
@@ -1057,7 +1077,7 @@ impl Walk<'_> {
         if p.path.is_empty() {
             if let Some((r, _)) = self.invariants.get(&p.root).cloned() {
                 for part in r.parts.iter().filter(|q| !q.carried) {
-                    if let Some(c) = self.close(&part.pred, Env::Here) {
+                    if let Some(c) = self.close(part, Env::Here) {
                         tree.push((part.path.clone(), Disj::one(Cand::Pred(c))));
                     }
                 }
@@ -1071,7 +1091,7 @@ impl Walk<'_> {
             {
                 let args = self.adt_args(&qt);
                 for part in r.parts.iter().filter(|q| !q.carried) {
-                    if let Some(c) = self.close(&part.pred, Env::Fields(&vals, &args)) {
+                    if let Some(c) = self.close(part, Env::Fields(&vals, &args)) {
                         tree.push((part.path.clone(), Disj::one(Cand::Pred(c))));
                     }
                 }
@@ -1203,7 +1223,7 @@ impl Walk<'_> {
     fn own_tree(&mut self, r: &Refinement, env: Env) -> Tree {
         let mut out = Vec::new();
         for part in &r.parts {
-            if let Some(c) = self.close(&part.pred, env) {
+            if let Some(c) = self.close(part, env) {
                 out.push((part.path.clone(), Disj::one(Cand::Pred(c))));
             }
         }

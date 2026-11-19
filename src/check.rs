@@ -311,6 +311,9 @@ fn check_with(
     cx.info.projections = cx.proj_traits.take();
     // What the interpreter checks of each call: its free theorems.
     cx.info.measures.free = cx.free_table();
+    // Which measures are traits', and which depend on the type they're of,
+    // which monomorphisation finds each copy of (docs/86-trait-contracts.md).
+    cx.measure_tables();
     cx.info.mir = cx.mir.take();
     // Resolving can fail before every function has a symbol.
     cx.info.lengths = (cx.modules.lengths.iter())
@@ -694,6 +697,10 @@ pub(crate) struct Checker {
     /// impl is of `DiscardWhen`, whose `discard`'s `self` is refined (see
     /// `modules::Rewrite::discard_when`).
     sig_discard_when: bool,
+    /// The trait whose method's signature is being checked, if it's one,
+    /// its visibility, as its refinements are seen as far as the trait, and
+    /// whether the method has a body, a default.
+    sig_trait: Option<(String, Vis, bool)>,
     /// What has effects in the body being checked, the function's or a
     /// closure's (see `effects`).
     effect_sites: Vec<effects::Site>,
@@ -1141,6 +1148,7 @@ impl Checker {
             sig_owner: Default::default(),
             sig_self: None,
             sig_discard_when: false,
+            sig_trait: None,
             effect_sites: Vec::new(),
             proof_failures: HashMap::new(),
             proof_errors: Vec::new(),
@@ -1335,9 +1343,12 @@ impl Checker {
         self.signatures(prog, &fns)?;
         self.const_lengths()?;
         self.pending_refinements()?;
+        self.impl_measures()?;
+        self.inherit_contracts()?;
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;
+        self.measure_loops()?;
         // What comes after is about the whole program, which doesn't check
         // if a proof failed: so it isn't done, as after any other error.
         if !self.proof_errors.is_empty() {

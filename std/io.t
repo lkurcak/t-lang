@@ -146,7 +146,7 @@ impl Read for Stdin {
         let r = self.os_read(buf);
         match failure(r) {
             Some(e) => Err(e),
-            None => Ok(wrap(r)),
+            None => counted(r, buf.len()),
         }
     }
 }
@@ -295,6 +295,15 @@ pub fn failure(r: u64) -> Option<Error> {
         _ => ErrorKind::Other,
     };
     Some(Error::os(kind, wrap(r & 0x7FFFFFFF)))
+}
+
+/// How many bytes a read of the operating system's says it read, `r`,
+/// into a buffer `len` long: no more, which `Read::read` promises. The
+/// operating system never says more; if it did, that's an `Other` error,
+/// rather than something trusted.
+pub fn counted(r: u64, len: usize) -> Result<{ n: usize | n <= len }, Error> {
+    let n: usize = wrap(r);
+    if n <= len { Ok(n) } else { Err(Error::new(ErrorKind::Other)) }
 }
 
 /// The error `r` says, as `failure` reads it, from an intrinsic that

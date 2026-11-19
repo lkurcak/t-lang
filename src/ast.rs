@@ -85,6 +85,19 @@ pub struct Measures {
     /// aren't integers or `bool`s, which are equal if they're the same
     /// value, as the logic sees values (see docs/85-values-in-predicates.md).
     pub values: std::collections::HashSet<NodeId>,
+    /// By the node of a measure's call, in a predicate or a measure's
+    /// body: the type of what it's a measure of, its `Self`, as it's
+    /// written there, in terms of that signature's or impl's type
+    /// parameters. A trait's measure is the impl's for that type, which
+    /// monomorphisation finds (see docs/86-trait-contracts.md).
+    pub recv: std::collections::HashMap<NodeId, crate::types::Type>,
+    /// The measures that are traits' methods, by symbol: the trait, and
+    /// the method's name.
+    pub of_trait: std::collections::HashMap<String, (String, String)>,
+    /// The measures what each is depends on the type it's of: traits',
+    /// and those whose bodies call one, maybe of a value of one of their
+    /// type parameters' types (`Checker::depends_on_type`).
+    pub typed: std::collections::HashSet<String>,
 }
 
 /// One node of the way to the values at a position of a value (see

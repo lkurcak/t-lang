@@ -134,11 +134,12 @@ use super::typed::Res;
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::traits::{INT, SIGNED, UNSIGNED};
-use crate::types::{IntTy, Type, all_fields, struct_fields};
+use crate::types::{IntTy, Subst, Type, all_fields, struct_fields};
 use diagnostics::Invalidation;
 pub(super) use diagnostics::ProofFailure;
 use logic::{Failure, Formula, Kind, Lin, Var};
 use std::collections::{HashMap, HashSet};
+use std::rc::Rc;
 
 /// The refinements written in a type that can have them, the whole
 /// value's and those of its type arguments (see
@@ -190,6 +191,10 @@ struct Part {
     /// or array's elements? Then it's what every value there has, which
     /// generic code keeps by parametricity (`targs`).
     carried: bool,
+    /// Of a trait's method's refinement that an impl's has too: what the
+    /// types its measures are of, written in the trait's, are in the
+    /// impl's (`Checker::inherit`, docs/86-trait-contracts.md).
+    scope: Option<std::sync::Arc<crate::types::Subst>>,
 }
 
 impl Part {
@@ -208,6 +213,7 @@ impl Refinement {
                 ways: vec![Vec::new()],
                 path: Vec::new(),
                 carried: false,
+                scope: None,
             }],
             base: None,
         }
@@ -237,6 +243,15 @@ impl Refinement {
     fn preds(&self) -> impl Iterator<Item = &Expr> {
         self.parts.iter().map(|p| &p.pred)
     }
+}
+
+/// How many measures' bodies the walk unfolds, one inside another
+/// (`Walk::unfolding`).
+const UNFOLD_DEPTH: usize = 16;
+
+/// Does `t` have a type parameter in it?
+fn has_params(t: &Type) -> bool {
+    matches!(t, Type::Param(..)) || t.parts().any(has_params)
 }
 
 /// The symbol of `str::len`, the measure.
@@ -295,6 +310,23 @@ pub(super) struct RefinedSig {
     /// The lend-framed parameters (`lend_framed`), each with the type
     /// parameters its result can write values of.
     framed: Framed,
+    /// Of an impl's method that refines a parameter itself, so asks less
+    /// than its trait's: the trait, what its method asks of each parameter,
+    /// and which the impl's refines, which the walk of its body proves is
+    /// enough for what it asks (D1 of docs/86-trait-contracts.md).
+    asked: Option<Asked>,
+}
+
+/// What a trait's method asks of an impl's that refines a parameter
+/// itself (`RefinedSig::asked`).
+#[derive(Debug, Clone)]
+pub(super) struct Asked {
+    /// The trait.
+    tr: String,
+    /// What it asks of each parameter.
+    params: Vec<Option<Refinement>>,
+    /// Which parameters the impl's method refines itself.
+    own: Vec<bool>,
 }
 
 /// The refinements of a struct's fields, by the struct's symbol
@@ -474,6 +506,14 @@ pub(super) struct Measure {
     /// Does its body read a field? If not, it's only other measures, so
     /// it can be its body anywhere, without seeing what its module hides.
     reads_fields: bool,
+    /// The trait it's a method of, if it's a trait's: then its `body` is
+    /// the trait's default, if it has one, and at a type that has an impl
+    /// of the trait, it's the impl's (docs/86-trait-contracts.md).
+    of_trait: Option<String>,
+    /// The measures its body calls of `self` itself, not of a field of it:
+    /// what a call of it can come back to on the same value, and so must
+    /// not, for it to end (`Checker::measure_loops`).
+    self_uses: Vec<String>,
 }
 
 /// A signature's or a struct's refinements, to be checked once every
@@ -484,11 +524,7 @@ pub(super) enum Pending {
         f: Box<FnDecl>,
         params: Vec<Type>,
         ret: Type,
-        /// May its parameters have refinements? Not in a trait's methods,
-        /// nor an impl's of one.
-        allowed: bool,
-        /// May its result, and `ensures`? Not in a trait's methods.
-        results: bool,
+        kind: SigKind,
         owner: (String, String),
         /// Its const parameters, and its impl's, as declared.
         consts: Vec<Ident>,
@@ -504,6 +540,23 @@ pub(super) enum Pending {
     /// A refinement alias, by symbol: what it stands for is checked where
     /// it's declared, for any arguments (D1 of docs/67-refinement-aliases.md).
     Alias(String),
+}
+
+/// What a signature is of, which says how far its refinements are seen
+/// (`Checker::pred_reach`).
+#[derive(Debug, Clone, Copy)]
+pub(super) enum SigKind {
+    /// A function's, or an inherent method's: as far as it is.
+    Own,
+    /// A trait's method's: as far as the trait is, its visibility here, as
+    /// each impl's method has them too (docs/86-trait-contracts.md).
+    Trait(Vis),
+    /// An impl's method of a trait: everywhere, as an impl is seen wherever
+    /// its trait and type are. But one of `DiscardWhen`'s, whose `self` is
+    /// refined, which each drop that calls it proves (lemma W1 of
+    /// docs/80-discard-when.md): as far as it is, as no call through the
+    /// trait is made.
+    Impl { discard_when: bool },
 }
 
 /// What a name in a predicate is.
@@ -546,14 +599,14 @@ struct PredPlace {
 impl Checker {
     /// Checks the refinements in the signature of `f`, whose parameters
     /// and result have the types `params` and `ret` without them, and
-    /// keeps them. `allowed` is false in a trait's methods and an impl's
-    /// for a trait, which can't have any.
+    /// keeps them. `own` is false in a trait's methods and an impl's for a
+    /// trait, whose are the trait's too (docs/86-trait-contracts.md).
     pub(super) fn refined_signature(
         &mut self,
         f: &FnDecl,
         params: &[Type],
         ret: &Type,
-        allowed: bool,
+        own: bool,
     ) -> Result<(), Error> {
         // `Self` is the impl's type, in an impl's method.
         let (params, ret) = match &self.sig_self {
@@ -583,17 +636,19 @@ impl Checker {
                 .filter(|p| f.generics.is_const(p))
                 .cloned(),
         );
-        // An impl's method of a trait can say more of what it gives than
-        // the trait does, for the calls known to be of it. An impl of
-        // `DiscardWhen`'s `discard` has its `self` refined, which each drop
-        // that calls it proves (lemma W1 of docs/80-discard-when.md).
-        let results = allowed || self.sig_self.is_some();
+        let kind = match (own, &self.sig_self, &self.sig_trait) {
+            (true, ..) => SigKind::Own,
+            (false, Some(_), _) => SigKind::Impl {
+                discard_when: self.sig_discard_when,
+            },
+            (false, None, Some((_, vis, _))) => SigKind::Trait(*vis),
+            (false, None, None) => unreachable!("a trait's method is checked with its trait's"),
+        };
         self.pending_refined.push(Pending::Sig {
             f: Box::new(f.clone()),
             params: params.to_vec(),
             ret: ret.clone(),
-            allowed: allowed || self.sig_discard_when,
-            results,
+            kind,
             owner: self.sig_owner.clone(),
             consts,
         });
@@ -648,24 +703,23 @@ impl Checker {
                     f,
                     params,
                     ret,
-                    allowed,
-                    results,
+                    kind,
                     owner,
                     consts,
                 } => {
                     let id = self.fns.iter().position(|d| d.symbol == owner.0);
                     self.pred_owner = id.map(super::scope::FnId);
-                    self.sig_owner = owner;
                     self.module = f.module;
                     // What its type parameters implement: a `T: Int`'s
-                    // values are integers to a predicate.
-                    let env = match id {
-                        Some(id) => self.fns[id].scheme.preds.clone(),
+                    // values are integers to a predicate, and a trait's
+                    // method's `Self` has the trait's measures.
+                    let env = match self.scheme_of(&owner.0) {
+                        Some(scheme) => scheme.preds.clone(),
                         None => Vec::new(),
                     };
+                    self.sig_owner = owner;
                     let outer = std::mem::replace(&mut self.adts.proj.env, env);
-                    let checked =
-                        self.sig_refinements(&f, &params, &ret, (allowed, results), &consts);
+                    let checked = self.sig_refinements(&f, &params, &ret, kind, &consts);
                     self.adts.proj.env = outer;
                     checked?;
                 }
@@ -686,6 +740,347 @@ impl Checker {
             }
         }
         Ok(())
+    }
+
+    /// Gives each impl's method of a trait its trait's contract (D1 of
+    /// docs/86-trait-contracts.md, lemma B1): a parameter it doesn't refine
+    /// has the trait's refinement, and what its result and `ensures` say
+    /// adds to what the trait's do. So its body is checked to keep the
+    /// trait's promises, for every call through the trait, and a call
+    /// known to be of it learns both. One that refines a parameter keeps
+    /// what the trait asks (`RefinedSig::asked`), which must be enough.
+    pub(super) fn inherit_contracts(&mut self) -> Result<(), Error> {
+        let mut work = Vec::new();
+        for d in &self.traits.impls {
+            let Some(tr) = &d.trait_name else {
+                continue;
+            };
+            // Its `discard`'s refined `self` is proved at each drop that
+            // calls it (lemma W1 of docs/80-discard-when.md), never through
+            // the trait.
+            if tr == crate::traits::DISCARD_WHEN {
+                continue;
+            }
+            for (name, symbol) in &d.methods {
+                let Some(m) = self.traits.method(tr, name) else {
+                    continue;
+                };
+                // One that asks something itself must be checked against
+                // its trait's, even one that asks nothing.
+                let asks = (self.refined.get(symbol))
+                    .is_some_and(|sig| sig.params.iter().any(Option::is_some));
+                if self.refined.contains_key(&m.symbol) || asks {
+                    let impl_params = d.params.as_slice().len();
+                    let ty = d.self_ty.clone();
+                    work.push((
+                        tr.clone(),
+                        ty,
+                        impl_params,
+                        m.symbol.clone(),
+                        symbol.clone(),
+                    ));
+                }
+            }
+        }
+        for (tr, self_ty, impl_params, trait_symbol, symbol) in work {
+            self.inherit(&tr, &self_ty, impl_params, &trait_symbol, &symbol)?;
+        }
+        Ok(())
+    }
+
+    /// Checks each impl's method of a trait's measure is a measure too, and
+    /// only those are (D2 of docs/86-trait-contracts.md): a predicate that
+    /// calls one through the trait is of the impl's, which must then be a
+    /// function of the value, as a measure is (lemma B2). Not yet of a
+    /// slice or a string, whose measures are of the reference to it.
+    pub(super) fn impl_measures(&self) -> Result<(), Error> {
+        for d in &self.traits.impls {
+            let Some(tr) = &d.trait_name else {
+                continue;
+            };
+            for (name, symbol) in &d.methods {
+                let Some(m) = self.traits.method(tr, name) else {
+                    continue;
+                };
+                let theirs = self.measures.contains_key(&m.symbol);
+                let mine = self.measures.contains_key(symbol);
+                let Some(f) = self.fn_def(symbol) else {
+                    continue;
+                };
+                let ty = &d.self_ty;
+                let err = |what: String| Err(Error::ty(f.name.span, what));
+                match (theirs, mine) {
+                    (true, false) => {
+                        return err(format!(
+                            "`{name}` is a measure in trait `{tr}`, so `{ty}`'s must be one too: \
+                             mark it `#[measure]`, and give it a measure's body"
+                        ));
+                    }
+                    (false, true) => {
+                        return err(format!(
+                            "`{name}` isn't a measure in trait `{tr}`, so `{ty}`'s can't be one: \
+                             a predicate couldn't call it through the trait"
+                        ));
+                    }
+                    (true, true) if matches!(ty, Type::Slice(_) | Type::Str) => {
+                        return err(format!(
+                            "a trait's measure can't be implemented for `{ty}` yet: its measures \
+                             are of the reference to it"
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Fills `Measures::of_trait` and `Measures::typed`, for
+    /// monomorphisation.
+    pub(super) fn measure_tables(&mut self) {
+        let mut of_trait = HashMap::new();
+        let mut typed = HashSet::new();
+        for (symbol, m) in &self.measures {
+            if let Some(tr) = &m.of_trait {
+                of_trait.insert(symbol.clone(), (tr.clone(), m.name.clone()));
+            }
+            if self.depends_on_type(symbol) {
+                typed.insert(symbol.clone());
+            }
+        }
+        self.info.measures.of_trait = of_trait;
+        self.info.measures.typed = typed;
+    }
+
+    /// Does what measure `symbol` is depend on the type it's of: is it a
+    /// trait's, or does its body call one, of a field whose type is one of
+    /// its impl's type parameters, say?
+    pub(super) fn depends_on_type(&self, symbol: &str) -> bool {
+        self.depends_on_type_past(symbol, &mut Vec::new())
+    }
+
+    /// `depends_on_type`, past the measures on `seen`: a program refused
+    /// for a measure defined by itself (`measure_body`) may have a circle.
+    fn depends_on_type_past<'s>(&'s self, symbol: &'s str, seen: &mut Vec<&'s str>) -> bool {
+        let Some(m) = self.measures.get(symbol) else {
+            return false;
+        };
+        if m.of_trait.is_some() {
+            return true;
+        }
+        seen.push(symbol);
+        (m.uses.iter()).any(|u| !seen.contains(&u.as_str()) && self.depends_on_type_past(u, seen))
+    }
+
+    /// Checks no measure of an impl of a trait comes back to itself on the
+    /// same value: a call of a trait's measure of `self` is the impl's, at
+    /// the impl's type, so `size` calling `self.empty()`, a default calling
+    /// `self.size()`, would never end. Calls of a field's measures are of
+    /// a smaller value, which do.
+    pub(super) fn measure_loops(&self) -> Result<(), Error> {
+        for d in &self.traits.impls {
+            let Some(tr) = &d.trait_name else {
+                continue;
+            };
+            let Some(t) = self.traits.traits.get(tr) else {
+                continue;
+            };
+            for m in &t.methods {
+                if !self.measures.contains_key(&m.symbol) {
+                    continue;
+                }
+                let start = self.measure_at(&m.symbol, &d.self_ty);
+                let mut path = vec![start.clone()];
+                if let Some(back) = self.self_loop(&d.self_ty, &mut path) {
+                    let span = (d.methods.iter().find(|(n, _)| *n == m.name))
+                        .and_then(|(_, s)| self.fn_def(s))
+                        .map(|f| f.name.span)
+                        .or(m.span)
+                        .unwrap_or(Span::new(0, 0));
+                    return Err(Error::ty(
+                        span,
+                        format!(
+                            "measure `{}` of `{}` calls itself on the same value, through `{}`: \
+                             it would never end",
+                            m.name, d.self_ty, self.measures[&back].name
+                        ),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Measure `symbol` of a value of type `ty`: the impl's, if it's a
+    /// trait's and `ty` has an impl of the trait with its own, or else
+    /// itself.
+    fn measure_at(&self, symbol: &str, ty: &Type) -> String {
+        let Some(tr) = self.measures.get(symbol).and_then(|m| m.of_trait.as_ref()) else {
+            return symbol.to_string();
+        };
+        let name = &self.measures[symbol].name;
+        match self.traits.select(ty, Some(tr), &[]) {
+            Some((i, _)) => (self.traits.impls[i].methods.iter())
+                .find(|(n, _)| n == name)
+                .map_or(symbol.to_string(), |(_, s)| s.clone()),
+            None => symbol.to_string(),
+        }
+    }
+
+    /// A measure the last of `path`, of a value of type `ty`, calls of
+    /// that value that's already on `path`, if there is one.
+    fn self_loop(&self, ty: &Type, path: &mut Vec<String>) -> Option<String> {
+        let last = path.last().expect("not empty").clone();
+        let uses = self.measures.get(&last).map(|m| m.self_uses.clone());
+        for u in uses.unwrap_or_default() {
+            let u = self.measure_at(&u, ty);
+            if path.contains(&u) {
+                return Some(last);
+            }
+            path.push(u);
+            if let Some(found) = self.self_loop(ty, path) {
+                return Some(found);
+            }
+            path.pop();
+        }
+        None
+    }
+
+    /// Gives impl method `symbol`, of trait `tr`'s method `trait_symbol`,
+    /// for `self_ty`, with `impl_params` type parameters of its impl's,
+    /// what the trait's says (`inherit_contracts`).
+    fn inherit(
+        &mut self,
+        tr: &str,
+        self_ty: &Type,
+        impl_params: usize,
+        trait_symbol: &str,
+        symbol: &str,
+    ) -> Result<(), Error> {
+        let theirs = match self.refined.get(trait_symbol) {
+            Some(sig) => sig.clone(),
+            None => self.fresh_sig(trait_symbol),
+        };
+        let (Some(their_scheme), Some(def)) = (self.scheme_of(trait_symbol), self.fn_def(symbol))
+        else {
+            return Ok(());
+        };
+        let (their_scheme, my_scheme) = (their_scheme.clone(), def.scheme.clone());
+        // What's in the trait's method's signature, in the impl's: its
+        // `Self` is the impl's type, and its own type parameters are the
+        // impl's method's, in order (step 70 checked they line up).
+        let their_own: Vec<String> = (their_scheme.params.as_slice().iter())
+            .filter(|p| *p != "Self")
+            .cloned()
+            .collect();
+        let mine = my_scheme.params.clone();
+        let my_own = &mine.as_slice()[impl_params.min(mine.as_slice().len())..];
+        if their_own.len() != my_own.len() {
+            return Ok(());
+        }
+        let mut names = vec!["Self".to_string()];
+        names.extend(their_own);
+        let mut args = vec![self_ty.clone()];
+        args.extend(
+            my_own
+                .iter()
+                .map(|p| Type::Param(p.clone(), mine.is_unsized(p))),
+        );
+        let subst = crate::types::Subst::new(&names, &args);
+        let env = std::mem::replace(&mut self.adts.proj.env, my_scheme.preds.clone());
+        let scope = std::sync::Arc::new(subst.clone());
+        let translate = |c: &Checker, r: &Refinement| Refinement {
+            parts: (r.parts.iter())
+                .map(|p| Part {
+                    scope: Some(match &p.scope {
+                        Some(_) => unreachable!("a trait's method's refinement is its own"),
+                        None => scope.clone(),
+                    }),
+                    ..p.clone()
+                })
+                .collect(),
+            base: (r.base.as_ref()).map(|b| c.adts.normalise(&subst.apply(b))),
+        };
+        let params: Vec<Option<Refinement>> = (theirs.params.iter())
+            .map(|r| r.as_ref().map(|r| translate(self, r)))
+            .collect();
+        let ret = theirs.ret.as_ref().map(|r| translate(self, r));
+        let ensures: Vec<Refinement> = theirs.ensures.iter().map(|r| translate(self, r)).collect();
+        self.adts.proj.env = env;
+        let mut sig = match self.refined.remove(symbol) {
+            Some(sig) => sig,
+            None => self.fresh_sig(symbol),
+        };
+        // What the trait promises of what's behind a `&mut` parameter at
+        // return is about when it's done with it, only if the impl's is
+        // done with it then too, as the trait's is.
+        let promises = ret.is_some() || !ensures.is_empty();
+        if promises
+            && let Some(j) = (theirs.scoped.iter().zip(&sig.scoped)).position(|(t, m)| *t && !*m)
+        {
+            let span = self.fn_def(symbol).expect("an impl's method").name.span;
+            return Err(Error::ty(
+                span,
+                format!(
+                    "`{}` can't keep what trait `{tr}`'s promises of what's behind `{}` at \
+                     return: what it gives back may still borrow it",
+                    sig.name,
+                    sig.names.get(j).map_or("its parameter", String::as_str)
+                ),
+            ));
+        }
+        if sig.params.iter().any(Option::is_some) {
+            sig.asked = Some(Asked {
+                tr: tr.to_string(),
+                params: params.clone(),
+                own: sig.params.iter().map(Option::is_some).collect(),
+            });
+        }
+        for (mine, theirs) in sig.params.iter_mut().zip(params) {
+            if mine.is_none() {
+                *mine = theirs;
+            }
+        }
+        sig.ret = match (sig.ret.take(), ret) {
+            (Some(mut mine), Some(theirs)) => {
+                mine.parts.extend(theirs.parts);
+                Some(mine)
+            }
+            (mine, theirs) => mine.or(theirs),
+        };
+        sig.ensures.extend(ensures);
+        self.refined.insert(symbol.to_string(), sig);
+        Ok(())
+    }
+
+    /// The refinements of function `symbol`'s signature, with none in it:
+    /// for an impl's method that writes none, to inherit its trait's.
+    fn fresh_sig(&self, symbol: &str) -> RefinedSig {
+        let scheme = self.scheme_of(symbol).expect("a function").clone();
+        let (name, names) = match self.fn_def(symbol) {
+            Some(def) => (def.name.name.clone(), def.params.clone()),
+            None => (symbol.to_string(), Vec::new()),
+        };
+        let (params, ret) = match &scheme.ty {
+            Type::Fn(sig) => (sig.params.clone(), (*sig.ret).clone()),
+            _ => (Vec::new(), Type::Unit),
+        };
+        let scoped = call_scoped(&params, &ret, &scheme.bounds);
+        let own = (self.traits.impls.iter())
+            .find(|d| d.methods.iter().any(|(_, s)| s == symbol))
+            .and_then(|d| Some((&d.self_ty, d.trait_name.as_deref()?)));
+        let framed = lend_framed(&self.adts, &scheme, own, &scoped);
+        RefinedSig {
+            name,
+            names,
+            type_params: scheme.params.to_vec(),
+            params: vec![None; params.len()],
+            ret: None,
+            ensures: Vec::new(),
+            scoped,
+            framed,
+            asked: None,
+        }
     }
 
     /// The free type parameters of function `symbol` (see
@@ -723,26 +1118,29 @@ impl Checker {
             .collect()
     }
 
-    /// Checks the refinements of `f`'s signature, and keeps them: of its
-    /// parameters only if `allowed.0`, and of its result, and what it
-    /// ensures, only if `allowed.1` (see `Pending::Sig`).
+    /// The scheme of function `symbol`, if the checker has seen it: a
+    /// function's, or a trait's method's.
+    fn scheme_of(&self, symbol: &str) -> Option<&super::Scheme> {
+        if let Some(f) = self.fn_def(symbol) {
+            return Some(&f.scheme);
+        }
+        let methods = self.traits.traits.values().flat_map(|t| &t.methods);
+        methods
+            .into_iter()
+            .find(|m| m.symbol == symbol)
+            .map(|m| &m.scheme)
+    }
+
+    /// Checks the refinements of `f`'s signature, of what `kind` says it
+    /// is, and keeps them (see `Pending::Sig`).
     fn sig_refinements(
         &mut self,
         f: &FnDecl,
         params: &[Type],
         ret: &Type,
-        allowed: (bool, bool),
+        kind: SigKind,
         consts: &[Ident],
     ) -> Result<(), Error> {
-        if !allowed.1
-            && let Some(e) = f.ensures.first()
-        {
-            return Err(Error::ty(
-                e.span,
-                "`ensures` can't be on a trait's methods yet: an impl's would have to promise no \
-                 less",
-            ));
-        }
         let params_written: Vec<TypeExpr> =
             f.params.iter().map(|p| self.written_out(&p.ty)).collect();
         let ret_written = self.written_out(&f.ret);
@@ -755,26 +1153,13 @@ impl Checker {
         if param.is_none() && result.is_none() && f.ensures.is_empty() {
             return Ok(());
         }
-        if let (false, Some(first)) = (allowed.1, param.or(result)) {
-            return Err(Error::ty(
-                first.span,
-                "refinements can't be in a trait's methods yet: an impl's would have to ask no \
-                 more than the trait's, and promise no less",
-            ));
-        }
-        if let (false, Some(first)) = (allowed.0, param) {
-            return Err(Error::ty(
-                first.span,
-                "an impl's method of a trait can't have refined parameters: a call through the \
-                 trait wouldn't check them (its result can say more, and it can ensure more)",
-            ));
-        }
-        let type_params = match self.pred_owner {
-            Some(id) => self.fns[id.0].scheme.params.to_vec(),
+        let scheme = self.scheme_of(&self.sig_owner.0).cloned();
+        let type_params = match &scheme {
+            Some(scheme) => scheme.params.to_vec(),
             None => Vec::new(),
         };
-        let bounds = match self.pred_owner {
-            Some(id) => self.fns[id.0].scheme.bounds.clone(),
+        let bounds = match &scheme {
+            Some(scheme) => scheme.bounds.clone(),
             None => Vec::new(),
         };
         let mut sig = RefinedSig {
@@ -786,6 +1171,7 @@ impl Checker {
             ensures: Vec::new(),
             scoped: call_scoped(params, ret, &bounds),
             framed: Vec::new(),
+            asked: None,
         };
         // An intrinsic's postconditions are trusted, and may say what's
         // behind a `&mut` whose borrow outlives the call: what it is when
@@ -803,31 +1189,39 @@ impl Checker {
         // the measures free in what it can write (`lend_framed`), which is
         // proved, not trusted.
         if f.intrinsic.is_none()
-            && let Some(id) = self.pred_owner
+            && let Some(scheme) = &scheme
         {
-            let symbol = self.fns[id.0].symbol.clone();
+            let symbol = &self.sig_owner.0;
             let own = (self.traits.impls.iter())
-                .find(|d| d.methods.iter().any(|(_, s)| *s == symbol))
+                .find(|d| d.methods.iter().any(|(_, s)| s == symbol))
                 .and_then(|d| Some((&d.self_ty, d.trait_name.as_deref()?)));
-            sig.framed = lend_framed(&self.adts, &self.fns[id.0].scheme, own, &sig.scoped);
+            sig.framed = lend_framed(&self.adts, scheme, own, &sig.scoped);
         }
         // What it's seen as far as, which the fields its refinements name
         // must be too: its own visibility, or for an impl's method of a
         // trait, everywhere, as an impl is seen wherever its trait and type
         // are named.
-        self.pred_reach = match allowed.0 {
-            true => match f.vis {
-                Vis::Private => None,
-                Vis::Pub(_) => Some((
-                    format!("`{}` is public, but its refinement names", f.name.name),
-                    Level::Package,
-                )),
-                Vis::Export(_) => Some((
-                    format!("`{}` is exported, but its refinement names", f.name.name),
-                    Level::Export,
-                )),
-            },
-            false => Some((
+        let reach = |vis: Vis, what: &str| match vis {
+            Vis::Private => None,
+            Vis::Pub(_) => Some((
+                format!("{what} is public, but its refinement names"),
+                Level::Package,
+            )),
+            Vis::Export(_) => Some((
+                format!("{what} is exported, but its refinement names"),
+                Level::Export,
+            )),
+        };
+        self.pred_reach = match kind {
+            SigKind::Own => reach(f.vis, &format!("`{}`", f.name.name)),
+            SigKind::Trait(vis) => reach(
+                vis,
+                &format!("`{}`, a trait's method, whose trait", f.name.name),
+            ),
+            SigKind::Impl { discard_when: true } => reach(f.vis, &format!("`{}`", f.name.name)),
+            SigKind::Impl {
+                discard_when: false,
+            } => Some((
                 format!(
                     "`{}` is an impl's method of a trait, seen wherever the impl is, but its \
                      refinement names",
@@ -1354,6 +1748,7 @@ impl Checker {
                 ways,
                 path,
                 carried,
+                scope: None,
             });
         }
         Ok(Some(Refinement {
@@ -1714,13 +2109,25 @@ impl Checker {
             }
             ExprKind::MethodCall(x, m, targs, args) if targs.is_empty() && args.is_empty() => {
                 let mut at = self.pred_place(x, scope)?;
-                let (symbol, derefs, through_mut) = self.find_measure(&at.ty, m)?;
+                let (symbol, derefs, through_mut, of) = self.find_measure(&at.ty, m)?;
+                self.info.measures.recv.insert(e.id, of);
                 at.through_mut |= through_mut;
                 self.pred_mutable(x.span, &at, "a measure", Some(&symbol))?;
                 if at.through_mut {
                     self.info.measures.behind_mut.insert(e.id);
                 }
                 let ret = self.measures[&symbol].ret.clone();
+                // A trait's, with no default, is no function here: it's
+                // its trait's method, as a call of it is.
+                if self.fn_position(&symbol).is_none()
+                    && let Some(d) = (self.traits.traits.values())
+                        .flat_map(|t| &t.methods)
+                        .find(|d| d.symbol == symbol)
+                {
+                    let (ty, def) = (d.scheme.ty.clone(), d.span);
+                    let kind = super::NoteKind::Fn(m.name.clone());
+                    self.note(m.span, kind, Some(ty), def);
+                }
                 if let Some(i) = self.fn_position(&symbol) {
                     let (ty, def) = (self.fns[i].scheme.ty.clone(), self.fns[i].name.span);
                     let kind = super::NoteKind::Fn(m.name.clone());
@@ -2126,11 +2533,15 @@ impl Checker {
     /// reference to it, which says how long it is, so the last `*` before
     /// one doesn't count: what's written through a `&mut [T]` can't change
     /// that.
-    fn find_measure(&self, ty: &Type, m: &Ident) -> Result<(String, usize, bool), Error> {
+    fn find_measure(&self, ty: &Type, m: &Ident) -> Result<(String, usize, bool, Type), Error> {
         let mut t = self.solved(ty);
         let mut muts: Vec<bool> = Vec::new();
         loop {
-            if let Some(symbol) = self.inherent_named(&t, &m.name) {
+            let found = match self.inherent_named(&t, &m.name) {
+                Some(symbol) => Some(symbol),
+                None => self.trait_measure(&t, m)?,
+            };
+            if let Some(symbol) = found {
                 let Some(measure) = self.measures.get(&symbol) else {
                     break;
                 };
@@ -2152,7 +2563,7 @@ impl Checker {
                         ),
                     ));
                 }
-                return Ok((symbol, muts.len(), through_mut));
+                return Ok((symbol, muts.len(), through_mut, t));
             }
             t = match t {
                 Type::Ref(_, mutable, inner) => {
@@ -2174,6 +2585,61 @@ impl Checker {
                 self.pred_a()
             ),
         ))
+    }
+
+    /// The measure `m` of a trait's that a value of type `ty` has, if one
+    /// does: of a trait its bounds say it implements, for a type parameter
+    /// or a projection, or else of a trait in scope that it implements.
+    /// Its symbol is the trait's: which impl's it is, is the walk's and
+    /// monomorphisation's to find, at the type it's of there
+    /// (docs/86-trait-contracts.md).
+    fn trait_measure(&self, ty: &Type, m: &Ident) -> Result<Option<String>, Error> {
+        let traits: Vec<String> = match ty {
+            Type::Param(..) | Type::Proj(..) | Type::Opaque(..) => {
+                let mut bounds: Vec<String> = (self.adts.proj.env.iter())
+                    .filter(|p| p.ty == *ty)
+                    .map(|p| p.trait_name.clone())
+                    .collect();
+                if let Type::Proj(_, of, a) = ty
+                    && let Some(d) = self.traits.traits[of].assoc.iter().find(|d| d.name == *a)
+                {
+                    bounds.extend(d.bounds.iter().cloned());
+                }
+                if let Type::Opaque(symbol, ..) = ty
+                    && let Some(o) = self.traits.opaques.get(symbol)
+                {
+                    bounds.extend(o.preds.iter().map(|p| p.trait_name.clone()));
+                }
+                bounds.iter().flat_map(|b| self.traits.implied(b)).collect()
+            }
+            _ => (self.traits.traits.keys())
+                .filter(|tr| self.modules.trait_in_scope(self.module, tr))
+                .filter(|tr| {
+                    let (env, local) = (&self.adts.proj.env, &self.adts.proj.local);
+                    self.traits.implements(ty, tr, env, local).is_ok()
+                })
+                .cloned()
+                .collect(),
+        };
+        let mut found: Vec<String> = (traits.iter())
+            .filter_map(|tr| self.traits.method(tr, &m.name))
+            .map(|d| d.symbol.clone())
+            .filter(|s| self.measures.contains_key(s))
+            .collect();
+        found.sort();
+        found.dedup();
+        match &found[..] {
+            [] => Ok(None),
+            [one] => Ok(Some(one.clone())),
+            _ => Err(Error::ty(
+                m.span,
+                format!(
+                    "`{}` is a measure of several traits `{ty}` implements: which one is meant \
+                     can't be said in a predicate yet",
+                    m.name
+                ),
+            )),
+        }
     }
 
     /// Checks the signature of measure `f`, whose parameters and result
@@ -2209,18 +2675,25 @@ impl Checker {
                 format!("a measure gives an integer or a `bool`, not `{ret}`"),
             ));
         }
-        let body = f.intrinsic.is_none().then(|| f.body.clone());
+        // A trait's, with no default, has no body: it's each impl's.
+        let of_trait = self.sig_trait.as_ref().map(|(tr, ..)| tr.clone());
+        let abstract_ = matches!(self.sig_trait, Some((.., false)));
+        let body = (f.intrinsic.is_none() && !abstract_).then(|| f.body.clone());
         let symbol = self.sig_owner.0.clone();
-        self.info.measures.bodies.insert(symbol, body);
+        if !abstract_ {
+            self.info.measures.bodies.insert(symbol, body.clone());
+        }
         let measure = Measure {
             name: f.name.name.clone(),
             ret,
             module: f.module,
-            body: f.intrinsic.is_none().then(|| f.body.clone()),
+            body,
             unsized_self: matches!(of, Type::Slice(_) | Type::Str),
             of_array: matches!(of, Type::Array(..)) && f.intrinsic.is_some(),
             uses: Vec::new(),
             reads_fields: true,
+            of_trait,
+            self_uses: Vec::new(),
         };
         self.measures.insert(self.sig_owner.0.clone(), measure);
         Ok(())
@@ -2237,6 +2710,16 @@ impl Checker {
         };
         self.measure_term(term, false, &mut uses)?;
         uses.dedup();
+        // The measures it calls of `self` itself.
+        let mut self_uses = Vec::new();
+        each_expr(term, &mut |e| {
+            if let ExprKind::MethodCall(x, ..) = &e.kind
+                && matches!(&x.kind, ExprKind::Var(n, _) if n == "self")
+                && let Some((s, ..)) = self.info.measures.calls.get(&e.id)
+            {
+                self_uses.push(s.clone());
+            }
+        });
         let mut reads_fields = false;
         each_expr(term, &mut |e| {
             reads_fields |= matches!(e.kind, ExprKind::Field(..))
@@ -2244,6 +2727,7 @@ impl Checker {
         let m = self.measures.get_mut(symbol).expect("a measure");
         m.uses = uses;
         m.reads_fields = reads_fields;
+        m.self_uses = self_uses;
         // Measures are checked one at a time, so a cycle is found once the
         // last of it is.
         let mut path = vec![symbol.to_string()];
@@ -2316,7 +2800,14 @@ impl Checker {
         match &e.kind {
             ExprKind::Int(..) | ExprKind::Bool(_) => Ok(()),
             ExprKind::Var(name, _) if name == "self" && receiver => Ok(()),
-            ExprKind::Field(x, _) => self.measure_term(x, true, uses),
+            ExprKind::Field(x, _) => {
+                if let Some(t) = self.typed.exprs.get(&x.id)
+                    && self.derefs_mut(t, None, false)
+                {
+                    return Err(Self::measure_through_mut(x.span));
+                }
+                self.measure_term(x, true, uses)
+            }
             ExprKind::MethodCall(x, m, targs, args) if targs.is_empty() && args.is_empty() => {
                 let symbol = match self.typed.methods.get(&e.id) {
                     Some((Res::Fn(s, _), ..)) if self.measures.contains_key(s) => s.clone(),
@@ -2332,6 +2823,14 @@ impl Checker {
                     }
                 };
                 let (_, derefs, by) = self.typed.methods[&e.id].clone();
+                let unsized_self = self.measures[&symbol].unsized_self;
+                if let Some(t) = self.typed.exprs.get(&x.id) {
+                    if self.derefs_mut(t, Some(derefs), unsized_self) {
+                        return Err(Self::measure_through_mut(x.span));
+                    }
+                    let of = self.peeled(t, derefs);
+                    self.info.measures.recv.insert(e.id, of);
+                }
                 self.info
                     .measures
                     .calls
@@ -2375,6 +2874,56 @@ impl Checker {
             }
             _ => Err(bad()),
         }
+    }
+
+    /// Whether getting to what a value of type `ty` points to, through `n`
+    /// references and boxes, or all of them, goes through a `&mut`'s `*`:
+    /// but for the last one before a slice or a string, if `unsized_self`,
+    /// as a measure of one is of the reference (`find_measure`).
+    fn derefs_mut(&self, ty: &Type, n: Option<usize>, unsized_self: bool) -> bool {
+        let mut t = self.solved(ty);
+        let mut muts = Vec::new();
+        while n.is_none_or(|n| muts.len() < n) {
+            t = match t {
+                Type::Ref(_, mutable, inner) => {
+                    muts.push(mutable);
+                    self.solved(&inner)
+                }
+                Type::Box(inner) => {
+                    muts.push(false);
+                    self.solved(&inner)
+                }
+                _ => break,
+            };
+        }
+        if unsized_self {
+            muts.pop();
+        }
+        muts.contains(&true)
+    }
+
+    /// What a value of type `ty` points to, through `n` references and
+    /// boxes.
+    fn peeled(&self, ty: &Type, n: usize) -> Type {
+        let mut t = self.solved(ty);
+        for _ in 0..n {
+            t = match t {
+                Type::Ref(_, _, inner) | Type::Box(inner) => self.solved(&inner),
+                t => t,
+            };
+        }
+        t
+    }
+
+    /// A measure's body reading through a `&mut`, at `span`: what's behind
+    /// one can change while the value holding it, which is all a measure
+    /// is a function of, doesn't (lemma H1 of docs/86-trait-contracts.md).
+    fn measure_through_mut(span: Span) -> Error {
+        Error::ty(
+            span,
+            "a measure can't read through a `&mut`: what's behind one can change while the value \
+             holding it stays the same, and a measure is a function of that value",
+        )
     }
 
     /// Checks what the refinements in body `f` need, and works out which
@@ -2451,6 +3000,8 @@ impl Checker {
             trees: HashMap::new(),
             decl: HashMap::new(),
             items: HashMap::new(),
+            pred_types: None,
+            unfolding: Vec::new(),
             moves_of: HashMap::new(),
             lent_trees: HashMap::new(),
             coerced_args: Vec::new(),
@@ -2943,6 +3494,17 @@ struct Outcome {
 /// The pass over one body (see `Checker::refine`).
 struct Walk<'c> {
     cx: &'c Checker,
+    /// While a part of a refinement an impl's method has of its trait's is
+    /// worked out: what the types written in it are in the impl's
+    /// (`Part::scope`).
+    pred_types: Option<std::sync::Arc<Subst>>,
+    /// The measures whose bodies are being unfolded (`measure_with`), and
+    /// the values they're of: one that would be again, of the same value,
+    /// isn't, as it would never end, which `Checker::measure_loops`
+    /// refuses once every measure's body is known; nor is one deeper than
+    /// `UNFOLD_DEPTH`, as a measure of a field of a type that holds itself
+    /// may go on as long as the value does, which the walk doesn't know.
+    unfolding: Vec<(String, Option<Obj>)>,
     /// The proofs that failed, which checking goes on past (`failed`).
     errors: Vec<Error>,
     /// What each variable of the logic stands for, by number.
@@ -3151,7 +3713,7 @@ enum Env<'a> {
     Post(&'a [Val], Option<&'a [Val]>, &'a [(String, Type)]),
     /// A refinement of a type argument's, with the value of each name in
     /// it by node, as it was where it was said (`targs::Closed`).
-    Closed(&'a HashMap<NodeId, Val>),
+    Closed(&'a targs::Closed),
 }
 
 impl Walk<'_> {
@@ -3516,15 +4078,132 @@ impl Walk<'_> {
     /// string's is of the reference, which says how long what it points to
     /// is.
     fn measure(&mut self, symbol: &str, recv: Val) -> Val {
+        self.measure_with(symbol, recv, None)
+    }
+
+    /// What the measure call at node `id`, of measure `symbol`, in a
+    /// predicate whose names are as `env` says, is of: the impl's, for a
+    /// trait's, at the type the value it's of is here; with what its
+    /// body's type parameters are (`resolve_measure`).
+    fn pred_measure(&self, id: NodeId, symbol: &str, env: Env) -> (String, Option<Rc<Subst>>) {
+        let Some(t) = (self.cx.depends_on_type(symbol))
+            .then(|| self.cx.info.measures.recv.get(&id))
+            .flatten()
+        else {
+            return (symbol.to_string(), None);
+        };
+        let mut t = t.clone();
+        let targs: &[(String, Type)] = match env {
+            Env::Closed(c) => {
+                for s in &c.types {
+                    t = s.apply(&t);
+                }
+                &[]
+            }
+            Env::Call(_, targs) | Env::Fields(_, targs) | Env::Post(_, _, targs) => {
+                if let Some(s) = &self.pred_types {
+                    t = s.apply(&t);
+                }
+                targs
+            }
+            Env::Here => {
+                if let Some(s) = &self.pred_types {
+                    t = s.apply(&t);
+                }
+                &[]
+            }
+        };
+        if !targs.is_empty() {
+            let (names, args): (Vec<String>, Vec<Type>) = targs.iter().cloned().unzip();
+            t = Subst::new(&names, &args).apply(&t);
+        }
+        self.resolve_measure(symbol, &self.cx.solved(&t))
+    }
+
+    /// What measure `symbol` of a value of type `ty` (in the walk's own
+    /// terms) is: a trait's is the impl's for `ty`, if `ty` has one with
+    /// its own, or else the trait's, whose default body, if it has one, is
+    /// of `Self` = `ty` (lemma B2 of docs/86-trait-contracts.md). With what
+    /// the type parameters of its body are there, for the measures that
+    /// body calls. At a type parameter, a projection or an `impl` type, the
+    /// impl isn't known, and it's the trait's: what's known of it is what
+    /// was learned, of the value, as of any measure whose body isn't seen.
+    fn resolve_measure(&self, symbol: &str, ty: &Type) -> (String, Option<Rc<Subst>>) {
+        let cx = self.cx;
+        let Some(m) = cx.measures.get(symbol) else {
+            return (symbol.to_string(), None);
+        };
+        fn unknown(t: &Type) -> bool {
+            matches!(t, Type::Var(_) | Type::Inferred(..)) || t.parts().any(unknown)
+        }
+        let open = matches!(ty, Type::Param(..) | Type::Proj(..) | Type::Opaque(..)) || unknown(ty);
+        match &m.of_trait {
+            Some(tr) => {
+                if !open && let Some((i, args)) = cx.traits.select(ty, Some(tr), &[]) {
+                    let d = &cx.traits.impls[i];
+                    if let Some((_, s)) = d.methods.iter().find(|(n, _)| *n == m.name)
+                        && d.params.as_slice().len() == args.len()
+                    {
+                        let types = Subst::new(d.params.as_slice(), &args);
+                        return (s.clone(), Some(Rc::new(types)));
+                    }
+                }
+                let types = Subst::new(&["Self".to_string()], std::slice::from_ref(ty));
+                (symbol.to_string(), Some(Rc::new(types)))
+            }
+            None => {
+                // An inherent one's body is of its impl's type parameters.
+                let d = (cx.traits.impls.iter())
+                    .find(|d| d.trait_name.is_none() && d.methods.iter().any(|(_, s)| s == symbol));
+                let mut found = HashMap::new();
+                match d {
+                    Some(d)
+                        if crate::traits::matches(
+                            &d.self_ty,
+                            ty,
+                            d.params.as_slice(),
+                            &mut found,
+                        ) =>
+                    {
+                        let names = d.params.as_slice();
+                        let args: Option<Vec<Type>> =
+                            names.iter().map(|n| found.get(n).cloned()).collect();
+                        match args {
+                            Some(args) => {
+                                (symbol.to_string(), Some(Rc::new(Subst::new(names, &args))))
+                            }
+                            None => (symbol.to_string(), None),
+                        }
+                    }
+                    _ => (symbol.to_string(), None),
+                }
+            }
+        }
+    }
+
+    /// What measure `symbol` gives of `recv`, as `measure`, with what the
+    /// type parameters of its body are, `types`, if that's known
+    /// (`Walk::resolve_measure`).
+    fn measure_with(&mut self, symbol: &str, recv: Val, types: Option<Rc<Subst>>) -> Val {
         let m = self.cx.measures[symbol].clone();
+        let of = match self.pointee(recv.clone()) {
+            Val::Struct(o, _) | Val::Ref(o, _) | Val::Obj(o) | Val::Array(o, _) => Some(o),
+            _ => None,
+        };
+        let again = (self.unfolding.iter()).any(|(s, o)| s == symbol && (o.is_none() || *o == of));
         if let Some(body) = &m.body
             && (m.module == self.module || !m.reads_fields)
+            && !again
+            && self.unfolding.len() < UNFOLD_DEPTH
         {
             let term = match &body.kind {
                 ExprKind::Block(_, Some(tail)) => &**tail,
                 _ => body,
             };
-            if let Some(v) = self.measure_term(term, &recv) {
+            self.unfolding.push((symbol.to_string(), of));
+            let v = self.measure_term(term, &recv, types.as_deref());
+            self.unfolding.pop();
+            if let Some(v) = v {
                 return v;
             }
         }
@@ -3574,14 +4253,14 @@ impl Walk<'_> {
 
     /// The value of term `e` of a measure's body, whose `self` is `this`,
     /// if the logic can say it.
-    fn measure_term(&mut self, e: &Expr, this: &Val) -> Option<Val> {
+    fn measure_term(&mut self, e: &Expr, this: &Val, types: Option<&Subst>) -> Option<Val> {
         Some(match &e.kind {
             ExprKind::Int(n, _) => Val::Int(Lin::constant(i128::from(*n))),
             ExprKind::Bool(b) => Val::Bool(if *b { Formula::True } else { Formula::False }),
             ExprKind::Var(..) => this.clone(),
             ExprKind::Field(x, _) => {
                 let (derefs, i) = *self.cx.typed.fields.get(&e.id)?;
-                let mut v = self.measure_term(x, this)?;
+                let mut v = self.measure_term(x, this, types)?;
                 for _ in 0..derefs {
                     v = self.pointee(v);
                 }
@@ -3595,26 +4274,43 @@ impl Walk<'_> {
                 else {
                     return None;
                 };
-                let v = self.measure_term(x, this)?;
+                let v = self.measure_term(x, this, types)?;
                 let recv = self.autoref(v, derefs, by);
-                self.measure(&symbol, recv)
+                // What it's of: in the body's terms, which `types` says,
+                // if that's known; a trait's measure of a value of a type
+                // parameter of the body's otherwise says only what's known
+                // of it.
+                let at = (self.cx.depends_on_type(&symbol))
+                    .then(|| self.cx.info.measures.recv.get(&e.id))
+                    .flatten()
+                    .map(|t| self.cx.solved(&types.map_or(t.clone(), |s| s.apply(t))));
+                let (symbol, inner) = match at {
+                    Some(t) if types.is_some() || !has_params(&t) => {
+                        self.resolve_measure(&symbol, &t)
+                    }
+                    _ => (symbol, None),
+                };
+                self.measure_with(&symbol, recv, inner)
             }
-            ExprKind::Unary(UnOp::Neg, x) => match self.measure_term(x, this)? {
+            ExprKind::Unary(UnOp::Neg, x) => match self.measure_term(x, this, types)? {
                 Val::Int(a) => Val::Int(a.scale(-1)?),
                 _ => return None,
             },
-            ExprKind::Unary(UnOp::Not, x) => match self.measure_term(x, this)? {
+            ExprKind::Unary(UnOp::Not, x) => match self.measure_term(x, this, types)? {
                 Val::Bool(f) => Val::Bool(f.not()),
                 _ => return None,
             },
             ExprKind::Binary(op, l, r) => {
-                let (a, b) = (self.measure_term(l, this)?, self.measure_term(r, this)?);
+                let (a, b) = (
+                    self.measure_term(l, this, types)?,
+                    self.measure_term(r, this, types)?,
+                );
                 self.logic_op(*op, a, b).ok()?
             }
             // Which variant it is: the arm whose variant the tag says, the
             // first that does (lemma L5 of docs/59-lends.md).
             ExprKind::Match(x, arms) => {
-                let mut v = self.measure_term(x, this)?;
+                let mut v = self.measure_term(x, this, types)?;
                 while let Val::Ref(..) = v {
                     v = self.pointee(v);
                 }
@@ -3646,7 +4342,7 @@ impl Walk<'_> {
                             .collect::<Vec<_>>(),
                     );
                     earlier.push(here);
-                    cases.push((first, self.measure_term(&a.body, this)?));
+                    cases.push((first, self.measure_term(&a.body, this, types)?));
                 }
                 match cases.first().map(|(_, v)| v.clone()) {
                     Some(Val::Bool(_)) => {
@@ -4138,7 +4834,10 @@ impl Walk<'_> {
                     .push(Formula::eq(&parts.tag, &Lin::constant(n)).ok_or(Failure::Unsupported)?);
                 v = parts.fields[variant][field].clone();
             }
-            let f = match self.term(&part.pred, &v, env)? {
+            let outer = std::mem::replace(&mut self.pred_types, part.scope.clone());
+            let f = self.term(&part.pred, &v, env);
+            self.pred_types = outer;
+            let f = match f? {
                 Val::Bool(f) => f,
                 _ => return Err(Failure::Unsupported),
             };
@@ -4168,7 +4867,7 @@ impl Walk<'_> {
                 env,
             ) {
                 (PredName::Binder, _) => binder.clone(),
-                (_, Env::Closed(names)) => names.get(&e.id).ok_or(Failure::Unsupported)?.clone(),
+                (_, Env::Closed(c)) => c.names.get(&e.id).ok_or(Failure::Unsupported)?.clone(),
                 (PredName::Param(i), Env::Call(args, _)) => {
                     args.get(*i).ok_or(Failure::Unsupported)?.clone()
                 }
@@ -4257,7 +4956,8 @@ impl Walk<'_> {
                     .clone();
                 let v = self.term(x, binder, env)?;
                 let recv = self.autoref(v, derefs, Some(false));
-                self.measure(&symbol, recv)
+                let (symbol, types) = self.pred_measure(e.id, &symbol, env);
+                self.measure_with(&symbol, recv, types)
             }
             _ => return Err(Failure::Unsupported),
         })
@@ -5299,7 +5999,13 @@ impl Walk<'_> {
                 ret: Type::Unit,
                 lent: Vec::new(),
             };
-            return Ok((self.measure(s, recv.clone()), post));
+            // What its body's type parameters are here: the call's type
+            // arguments, its impl's first.
+            let types = (resolved.as_ref()).and_then(|(_, args)| {
+                let names = self.cx.scheme_of(s)?.params.as_slice();
+                (names.len() == args.len()).then(|| Rc::new(Subst::new(names, args)))
+            });
+            return Ok((self.measure_with(s, recv.clone(), types), post));
         }
         let mut result = self.unknown(&ty);
         if let Some(s) = symbol

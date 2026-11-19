@@ -229,8 +229,10 @@ match keeps (`refine_let_else_index.t`).
 
 - An impl's method can't need less than its trait's: its bounds are the
   trait's exactly (see above).
-- Trait methods still can't have refinements or `ensures` (an impl's
-  would have to ask no more and promise no less, as here).
+- Trait methods couldn't have refinements or `ensures` (an impl's
+  would have to ask no more and promise no less, as here). Since step
+  86 they can, and an impl's method asks no more than its trait's, as
+  proved where it's written (docs/86-trait-contracts.md).
 
 ## Decisions
 

@@ -378,6 +378,7 @@ impl Walk<'_> {
                 Cand::Pred(Rc::new(targs::Closed {
                     pred: closed.pred.clone(),
                     names,
+                    types: closed.types.clone(),
                 }))
             }
             Cand::All(ds) => Cand::All(ds.iter().map(|d| self.freshen_disj(s, fresh, d)).collect()),
