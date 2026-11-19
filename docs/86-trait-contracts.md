@@ -62,6 +62,13 @@ promises, and anything more it says besides:
   is, learns both; a call through a bound learns only the trait's.
 - Its body is checked with what it asks, and must keep every promise: the
   trait's too, for everything it accepts.
+- **No `mut` where a promise looks.** What the trait's method promises is
+  of its parameters' values as passed, so the impl's can't make one it
+  names `mut` (`mut self` too), which could be another by return: as a
+  function's own refinements can't name a `mut` parameter. It copies it
+  instead, `let mut k = k;`. A parameter that only what the trait's asks
+  names may be `mut`: what it asks is of the value passed, and each value
+  given to a refined one must keep its refinement.
 
 ```rust
 trait Pick {
@@ -90,6 +97,25 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 }
 ```
 
+```rust
+trait Below {
+    fn below(&self, k: usize) -> { n: usize | n < k || k == 0 };
+}
+
+#[derive(Discard)]
+struct Half {}
+
+impl Below for Half {
+    fn below(&self, mut k: usize) -> usize {
+        k = k / 2;
+        k
+    }
+}
+
+fn main() {}
+// error: `k` can't be `mut` in `below`: what trait `Below` promises names it, as it was passed; write `let mut k = k;` in the body
+```
+
 An impl's method that asks more than its trait's is refused where it's
 written, not at some call:
 
@@ -116,6 +142,8 @@ A trait's method can be a measure: `#[measure] fn len(&self) -> usize;`.
 Each impl's must be one too, marked `#[measure]`, with a measure's body
 (docs/21). A trait may give a default, a measure of `Self`'s other
 measures, as `#[measure] fn is_empty(&self) -> bool { self.len() == 0 }`.
+A default is final: it's what the measure is of every type, which generic
+code counts on, so no impl can give its own, even one saying the same.
 
 A predicate names one as any measure, `s.size()`. Of a value whose type
 is known, it's that type's impl's: its body, where that can be seen, as
@@ -203,9 +231,11 @@ file's check what the operating system says (which keeps it), as an
   per type, by the overlap rules), as the walk and monomorphisation both
   find it. In generic code it's unknown, so what's known of it is only
   what was proved or promised of the value, as for a measure whose body
-  is hidden (M2 of docs/21). Every measure ends: on a smaller value, or
-  through a chain of measures of `self` with no circle, at the impl's type
-  (`measure_loops`).
+  is hidden (M2 of docs/21), but for a default, which generic code
+  unfolds: so a default must be what the measure is at every type, which
+  it is as no impl can give its own (`impl_measures`). Every measure ends:
+  on a smaller value, or through a chain of measures of `self` with no
+  circle, at the impl's type (`measure_loops`).
 - **B3 (modularity).** An impl's obligations need only its trait's
   signature, contract included: adding an impl, or a package, proves
   what it must where it's written, and changes nothing elsewhere.
@@ -221,6 +251,18 @@ file's check what the operating system says (which keeps it), as an
   docs/85), so `m.n() == 0` stayed known after `m.r.push(1)`. Refused
   now (`err_soundness_measure_through_mut.t`), found while planning this
   step, as an impl's measure for `&mut I` would have been the same.
+- **H2 and H3 (holes closed in 0.101.1).** Retrospective 15 found two in
+  0.101.0, where inheriting a contract didn't keep what it rests on. An
+  impl could give its own body for a default measure, `is_empty` true of a
+  value with `len` 5, while generic code unfolded the default
+  (`err_soundness_trait_measure_default*.t`); and an impl's method could
+  make a parameter its trait's promise names `mut`, and keep the promise
+  of the value it set, not the one passed
+  (`err_soundness_trait_mut_*.t`). B1 needs both: what the impl's body
+  promised at `X` is what a call learned at `T` only if the predicates
+  mean the same in both, the measures the same and the names the same
+  values. `tests/generated_inherit.rs` varies what an impl may write
+  differently from its trait's, with the interpreter as the oracle.
 
 ## What it doesn't do
 
@@ -255,6 +297,14 @@ file's check what the operating system says (which keeps it), as an
 - **D4: refuse reading through a `&mut` in a measure.** Following what a
   write through a `&mut` changes, up to every value holding it, is more
   machinery, for measures no program has written.
+- **D5 (0.101.1): a default measure is final.** Proving an impl's own
+  body equal to the default would let one be written for speed alone;
+  hiding defaults from generic code would lose `is_empty` meaning
+  `len() == 0` there.
+- **D6 (0.101.1): no `mut` parameter a trait's promise names**, the rule
+  a function's own signature has. Letting the walk keep each parameter's
+  value as passed, for what a signature names, would be more machinery,
+  for what `let mut k = k;` does.
 
 ## Exercises
 
@@ -270,6 +320,10 @@ file's check what the operating system says (which keeps it), as an
 5. Write a trait whose default measure calls another, and an impl whose
    measure calls the default, of `self`. What does the checker say? What
    if it calls it of a field?
+6. An impl's method may take `mut v` where its trait's asks
+   `v: { v: usize | v <= hi }`, but not `mut hi` where its trait's
+   promises `{ n: usize | n <= hi }`. Why the difference? Is `mut hi`
+   refused where only the trait's asks name it?
 
 ## Reading
 

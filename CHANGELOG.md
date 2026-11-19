@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.101.1 (2026-11-19)
+
+Step 87: what an impl inherits, kept (retrospective 15). See
+[docs/86-trait-contracts.md](docs/86-trait-contracts.md).
+
+### Fixed
+
+- An impl could give its own body for a measure its trait gives a default,
+  and generic code still unfolded the default: with `is_empty` true of a
+  value whose `len` is 5, `if t.is_empty() { a[t.len()] }` was accepted
+  for `a` of one element. A trait's default measure is final now: no impl
+  can give its own, even one saying the same. (Unsound since 0.101.0.)
+- An impl's method could make `mut` a parameter its trait's result or
+  `ensures` names, and keep the promise of the value it set rather than
+  the one passed: `fn f(&self, mut k: usize) -> usize { k = 100; k }`
+  for a trait's `-> { n: usize | n <= k }`. It's refused now, as in a
+  function's own signature (`mut self` too); the body can copy it,
+  `let mut k = k;`. A parameter only what the trait's method asks names
+  may still be `mut`. (Unsound since 0.101.0.)
+
 ## 0.101.0 (2026-11-19)
 
 Step 86: trait contracts. See
