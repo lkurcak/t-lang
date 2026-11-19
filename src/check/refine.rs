@@ -4163,7 +4163,9 @@ impl Walk<'_> {
     /// the type parameters of its body are there, for the measures that
     /// body calls. At a type parameter, a projection or an `impl` type, the
     /// impl isn't known, and it's the trait's: what's known of it is what
-    /// was learned, of the value, as of any measure whose body isn't seen.
+    /// was learned, of the value, as of any measure whose body isn't seen,
+    /// or its default body, which no impl replaces (`impl_measures`), so
+    /// is what it is at every type.
     fn resolve_measure(&self, symbol: &str, ty: &Type) -> (String, Option<Rc<Subst>>) {
         let cx = self.cx;
         let Some(m) = cx.measures.get(symbol) else {
