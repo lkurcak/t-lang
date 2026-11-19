@@ -532,7 +532,7 @@ impl Checker {
 }
 
 /// Does `e` name `name`, as a variable?
-fn names_var(e: &Expr, name: &str) -> bool {
+pub(super) fn names_var(e: &Expr, name: &str) -> bool {
     matches!(&e.kind, ExprKind::Var(n, _) if n == name)
         || e.children().into_iter().any(|c| names_var(c, name))
 }

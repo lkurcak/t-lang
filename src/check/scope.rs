@@ -36,6 +36,8 @@ pub(super) struct FnDef {
     pub(super) name: Ident,
     /// Its parameters' names, for messages.
     pub(super) params: Vec<String>,
+    /// Which of its parameters are `mut`.
+    pub(super) muts: Vec<bool>,
     pub(super) symbol: String,
     pub(super) scheme: Scheme,
     /// The function it's nested in, if it is.

@@ -793,6 +793,11 @@ impl Checker {
     /// calls one through the trait is of the impl's, which must then be a
     /// function of the value, as a measure is (lemma B2). Not yet of a
     /// slice or a string, whose measures are of the reference to it.
+    ///
+    /// And that no impl gives its own of a measure its trait gives a body
+    /// (a default is final, B2): generic code unfolds the default, as what
+    /// the measure is of every type, which an impl's own would make untrue
+    /// of its type, as monomorphisation would run its own.
     pub(super) fn impl_measures(&self) -> Result<(), Error> {
         for d in &self.traits.impls {
             let Some(tr) = &d.trait_name else {
@@ -810,6 +815,12 @@ impl Checker {
                 let ty = &d.self_ty;
                 let err = |what: String| Err(Error::ty(f.name.span, what));
                 match (theirs, mine) {
+                    (true, _) if self.measures[&m.symbol].body.is_some() => {
+                        return err(format!(
+                            "`{name}` has a body in trait `{tr}`, which is what it is of every \
+                             type: generic code counts on it, so `{ty}` can't give its own"
+                        ));
+                    }
                     (true, false) => {
                         return err(format!(
                             "`{name}` is a measure in trait `{tr}`, so `{ty}`'s must be one too: \
@@ -1026,6 +1037,31 @@ impl Checker {
                      return: what it gives back may still borrow it",
                     sig.name,
                     sig.names.get(j).map_or("its parameter", String::as_str)
+                ),
+            ));
+        }
+        // What the trait promises names its parameters' values as passed,
+        // as an own signature's does, which can't name a `mut` one
+        // (`Named::Mut`): an impl's `mut` one may be another by return,
+        // and the body's would be checked of that one (H2 of retro 15).
+        let def = self.fn_def(symbol).expect("an impl's method");
+        let posts: Vec<&Part> = (theirs.ret.iter().chain(&theirs.ensures))
+            .flat_map(|r| &r.parts)
+            .collect();
+        let named = |name: &str| posts.iter().any(|q| super::adts::names_var(&q.pred, name));
+        let mutated = (theirs.names.iter().zip(&def.muts)).position(|(n, m)| *m && named(n));
+        if let Some(j) = mutated {
+            let mine = &def.params[j];
+            let fix = match mine.as_str() {
+                "self" => "take a `mut` copy by another name, `let mut s = self;`".to_string(),
+                _ => format!("write `let mut {mine} = {mine};` in the body"),
+            };
+            return Err(Error::ty(
+                def.name.span,
+                format!(
+                    "`{mine}` can't be `mut` in `{}`: what trait `{tr}` promises names it, as it \
+                     was passed; {fix}",
+                    def.name.name
                 ),
             ));
         }

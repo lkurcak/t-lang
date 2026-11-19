@@ -1544,6 +1544,7 @@ impl Checker {
             self.fns.push(FnDef {
                 name: f.name.clone(),
                 params: f.params.iter().map(|p| p.name.name.clone()).collect(),
+                muts: f.params.iter().map(|p| p.mutable.is_some()).collect(),
                 symbol,
                 scheme,
                 parent,
