@@ -1366,6 +1366,9 @@ impl Rewrite<'_> {
             for m in &mut t.methods {
                 self.function(&mut m.decl, interface.clone())?;
             }
+            for l in &mut t.laws {
+                self.function(&mut l.decl, interface.clone())?;
+            }
             self.params.pop();
         }
         for d in &mut prog.impls[from.impls..] {

@@ -708,6 +708,28 @@ impl Checker {
                 self.type_expr_notes(&f.ret, params);
                 self.effect_notes(f.effects.as_ref(), params);
             }
+            // A law's name is of the method it's of, where that's declared
+            // (docs/88-iterator-laws.md).
+            for l in &t.laws {
+                let f = &l.decl;
+                let params = &f.generics.types;
+                self.param_notes(&f.generics);
+                let law = (self.traits.traits.get(&t.name.name))
+                    .and_then(|d| d.laws.iter().find(|d| d.name == f.name.name))
+                    .cloned();
+                let ty = law.as_ref().map(|d| d.scheme.ty.clone());
+                let def = (law.as_ref())
+                    .and_then(|d| self.traits.method(&d.of, &d.name))
+                    .and_then(|m| m.span);
+                let kind = NoteKind::Fn(f.name.name.clone());
+                self.note(f.name.span, kind, ty, def.or(Some(f.name.span)));
+                self.bound_notes(&f.generics, params);
+                for p in &f.params {
+                    self.type_expr_notes(&p.ty, params);
+                }
+                self.type_expr_notes(&f.ret, params);
+                self.effect_notes(f.effects.as_ref(), params);
+            }
         }
     }
 

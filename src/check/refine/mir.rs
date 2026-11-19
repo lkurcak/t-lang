@@ -234,9 +234,16 @@ enum Loc {
 impl Checker {
     /// The walk over the MIR of the body of `f`, and its closures'.
     pub(super) fn walk_mir(&self, f: &FnDecl) -> Walked {
+        let symbol = &self.fns[self.current.expect("in a function").0].symbol;
+        self.walk_mir_as(f, self.refined.get(symbol).cloned())
+    }
+
+    /// `walk_mir`, with `sig` for the function's signature's refinements:
+    /// a law's promises, say, for an impl's method keeping it (`keep_laws`).
+    pub(super) fn walk_mir_as(&self, f: &FnDecl, sig: Option<RefinedSig>) -> Walked {
         let mut failed = Vec::new();
         let mut known = None;
-        let (result, (proved, failures)) = match self.mir_walk(f, &mut failed, &mut known) {
+        let (result, (proved, failures)) = match self.mir_walk(f, sig, &mut failed, &mut known) {
             Ok(found) => (Ok(()), found),
             Err(e) => (Err(e), Default::default()),
         };
@@ -256,12 +263,12 @@ impl Checker {
     fn mir_walk(
         &self,
         f: &FnDecl,
+        sig: Option<RefinedSig>,
         failed: &mut Vec<Error>,
         known_value: &mut Option<Known>,
     ) -> Result<Found, Error> {
         let id = self.current.expect("in a function");
         let symbol = self.fns[id.0].symbol.clone();
-        let sig = self.refined.get(&symbol).cloned();
         let bodies = self.refine_mir.borrow();
         let key = Key::Fn(symbol.clone());
         let Some((_, body, notes)) = bodies.iter().find(|(k, ..)| *k == key) else {

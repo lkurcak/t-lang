@@ -1,5 +1,44 @@
 # Changelog
 
+## Unreleased
+
+Step 88: iterator laws. See
+[docs/88-iterator-laws.md](docs/88-iterator-laws.md).
+
+### Added
+
+- Laws: a trait can say what a method of one of its supertraits promises
+  of every type implementing it, `law fn next(&mut self) -> .. ensures
+  ..;`, written as the method is declared. With `where Self: P`, a law of
+  trait `P`'s method holds of every type implementing both. Each impl of
+  the law's trait is checked to keep it, against the method's body there,
+  with both impls' bounds; a method's default body is checked once, for
+  every type of the law's trait. Every call of the method whose type
+  implements the law's trait learns what it promises.
+- `core::iter::ExactSizeIterator`, in the prelude: an iterator's `len`, a
+  measure, with laws saying `next` and `next_back` take one off it and
+  give `None` only at 0, and that `map`, `enumerate` and `rev` keep it.
+  Implemented by the slice, array and list iterators, and by `Map`,
+  `Enumerate` and `Zip` of exact iterators and `Rev` of a double-ended
+  one: generic code can count with them, and a `for` over an adapter knows
+  how many are left.
+- A measure's body can say `if c { a } else { b }`.
+
+### Changed
+
+- The `len` of a slice's, an array's or a list's iterator is
+  `ExactSizeIterator`'s, and their own `next` no longer says what the
+  law does.
+
+### Fixed
+
+- The checker crashed on a predicate calling a method of a value whose
+  type has a closure in it, as `invariant it.len() <= 3` of a `for` over
+  `a.iter().map(|x: &u8| *x)`: it asked what the closure implements before
+  its captures were known. Such a measure is now found by its impl's type,
+  and its impl's bounds are checked once the closure is known. (Since
+  0.101.0.)
+
 ## 0.101.1 (2026-11-19)
 
 Step 87: what an impl inherits, kept (retrospective 15). See

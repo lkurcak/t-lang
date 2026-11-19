@@ -90,6 +90,10 @@ pub struct Executable {
     /// copy's types, whose contract the copy has too
     /// (docs/86-trait-contracts.md), for the interpreter to check.
     inherited: HashMap<String, FnDecl>,
+    /// For each copy of an impl's method of a trait with laws its type
+    /// keeps, by name: each law's declaration, at the copy's types
+    /// (docs/88-iterator-laws.md), for the interpreter to check.
+    laws: HashMap<String, Vec<FnDecl>>,
 }
 
 /// What a struct, enum or closure type holds, at a copy's types, for a
@@ -154,6 +158,13 @@ impl Executable {
     /// too, if it's an impl's method of a trait whose method has one.
     pub(crate) fn inherited(&self, name: &str) -> Option<&FnDecl> {
         self.inherited.get(name)
+    }
+
+    /// The laws copy `name` keeps, declared at its types, if it's an
+    /// impl's method of a trait whose method has some its type keeps
+    /// (docs/88-iterator-laws.md).
+    pub(crate) fn laws(&self, name: &str) -> &[FnDecl] {
+        self.laws.get(name).map_or(&[], Vec::as_slice)
     }
 
     /// Which intrinsic copy `name` is a copy of, if it's one.
@@ -287,6 +298,7 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
         intrinsic_sigs: mono.intrinsic_sigs,
         intrinsics: mono.intrinsics,
         inherited: mono.inherited,
+        laws: mono.laws,
     }
 }
 
@@ -315,6 +327,7 @@ pub(crate) fn rooted(prog: &Program, info: &Info, root: &str) -> (Executable, Ro
         intrinsic_sigs: mono.intrinsic_sigs,
         intrinsics: mono.intrinsics,
         inherited: mono.inherited,
+        laws: mono.laws,
     };
     (exe, missing)
 }
@@ -437,6 +450,8 @@ struct Mono<'p> {
     measure_behind_mut: HashSet<NodeId>,
     /// `Executable::inherited`.
     inherited: HashMap<String, FnDecl>,
+    /// `Executable::laws`.
+    laws: HashMap<String, Vec<FnDecl>>,
     /// What to start from, if it's not everything that isn't generic: to
     /// work out a const's value, only what it needs (`crate::consts`).
     /// Then everything is copied only where it's needed.
@@ -585,6 +600,7 @@ impl<'p> Mono<'p> {
             measure_bodies: HashMap::new(),
             measure_behind_mut: HashSet::new(),
             inherited: HashMap::new(),
+            laws: HashMap::new(),
         }
     }
 
@@ -653,6 +669,10 @@ impl<'p> Mono<'p> {
                     let symbol = f.name.name.clone();
                     if let Some(c) = self.contract(&symbol, &self_ty, &own) {
                         self.inherited.insert(name.clone(), c);
+                    }
+                    let laws = self.laws_of(&symbol, &self_ty, &own);
+                    if !laws.is_empty() {
+                        self.laws.insert(name.clone(), laws);
                     }
                 }
                 fns.insert(name, decl);
@@ -792,9 +812,59 @@ impl<'p> Mono<'p> {
         let name = d.methods.iter().find(|(_, s)| s == symbol)?.0.clone();
         let theirs = self.info.traits.method(&tr, &name)?.symbol.clone();
         let t = self.prog.traits.iter().find(|t| t.name.name == tr)?;
-        let f = &(t.methods.iter())
+        let f = (t.methods.iter())
             .find(|m| m.decl.name.name == theirs || m.decl.name.name == name)?
-            .decl;
+            .decl
+            .clone();
+        self.declared_at(&f, self_ty, own)
+    }
+
+    /// The laws trait method `symbol`'s impl's keeps at `Self` = `self_ty`
+    /// and its own type parameters `own` (docs/88-iterator-laws.md): each
+    /// law of the method whose trait `self_ty` implements, declared at
+    /// those types, for the interpreter to check of the impl's copy.
+    fn laws_of(&mut self, symbol: &str, self_ty: &Type, own: &[Type]) -> Vec<FnDecl> {
+        let Some(d) =
+            (self.info.traits.impls.iter()).find(|d| d.methods.iter().any(|(_, s)| s == symbol))
+        else {
+            return Vec::new();
+        };
+        let Some(tr) = d.trait_name.clone() else {
+            return Vec::new();
+        };
+        let Some(name) = (d.methods.iter())
+            .find(|(_, s)| s == symbol)
+            .map(|(n, _)| n.clone())
+        else {
+            return Vec::new();
+        };
+        let traits = &self.info.traits;
+        let mut found: Vec<(String, String)> = (traits.traits.iter())
+            .flat_map(|(s, t)| t.laws.iter().map(move |l| (s, l)))
+            .filter(|(_, l)| l.of == tr && l.name == name)
+            .filter(|(s, _)| traits.implements(self_ty, s, &[], &[]).is_ok())
+            .map(|(s, l)| (s.clone(), l.name.clone()))
+            .collect();
+        found.sort();
+        let mut out = Vec::new();
+        for (s, name) in found {
+            let decl = (self.prog.traits.iter())
+                .find(|t| t.name.name == s)
+                .and_then(|t| t.laws.iter().find(|l| l.decl.name.name == name))
+                .map(|l| l.decl.clone());
+            if let Some(f) = decl
+                && let Some(law) = self.declared_at(&f, self_ty, own)
+            {
+                out.push(law);
+            }
+        }
+        out
+    }
+
+    /// `f`, a trait's method or law as declared, at `Self` = `self_ty` and
+    /// its own type parameters `own`, if it says anything a refinement
+    /// can.
+    fn declared_at(&mut self, f: &FnDecl, self_ty: &Type, own: &[Type]) -> Option<FnDecl> {
         let refined = |t: &TypeExpr| {
             let written = self.info.written.get(&t.id);
             !written.unwrap_or(t).refinements().is_empty()

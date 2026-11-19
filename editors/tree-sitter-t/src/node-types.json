@@ -1183,6 +1183,10 @@
         {
           "type": "function_signature_item",
           "named": true
+        },
+        {
+          "type": "law_item",
+          "named": true
         }
       ]
     }
@@ -2162,6 +2166,76 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "law_item",
+    "named": true,
+    "fields": {
+      "effects": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "effects",
+            "named": true
+          }
+        ]
+      },
+      "name": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "identifier",
+            "named": true
+          }
+        ]
+      },
+      "parameters": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "parameters",
+            "named": true
+          }
+        ]
+      },
+      "return_type": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "_type",
+            "named": true
+          }
+        ]
+      },
+      "type_parameters": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "type_parameters",
+            "named": true
+          }
+        ]
+      }
+    },
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "ensures_clause",
+          "named": true
+        },
+        {
+          "type": "where_clause",
+          "named": true
+        }
+      ]
     }
   },
   {
@@ -4357,6 +4431,10 @@
   },
   {
     "type": "invariant",
+    "named": false
+  },
+  {
+    "type": "law",
     "named": false
   },
   {

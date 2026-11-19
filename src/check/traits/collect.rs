@@ -2,12 +2,12 @@
 //! types, and the rules each impl header must keep.
 
 use super::termination::terminates;
-use super::{mentions, occurrences, trait_method_symbol};
+use super::{law_symbol, mentions, occurrences, trait_method_symbol};
 use crate::ast::*;
 use crate::check::generics::{self, Lifetimes};
 use crate::check::{Checker, plural};
 use crate::error::{Edit, Error, Fix, Span};
-use crate::traits::{AssocDecl, ImplDef, MethodDef, Pred, TraitDef};
+use crate::traits::{AssocDecl, ImplDef, LawDef, MethodDef, Pred, TraitDef};
 use crate::traits::{COPY, DISCARD, FN_ONCE, SEND, SIGNED, SYNC, UNSIGNED};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 
@@ -62,6 +62,7 @@ impl Checker {
                 supers: Vec::new(),
                 assoc,
                 methods: Vec::new(),
+                laws: Vec::new(),
             };
             self.traits.traits.insert(name.name.clone(), def);
             self.info.symbols.insert(name.id, name.name.clone());
@@ -208,7 +209,110 @@ impl Checker {
                 .expect("named")
                 .methods = methods;
         }
+        // Laws, once every trait's methods are known.
+        for t in &prog.traits[self.from.traits..] {
+            let mut laws: Vec<LawDef> = Vec::new();
+            for l in &t.laws {
+                let law = self.law(t, l)?;
+                if laws.iter().any(|d| d.method == law.method) {
+                    return Err(Error::ty(
+                        l.decl.name.span,
+                        format!(
+                            "trait `{}` states a law of `{}` twice: say it all in one",
+                            t.name.name, l.decl.name.name
+                        ),
+                    ));
+                }
+                laws.push(law);
+            }
+            self.traits
+                .traits
+                .get_mut(&t.name.name)
+                .expect("named")
+                .laws = laws;
+        }
         Ok(())
+    }
+
+    /// Law `l` of trait `t`: which trait's method it's of, its signature,
+    /// which must be the method's (lemma L1 of docs/88-iterator-laws.md:
+    /// it's a contract on that method, which calls of the method learn).
+    fn law(&mut self, t: &TraitDecl, l: &Law) -> Result<LawDef, Error> {
+        let f = &l.decl;
+        let (tr, name) = (&t.name.name, &f.name.name);
+        let this_ty = Type::Param("Self".into(), false);
+        let this = Pred {
+            ty: this_ty.clone(),
+            trait_name: tr.clone(),
+        };
+        let symbol = law_symbol(tr, name);
+        self.sig_owner = (symbol.clone(), name.clone());
+        self.sig_trait = Some((tr.clone(), t.vis, false));
+        let scheme = self.method_scheme(f, &Outer::default(), Some(this.clone()), None);
+        self.sig_trait = None;
+        let mut scheme = scheme?;
+        scheme.params.insert_type("Self".into());
+        scheme.preds.insert(0, this);
+        let err = |what: String| Err(Error::ty(f.name.span, what));
+        // Which trait's method it's of: one its `where` says `Self`
+        // implements, or else one of the trait's supertraits.
+        let conds: Vec<String> = (scheme.preds[1..].iter())
+            .filter(|p| p.ty == this_ty)
+            .map(|p| p.trait_name.clone())
+            .collect();
+        let implied = self.traits.implied(tr);
+        if self.traits.method(tr, name).is_some() {
+            return err(format!(
+                "`{name}` is `{tr}`'s own method: say what it promises where it's declared; a \
+                 law is of another trait's method"
+            ));
+        }
+        // A supertrait's method, whose own `where` may say `Self` is more,
+        // as `rev`'s does; or else one of the trait its `where` names.
+        let found: Vec<&String> = (implied[1..].iter())
+            .filter(|s| self.traits.method(s, name).is_some())
+            .collect();
+        let (of, conditional) = match (found.as_slice(), conds.as_slice()) {
+            ([one], _) => ((*one).clone(), false),
+            ([a, b, ..], _) => {
+                return err(format!(
+                    "`{name}` is a method of both `{a}` and `{b}`: a law can't say which yet"
+                ));
+            }
+            ([], []) => {
+                return err(format!(
+                    "no supertrait of `{tr}` has a method `{name}`; a law of another trait's \
+                     method says `where Self: Trait`, and holds where `Self` is both"
+                ));
+            }
+            ([], [p]) => {
+                if self.traits.method(p, name).is_none() {
+                    return err(format!(
+                        "`{p}` has no method `{name}` of its own for a law to be of"
+                    ));
+                }
+                (p.clone(), true)
+            }
+            ([], [_, _, ..]) => {
+                return err(
+                    "a law can be of one other trait's method: its `where` can say `Self` is \
+                     one trait"
+                        .to_string(),
+                );
+            }
+        };
+        let m = self.traits.method(&of, name).expect("found").clone();
+        self.same_law_signature(f, &scheme, &m, conditional, &of)?;
+        Ok(LawDef {
+            name: name.clone(),
+            symbol,
+            of,
+            method: m.symbol.clone(),
+            conditional,
+            scheme,
+            span: f.name.span,
+            package: self.package,
+        })
     }
 
     /// The type of method `f`, in an impl with parameters, bounds and so

@@ -317,9 +317,7 @@ export fn <[u8]>::iter(&self) -> { it: core::slice::Iter::<u8> | it.len() == sel
 
 fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
     &mut self,
-) -> { r: core::option::Option::<&u8> | r.is_some() == (old(self.len()) > 0) }
-ensures
-    self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0) {
+) -> core::option::Option::<&u8> {
     let _0: Option<&u8>;
     let _1: &mut Iter<u8>; // self
     let _2: &[u8]; // rest

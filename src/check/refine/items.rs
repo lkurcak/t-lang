@@ -360,8 +360,12 @@ impl Walk<'_> {
         let mut tree = self.carried_items(v, t);
         let mut methods = Vec::new();
         for (name, symbol, targs) in own {
-            match self.cx.refined.get(&symbol) {
-                Some(sig) if sig.ret.is_some() => methods.push((name, sig.clone(), targs)),
+            // With the laws its type keeps, which are its signature's too
+            // (docs/88-iterator-laws.md).
+            let args: Vec<Type> = targs.iter().map(|(_, t)| t.clone()).collect();
+            let sig = self.with_laws(self.cx.refined.get(&symbol).cloned(), &symbol, &args);
+            match sig {
+                Some(sig) if sig.ret.is_some() => methods.push((name, sig, targs)),
                 _ => return Some(tree).filter(|t| !t.is_empty()),
             }
         }
@@ -1043,8 +1047,11 @@ impl Walk<'_> {
     /// docs/83): its fields are seen in its module alone, which the code
     /// walked isn't in; and no function of that module (or one inside it)
     /// takes a value of it, or of a type that holds one, but the methods of
-    /// its impls of the protocol, and impls derived for markers and
-    /// `Discard`? Then what its values hold is reached only through those.
+    /// its impls of the protocol, impls derived for markers and `Discard`,
+    /// and measures, as `ExactSizeIterator`'s `len` (a measure has no
+    /// effects and gives an integer or a `bool`: it can't hand out what a
+    /// value holds, nor change it)? Then what its values hold is reached
+    /// only through those.
     fn sealed(&self, symbol: &str) -> bool {
         let cx = self.cx;
         let Some(def) = cx.types.iter().find(|d| d.symbol == symbol) else {
@@ -1095,6 +1102,7 @@ impl Walk<'_> {
         cx.fns.iter().all(|f| {
             !cx.modules.within(f.module, def.module)
                 || allowed.contains(&f.symbol.as_str())
+                || cx.measures.contains_key(&f.symbol)
                 || !takes(&f.scheme, symbol, &holders)
         })
     }

@@ -1184,6 +1184,24 @@ pub struct TraitDecl {
     /// `effect e;`: its associated effects.
     pub effects: Vec<EffectDecl>,
     pub methods: Vec<TraitMethod>,
+    /// `law fn next(&mut self) -> .. ensures ..;`: what a supertrait's
+    /// method promises of every type implementing this trait too (see
+    /// docs/88-iterator-laws.md).
+    pub laws: Vec<Law>,
+}
+
+/// `law fn next(&mut self) -> { r: .. | .. } ensures ..;` in a trait: a
+/// contract on a method of one of its supertraits, or, with `where Self:
+/// P`, of trait `P`'s, which every type implementing both keeps. It's
+/// written as the method is declared, with what it promises; it has no
+/// body, and asks nothing of the parameters.
+#[derive(Debug, Clone)]
+pub struct Law {
+    /// Where its `law` is.
+    pub law: Span,
+    /// The method as declared, with no body: an empty block where its `;`
+    /// is.
+    pub decl: FnDecl,
 }
 
 /// `type Item;` or `type Item: Discard + Show;` in a trait: a type each

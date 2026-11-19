@@ -741,6 +741,164 @@ fn args_of(t: &Type) -> Vec<Type> {
 /// Renames the lifetimes a method has of its own to `'0`, `'1`, .. in the
 /// order they come up, for comparing two signatures up to their names.
 /// Those in `fixed`, the impl's, keep theirs.
+impl Checker {
+    /// Checks that law `f`, of type `got`, of trait `tr`'s, is written as
+    /// method `want` of trait `of` is declared, up to the names of their
+    /// own type parameters and lifetimes: it's a contract on that method,
+    /// so it says nothing of its types, effects or bounds that the method
+    /// doesn't (lemma L1 of docs/88-iterator-laws.md). `got`'s bounds are
+    /// `Self: tr` first, then `Self: of` if it's `conditional`.
+    pub(in crate::check) fn same_law_signature(
+        &self,
+        f: &FnDecl,
+        got: &Scheme,
+        want: &MethodDef,
+        conditional: bool,
+        of: &str,
+    ) -> Result<(), Error> {
+        let Scheme {
+            params: got_params,
+            lifetimes: _,
+            bounds: got_bounds,
+            preds: got_preds,
+            eqs: got_eqs,
+            effect_bounds: got_effect_bounds,
+            ty: got_ty,
+        } = got;
+        let Scheme {
+            params: want_params,
+            lifetimes: _,
+            bounds: want_bounds,
+            preds: want_preds,
+            eqs: want_eqs,
+            effect_bounds: want_effect_bounds,
+            ty: want_ty,
+        } = &want.scheme;
+        let mismatch = |what: String| {
+            let e = Error::ty(
+                f.name.span,
+                format!(
+                    "law `{}` isn't written as `{of}` declares `{}`: {what}",
+                    f.name.name, want.name
+                ),
+            );
+            match want.span {
+                Some(span) => e.with_note(span, "declared here".to_string()),
+                None => e,
+            }
+        };
+        let (own, theirs) = (&got_params[1..], &want_params[1..]);
+        if own.len() != theirs.len() {
+            return Err(mismatch(format!(
+                "it has {} but should have {}",
+                plural(own.len(), "type parameter"),
+                theirs.len()
+            )));
+        }
+        let kind = |params: &crate::types::Params, p: &str| {
+            (
+                params.is_effect(p),
+                params.is_const(p),
+                params.is_unsized(p),
+            )
+        };
+        if let Some((p, _)) =
+            (own.iter().zip(theirs)).find(|(p, q)| kind(got_params, p) != kind(want_params, q))
+        {
+            return Err(mismatch(format!(
+                "its `{p}` isn't the same kind of parameter as the method's"
+            )));
+        }
+        // The method's, with `Self` the law's and its own type parameters
+        // named as the law's are.
+        let mut args = vec![Type::Param("Self".into(), false)];
+        args.extend(own.iter().map(|p| got_params.arg(p)));
+        let s = Subst::new(want_params, &args);
+        let wanted = self.adts.normalise(&s.apply(want_ty));
+        let (Type::Fn(g), Type::Fn(w)) = (got_ty, &wanted) else {
+            unreachable!("methods have function types")
+        };
+        let mut a = Canon::new(&[]);
+        let mut b = Canon::new(&[]);
+        let same = g.params.len() == w.params.len()
+            && (g.params.iter().zip(&w.params)).all(|(x, y)| a.ty(x) == b.ty(y))
+            && a.ty(&g.ret) == b.ty(&w.ret);
+        if !same {
+            return Err(mismatch(format!(
+                "its type should be `{}`",
+                Type::Fn(w.clone())
+            )));
+        }
+        let effects = |t: &Type| {
+            let mut v: Vec<String> = t.effect_items().iter().map(Type::to_string).collect();
+            v.sort();
+            v
+        };
+        if effects(&g.effects) != effects(&w.effects) {
+            return Err(mismatch(format!(
+                "its effects should be `{}`, as the method's are",
+                w.effects
+            )));
+        }
+        // Its bounds, but for `Self`'s, the method's.
+        let shown = |c: &mut Canon, bounds: &[Bound], s: Option<&Subst>| -> Vec<String> {
+            let ap = |t: &Type| s.map_or(t.clone(), |s| s.apply(t));
+            let mut v: Vec<String> = (bounds.iter())
+                .map(|b| match b {
+                    Bound::Region(x, y) => format!("{}: {}", c.region(x), c.region(y)),
+                    Bound::Param(p, y) => format!("{}: {}", ap(p), c.region(y)),
+                    Bound::Proj(p, y) => format!("{}: {}", ap(p), c.region(y)),
+                })
+                .collect();
+            v.sort();
+            v
+        };
+        // `Self: tr`, and `Self: of` if it's conditional, are the law's:
+        // the method's own `Self: of` is first among its.
+        let this = Type::Param("Self".into(), false);
+        let tr = &got_preds[0].trait_name;
+        let own_preds: Vec<Pred> = (got_preds.iter())
+            .filter(|p| {
+                !(p.ty == this && (&p.trait_name == tr || conditional && p.trait_name == of))
+            })
+            .cloned()
+            .collect();
+        let preds = |ps: &[Pred], s: Option<&Subst>| -> Vec<String> {
+            let mut v: Vec<String> = (ps.iter())
+                .map(|p| Pred {
+                    ty: match s {
+                        Some(s) => self.adts.normalise(&s.apply(&p.ty)),
+                        None => p.ty.clone(),
+                    },
+                    trait_name: p.trait_name.clone(),
+                })
+                .map(|p| p.to_string())
+                .collect();
+            v.sort();
+            v
+        };
+        let pairs = |v: &[(Type, Type)], s: Option<&Subst>| -> Vec<String> {
+            let ap = |t: &Type| s.map_or(t.clone(), |s| self.adts.normalise(&s.apply(t)));
+            let mut v: Vec<String> = v
+                .iter()
+                .map(|(l, r)| format!("{} = {}", ap(l), ap(r)))
+                .collect();
+            v.sort();
+            v
+        };
+        let same = shown(&mut a, got_bounds, None) == shown(&mut b, want_bounds, Some(&s))
+            && preds(&own_preds, None) == preds(&want_preds[1..], Some(&s))
+            && pairs(got_eqs, None) == pairs(want_eqs, Some(&s))
+            && pairs(got_effect_bounds, None) == pairs(want_effect_bounds, Some(&s));
+        if !same {
+            return Err(mismatch(
+                "its bounds should be the method's: a law says only what it promises".to_string(),
+            ));
+        }
+        Ok(())
+    }
+}
+
 struct Canon<'a> {
     fixed: &'a [String],
     seen: Vec<Region>,

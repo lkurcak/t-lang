@@ -227,23 +227,19 @@ export struct IntoIter<T> {
     next: { i: usize | i <= len },
 }
 
-impl<T> IntoIter<T> {
-    /// How many values it has yet to give. It's a measure: once `next`
-    /// has given `None`, it's `0`.
+/// How many values it has yet to give: those in slots `next..len`.
+impl<T> ExactSizeIterator for IntoIter<T> {
     #[measure]
-    export fn len(&self) -> usize { self.len - self.next }
+    fn len(&self) -> usize { self.len - self.next }
 }
 
 /// Gives the next value, until there are none: then `None`, and from then
-/// on, as it says.
+/// on, as `ExactSizeIterator`'s law says.
 impl<T> Iterator for IntoIter<T> {
     type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
-    ensures
-        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
-    {
+    fn next(&mut self) -> Option<T> {
         let i = self.next;
         if i < self.len {
             self.next = i + 1;
