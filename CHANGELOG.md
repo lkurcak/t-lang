@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.102.0 (2026-11-20)
 
 Step 88: iterator laws. See
 [docs/88-iterator-laws.md](docs/88-iterator-laws.md).
