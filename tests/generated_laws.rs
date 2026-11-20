@@ -5,8 +5,9 @@
 //! of `P` may write differently from the law — a `mut` parameter it names
 //! or doesn't, `mut self`, a renamed parameter, the method's default body
 //! or its own — by an impl for a struct of its own, a generic one, an
-//! adapter whose body counts on its field's law, one for fewer types than
-//! `P`'s, and a blanket impl of `P`; each keeping the law or breaking it,
+//! adapter whose body counts on its field's law, one whose impl of `S`
+//! needs more than its impl of `P`, one for fewer types than `P`'s, and a
+//! blanket impl of `P`; each keeping the law or breaking it,
 //! called through `S`, through `P` alone, and at the known type. Each is
 //! refused, or accepted and run by the interpreter, which checks every
 //! law at each call of an impl's method. They're about what programs
@@ -193,6 +194,8 @@ enum Impl {
     /// For a generic struct whose field `a` implements both, whose own
     /// `f` counts on its field's law.
     Adapter,
+    /// For a generic struct, `S` with a bound `P`'s doesn't have.
+    Bounded,
     /// `P` for every `X<A>`, `S` only for `X<u8>`.
     Specific,
     /// `P` for any type of another trait's, `S` for a struct.
@@ -236,6 +239,15 @@ fn program(s: Shape, i: Impl, methods: &str, c: Caller) -> String {
             src.push_str(&format!("impl<A: Discard> P for X<A> {{\n{methods}}}\n\n"));
             src.push_str(&format!(
                 "impl<A: Discard> S for X<A> {{\n{}}}\n\n",
+                size("self.n")
+            ));
+            "X { n: 1, a: 0u8 }"
+        }
+        Impl::Bounded => {
+            src.push_str("#[derive(Discard)]\nstruct X<A> { n: usize, a: A }\n\n");
+            src.push_str(&format!("impl<A: Discard> P for X<A> {{\n{methods}}}\n\n"));
+            src.push_str(&format!(
+                "impl<A: Copy + Discard> S for X<A> {{\n{}}}\n\n",
                 size("self.n")
             ));
             "X { n: 1, a: 0u8 }"
@@ -344,6 +356,7 @@ fn laws() {
     let impls = [
         Impl::Own,
         Impl::Generic,
+        Impl::Bounded,
         Impl::Adapter,
         Impl::Specific,
         Impl::Blanket,

@@ -260,6 +260,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   method's body it pairs with must be there, or it's refused. Adding a
   package adds only its own pairs, so adding a dependency never makes a
   program that checked stop checking.
+- **Sealed adapters (lemma S of docs/83-sources.md), kept.** An adapter
+  is sealed if nothing in its module takes one but its protocol's
+  methods; its `len` takes one too, but a measure has no effects and gives
+  an integer or a `bool`, so it can neither hand out what the adapter
+  holds nor change it: measures don't unseal a type.
 - **L6 (the oracle).** The interpreter checks, at each call of an impl's
   method, each law of the method whose trait the copy's type implements,
   as it does the method's trait's contract.
