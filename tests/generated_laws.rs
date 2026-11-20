@@ -10,8 +10,11 @@
 //! blanket impl of `P`; each keeping the law or breaking it,
 //! called through `S`, through `P` alone, and at the known type. Each is
 //! refused, or accepted and run by the interpreter, which checks every
-//! law at each call of an impl's method. They're about what programs
-//! mean, so they run on Linux alone.
+//! law at each call of an impl's method. And a law of a method of a trait
+//! with glue, for each kind of type whose impl of it is derived or built
+//! in, beside the same law of a written impl at each (`laws_of_glue`,
+//! retrospective 16). They're about what programs mean, so they run on
+//! Linux alone.
 
 use t_lang::error::Phase;
 
@@ -403,6 +406,156 @@ fn laws() {
         }
     }
     assert!(count > 150, "only {count} programs");
+    assert!(
+        failures.is_empty(),
+        "{} of {count} failed:\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}
+
+/// The types of each kind a trait's method can come from at a type: a
+/// derive, the language's own rules, a written impl (retrospective 16):
+/// each with a value, and whether it needs `alloc`.
+const PROVIDERS: &[(&str, &str, &str)] = &[
+    ("derived struct", "X", "X { a: 1 }"),
+    ("derived enum", "E", "E::A"),
+    ("derived generic", "W<u8>", "W { a: 1u8 }"),
+    ("derived in core", "Option<u8>", "Some(1u8)"),
+    ("tuple", "(u8, bool)", "(1u8, true)"),
+    ("unit", "()", "()"),
+    ("array", "[u8; 2]", "[1u8, 2]"),
+    ("array of a struct", "[X; 1]", "[X { a: 1 }]"),
+    ("integer", "u8", "1u8"),
+    ("bool", "bool", "true"),
+    ("char", "char", "'c'"),
+    ("reference", "&'a u8", "&1u8"),
+    ("reference to a struct", "&'a X", "&X { a: 1 }"),
+    ("string", "&'a str", "\"s\""),
+    ("box", "Box<u8>", "Box::new(1u8)"),
+];
+
+const GLUE_TYPES: &str = "#[derive(Eq, Debug, Discard)]
+struct X { a: u8 }
+
+#[derive(Eq, Debug, Discard, Copy)]
+enum E { A, B }
+
+#[derive(Eq, Debug, Discard)]
+struct W<T> { a: T }
+";
+
+/// `impl S for ty {}`, with the lifetime it names.
+fn impl_for(ty: &str, body: &str) -> String {
+    let params = if ty.contains("'a") { "<'a>" } else { "" };
+    format!("impl{params} S for {ty} {{{body}}}\n")
+}
+
+/// A program for a law of `Eq`'s `eq` (`conditional`: in a trait whose
+/// `where` names `Eq`, else in a subtrait of it), kept by type `ty`, whose
+/// `Eq` is a derive's or the language's; called through the law's trait
+/// (`generic`) or at `ty`.
+fn glue_program(ty: &str, value: &str, conditional: bool, generic: bool) -> String {
+    let (law, body) = match conditional {
+        false => (
+            "trait S: Eq {\n    law fn eq(&self, other: &Self) -> { b: bool | !b };\n}\n",
+            "",
+        ),
+        true => (
+            "trait S {\n    #[measure]\n    fn k(&self) -> usize;\n\n    law fn eq(&self, other: \
+             &Self) -> { b: bool | !b } where Self: Eq;\n}\n",
+            "\n    #[measure]\n    fn k(&self) -> usize { 0 }\n",
+        ),
+    };
+    let alloc = ty.contains("Box");
+    let call = if generic {
+        "same(&x, &x)"
+    } else {
+        "Eq::eq(&x, &x)"
+    };
+    format!(
+        "{}{law}\n{GLUE_TYPES}\n{}\nfn same<T: S + Eq>(a: &T, b: &T) -> {{ r: bool | !r }} {{ \
+         a.eq(b) }}\n\nfn main() with {{{}}} {{\n    let x = {value};\n    let arr = [0u8; 1];\n    \
+         let i: usize = if {call} {{ 7 }} else {{ 0 }};\n    let _ = arr[i];\n}}\n",
+        if alloc {
+            "use alloc::boxed::Box;\n"
+        } else {
+            ""
+        },
+        impl_for(ty, body),
+        if alloc { "alloc" } else { "" },
+    )
+}
+
+/// The same law, of a method of a trait of the program's, whose impl at
+/// `ty` is written: it's checked, kept (`honest`) or not.
+fn written_program(ty: &str, value: &str, honest: bool, generic: bool) -> String {
+    let alloc = ty.contains("Box");
+    let params = if ty.contains("'a") { "<'a>" } else { "" };
+    let call = if generic {
+        "same(&x, &x)"
+    } else {
+        "MyEq::eq(&x, &x)"
+    };
+    format!(
+        "{}trait MyEq {{\n    fn eq(&self, other: &Self) -> bool;\n}}\n\ntrait S: MyEq {{\n    \
+         law fn eq(&self, other: &Self) -> {{ b: bool | !b }};\n}}\n\n{GLUE_TYPES}\n\
+         impl{params} MyEq for {ty} {{\n    fn eq(&self, other: &Self) -> bool {{ let _ = other; \
+         {} }}\n}}\n\n{}\nfn same<T: S>(a: &T, b: &T) -> {{ r: bool | !r }} {{ a.eq(b) }}\n\n\
+         fn main() with {{{}}} {{\n    let x = {value};\n    let arr = [0u8; 1];\n    let i: usize \
+         = if {call} {{ 7 }} else {{ 0 }};\n    let _ = arr[i];\n}}\n",
+        if alloc {
+            "use alloc::boxed::Box;\n"
+        } else {
+            ""
+        },
+        if honest { "false" } else { "true" },
+        impl_for(ty, ""),
+        if alloc { "alloc" } else { "" },
+    )
+}
+
+/// A law of a method of a trait with glue (a derived or built-in impl,
+/// whose body monomorphisation writes) is refused, for every kind of type
+/// that has one; the same law of a written impl's method, for the same
+/// types, is checked against its body (H1 of retrospective 16).
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn laws_of_glue() {
+    const GLUE: &str = "a law can't be of `Eq`'s `eq`";
+    let mut failures = Vec::new();
+    let mut count = 0;
+    for &(what, ty, value) in PROVIDERS {
+        for generic in [true, false] {
+            let called = if generic {
+                "through the law's trait"
+            } else {
+                "at the type"
+            };
+            for conditional in [false, true] {
+                count += 1;
+                let src = glue_program(ty, value, conditional, generic);
+                match verdict(&src) {
+                    Err(m) if m.starts_with(GLUE) => {}
+                    Ok(()) => failures.push(format!("{what}, {called}: accepted\n{src}")),
+                    Err(m) => failures.push(format!("{what}, {called}: {m}\n{src}")),
+                }
+            }
+            for honest in [true, false] {
+                count += 1;
+                let src = written_program(ty, value, honest, generic);
+                match (verdict(&src), honest) {
+                    (Ok(()), true) => {}
+                    (Err(m), false) if m.contains(UNPROVED) => {}
+                    (Ok(()), false) => {
+                        failures.push(format!("{what}, {called}: a lie accepted\n{src}"))
+                    }
+                    (Err(m), _) => failures.push(format!("{what}, {called}: {m}\n{src}")),
+                }
+            }
+        }
+    }
+    assert!(count >= 120, "only {count} programs");
     assert!(
         failures.is_empty(),
         "{} of {count} failed:\n\n{}",

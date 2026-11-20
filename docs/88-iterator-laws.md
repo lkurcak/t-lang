@@ -1,8 +1,9 @@
 # Step 88: iterator laws
 
-Code: `Checker::law` (`src/check/traits/collect.rs`) and
-`Checker::same_law_signature` (`src/check/traits/impls.rs`); in
-`src/check/refine/laws.rs`, `Checker::law_tables`, which pairs impls, and
+Code: `Checker::law` (`src/check/traits/collect.rs`), with `has_glue`
+(`src/traits.rs`), and `Checker::same_law_signature`
+(`src/check/traits/impls.rs`); in `src/check/refine/laws.rs`,
+`Checker::law_tables`, which pairs impls, and
 `Checker::keep_laws`, which walks their methods again; `Walk::with_laws`
 in `src/check/refine.rs`, where calls learn them; `Mono::laws_of` and the
 law checks in `Interp::call`; `ExactSizeIterator` in `core/iter.t`.
@@ -94,6 +95,11 @@ method's body may assume, whatever else its type implements.
   type implementing the law's trait, as it's checked once, generically.
   An impl that writes its own body for the method is checked as any
   impl's is.
+- **Not of a method of a trait with glue**: `Eq`, `Ord`, `Debug`,
+  `Discard` and the other traits some of whose impls the compiler makes,
+  by `#[derive]` or its own rules, as for the integers and tuples. Their
+  methods there are glue, with no body to check a law against (H1 of
+  retrospective 16, below).
 
 What a law says is learned at every call of the method whose type
 implements the law's trait where the call is: through a bound, `I:
@@ -157,6 +163,33 @@ that body walked at `T = u8`, which isn't done yet.
 What a law promises of a parameter is of its value as passed, so the
 method it's of can't make that parameter `mut`, as an impl's method can't
 for what its trait's promises (H2 of retrospective 15).
+
+And a law can't be of a method of a trait whose impls aren't all written:
+a derived `Eq`'s `eq`, or an integer's or a tuple's, is glue
+monomorphisation makes, and nothing is walked to keep it. Until 0.102.1
+such a law was learned and never checked, so this was accepted, and read
+`arr[7]`:
+
+```rust,error
+trait Never: Eq {
+    law fn eq(&self, other: &Self) -> { b: bool | !b };
+}
+
+#[derive(Eq, Discard)]
+struct X { a: u8 }
+
+impl Never for X {}
+
+fn same<T: Never>(a: &T, b: &T) -> { r: bool | !r } { a.eq(b) }
+
+fn main() with {} {
+    let x = X { a: 1 };
+    let arr = [0u8; 1];
+    let i: usize = if same(&x, &x) { 7 } else { 0 };
+    let _ = arr[i];
+}
+// error: a law can't be of `Eq`'s `eq`: some impls of `Eq` are the compiler's, derived or built in, with no body to check what it says of
+```
 
 ## `ExactSizeIterator`
 
@@ -235,7 +268,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 - **L1 (a law at a call).** A call of method `m` of trait `P`, whose
   `Self` is `X` where `X: S` holds, learns `S`'s law of `m` at `X`.
   Monomorphisation runs `X`'s impl of `P`'s `m` (static dispatch; one impl
-  by coherence). `X: S` holds by an impl of `S` for some `H` that `X` is,
+  by coherence): its own method, or `P`'s default body, as `P` has no
+  glue, the bodies the compiler makes for derived and built-in impls,
+  which a law of its method would be refused for (`has_glue`, and
+  `Mono::target` asserts it makes glue for no other trait). `X: S` holds by an impl of `S` for some `H` that `X` is,
   whose bounds hold at `X`; the impl of `P` whose `m` runs is for `H` too,
   up to the names of their parameters (else the pair was refused), so its
   body was walked with both impls' bounds, assuming what `m` asks, to keep
@@ -266,8 +302,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   an integer or a `bool`, so it can neither hand out what the adapter
   holds nor change it: measures don't unseal a type.
 - **L6 (the oracle).** The interpreter checks, at each call of an impl's
-  method, each law of the method whose trait the copy's type implements,
-  as it does the method's trait's contract.
+  method or of a copy of a trait's default body, each law of the method
+  whose trait the copy's type implements, as it does the method's
+  trait's contract. (Until 0.102.1, not of a default body's copy.)
 
 ## What it doesn't do
 
@@ -288,6 +325,10 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   (docs/86, H1): `for x in &mut it` doesn't know how many are left.
 - A law can be of a method with a default body only in that method's
   trait's package, where the body is checked.
+- **No law of `Eq`'s `eq`, `Ord`'s `cmp` or `Debug`'s `fmt`.** Some of
+  their impls are glue. One kept by written impls only could be checked,
+  but a type's derive would then refuse it; a derive that wrote bodies
+  the checker walks would let laws of them be.
 
 ## Decisions
 
@@ -301,6 +342,13 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   runs out, or saturating the count, would be wrong without a word on a
   32-bit target, where 2³² values can be gone through.
 - **D4: `if` in a measure's body**, for `Zip`'s `len`.
+- **D5 (step 89, retrospective 16): no law of a method of a trait with
+  glue**, refused where the law is. Refusing each impl of the law's
+  trait at a type whose method could be glue keeps laws of hand-written
+  `Eq` impls, but needs a complete account of which types have which
+  built-in impls, tuples under conditional laws included, for a law no
+  derived type could keep; a derive writing bodies to check is larger.
+  Either can come later, as it accepts more.
 
 ## Exercises
 
@@ -318,6 +366,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
    be unchecked for.
 5. Why does `Enumerate<I>`'s `next` keep `next`'s law, though it may
    panic?
+6. A law of `Eq`'s `eq` is refused even in a program whose every `Eq`
+   impl is written. Which impls would it have been learned of anyway?
 
 ## Reading
 

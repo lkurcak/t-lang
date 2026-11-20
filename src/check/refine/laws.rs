@@ -208,8 +208,16 @@ impl Checker {
                     continue;
                 }
                 // One that doesn't write its own has the default, which
-                // keeps the law for every type (`law_default`).
+                // keeps the law for every type (`law_default`). A derived
+                // one has glue, which a law of its trait's method was
+                // refused for (`Checker::law`).
+                assert!(!p.derived, "a law of a method of a trait with glue");
                 let Some((_, symbol)) = p.methods.iter().find(|(n, _)| *n == l.name) else {
+                    let provided = (self.traits.method(&l.of, &l.name)).is_some_and(|m| m.provided);
+                    assert!(
+                        provided,
+                        "an impl with neither its own method nor a default"
+                    );
                     continue;
                 };
                 let (shown, of) = (source_name(tr), source_name(&l.of));

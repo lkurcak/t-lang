@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.102.1 (2026-11-20)
+
+Step 89: laws only of written bodies (retrospective 16). See
+[docs/88-iterator-laws.md](docs/88-iterator-laws.md).
+
+### Fixed
+
+- A law could be of a method of a trait some of whose impls the compiler
+  makes, as `Eq`'s `eq` is for a derived `Eq`, an integer, a tuple or an
+  array: there was no body to check it against, so it was learned at
+  every call and never checked. With `law fn eq(&self, other: &Self) ->
+  { b: bool | !b }` in `trait Never: Eq` and `impl Never for X {}`,
+  `if same(&x, &x) { arr[7] }` was accepted for a one-value `arr`. A law
+  can't be of a method of such a trait now: `Eq`, `Ord`, `Debug`,
+  `Discard` and the other built-in traits. (Unsound since 0.102.0.)
+- `.eq` wasn't found as a method of a `char`, a `str`, a slice or an
+  array, whose `Eq` is built in, and the message said they didn't
+  implement it: method lookup kept a list of its own of the types with a
+  built-in `Eq`. It reads the table `Eq` bounds are proved by now.
+
+### Changed
+
+- The interpreter checks a law at each call of a copy of a trait's
+  default body too, as `map` is of `ExactSizeIterator`'s, not only at an
+  impl's method.
+
 ## 0.102.0 (2026-11-20)
 
 Step 88: iterator laws. See
