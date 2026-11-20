@@ -1,6 +1,6 @@
 //! Arrays: a number of values fixed by their type, inline.
 
-use crate::iter::{IntoIterator, Iterator};
+use crate::iter::{ExactSizeIterator, IntoIterator, Iterator};
 use crate::mem::Copy;
 use crate::ops::Range;
 use crate::option::Option;
@@ -109,21 +109,11 @@ impl<T: Copy, const N: usize> IntoIterator for [T; N] {
 #[derive(Copy where T: Copy, Discard where T: Discard)]
 export struct IntoIter<T, const N: usize> { values: [T; N], next: { i: usize | i <= values.len() } }
 
-impl<T, const N: usize> IntoIter<T, N> {
-    /// How many values it has yet to give. It's a measure: each value
-    /// `next` gives takes one off, and once it gives `None`, it's `0`.
-    #[measure]
-    export fn len(&self) -> usize { self.values.len() - self.next }
-}
-
 impl<T: Copy, const N: usize> Iterator for IntoIter<T, N> {
     type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
-    ensures
-        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
-    {
+    fn next(&mut self) -> Option<T> {
         let i = self.next;
         if i < self.values.len() {
             self.next = i + 1;
@@ -132,6 +122,12 @@ impl<T: Copy, const N: usize> Iterator for IntoIter<T, N> {
             Option::None
         }
     }
+}
+
+/// How many values it has yet to give: those from index `next` on.
+impl<T: Copy, const N: usize> ExactSizeIterator for IntoIter<T, N> {
+    #[measure]
+    fn len(&self) -> usize { self.values.len() - self.next }
 }
 
 /// An array whose value at each index `i` is `f(i)`, made front to back:

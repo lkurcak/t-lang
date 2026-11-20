@@ -440,6 +440,12 @@ pub(in crate::check) fn trait_method_symbol(tr: &str, m: &str) -> String {
     format!("<{tr}>::{m}")
 }
 
+/// The symbol trait `tr`'s law of method `m` is kept under: `law` is a
+/// keyword, so no method of `tr` has its name.
+pub(in crate::check) fn law_symbol(tr: &str, m: &str) -> String {
+    format!("<{tr}>::law::{m}")
+}
+
 /// Could `pat`, which mentions type parameters `params`, be `t`, which may
 /// have type variables in it, for some choice of the parameters and the
 /// variables?

@@ -742,6 +742,19 @@ pub(crate) struct Checker {
     /// The refinements in each function's signature that has any, by
     /// symbol (see `refine`).
     refined: HashMap<String, refine::RefinedSig>,
+    /// What each law promises at calls of the method it's of, by the
+    /// symbol of the function called: the trait's method, or an impl's
+    /// (docs/88-iterator-laws.md).
+    law_posts: HashMap<String, Vec<refine::LawPost>>,
+    /// The laws each impl's method keeps, by its symbol, with the bounds
+    /// of the impl of the law's trait each is for.
+    law_checks: HashMap<String, Vec<refine::LawCheck>>,
+    /// The measures of traits the predicates of bodies call of types with
+    /// closures in them, found before the closures' captures were known:
+    /// the function, the type, which must implement the trait, and where
+    /// it's called (`Checker::trait_measure`), checked with the function's
+    /// refinements.
+    measure_bounds: std::cell::RefCell<Vec<(scope::FnId, Type, String, Span)>>,
     /// What the refinement logic knows each const's value is, by symbol,
     /// if it worked it out from its initializer (see `refine::Known`).
     const_values: HashMap<String, refine::Known>,
@@ -1163,6 +1176,9 @@ impl Checker {
             in_trait_impl: false,
             in_discard: false,
             refined: HashMap::new(),
+            law_posts: HashMap::new(),
+            law_checks: HashMap::new(),
+            measure_bounds: Default::default(),
             const_values: HashMap::new(),
             refined_lets: HashMap::new(),
             refined_params: HashSet::new(),
@@ -1345,6 +1361,7 @@ impl Checker {
         self.pending_refinements()?;
         self.impl_measures()?;
         self.inherit_contracts()?;
+        self.law_tables()?;
         self.check_impls(prog)?;
         self.info.traits = self.traits.clone();
         self.bodies(prog)?;

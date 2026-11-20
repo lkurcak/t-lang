@@ -951,6 +951,14 @@ fn outline(src: &str, prog: &Program) -> Vec<DocumentSymbol> {
             s.kind = SymbolKind::METHOD;
             children.push(s);
         }
+        // A law, as a method it says more of (docs/88-iterator-laws.md).
+        for l in &t.laws {
+            let mut s = fn_symbol(src, &l.decl, Vec::new());
+            s.kind = SymbolKind::METHOD;
+            s.detail = s.detail.map(|d| format!("law {d}"));
+            children.push(s);
+        }
+        children.sort_by_key(|s| (s.range.start.line, s.range.start.character));
     }
     // The items of each module.
     let mut top: Vec<Vec<DocumentSymbol>> = vec![Vec::new(); prog.mods.len()];

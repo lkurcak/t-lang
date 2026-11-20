@@ -671,6 +671,7 @@ impl Printer<'_> {
         let mut items: Vec<BodyItem> = t.assoc.iter().map(BodyItem::Decl).collect();
         items.extend(t.effects.iter().map(BodyItem::EffectDecl));
         items.extend(t.methods.iter().map(|m| BodyItem::Fn(&m.decl, m.provided)));
+        items.extend(t.laws.iter().map(BodyItem::Law));
         let body = self.methods(open, t.span.end - 1, items);
         let sealed = if t.sealed.is_some() { "sealed " } else { "" };
         doc + vis(t.vis) + sealed + "trait " + &t.name.name + supers + " " + body
@@ -719,6 +720,11 @@ impl Printer<'_> {
                     &f.allows[..],
                     Span::new(fn_start(f), f.span.end),
                 ),
+                BodyItem::Law(l) => (
+                    l.decl.doc.as_ref(),
+                    &l.decl.allows[..],
+                    Span::new(l.law.start, l.decl.span.end),
+                ),
                 BodyItem::Decl(a) => (a.doc.as_ref(), &[][..], a.span),
                 BodyItem::Def(a) => (a.doc.as_ref(), &[][..], a.span),
                 BodyItem::EffectDecl(a) => (a.doc.as_ref(), &[][..], a.span),
@@ -730,6 +736,19 @@ impl Printer<'_> {
                 BodyItem::Fn(f, true) => self.fn_decl(f),
                 BodyItem::Fn(f, false) => {
                     self.signature(f)
+                        + self.wheres(f.effects.as_ref(), &f.generics, &f.ensures, false)
+                        + ";"
+                }
+                BodyItem::Law(l) => {
+                    let f = &l.decl;
+                    let lead = self.lead(f.doc.as_ref(), &f.allows, l.law.start);
+                    let bare = FnDecl {
+                        doc: None,
+                        allows: Vec::new(),
+                        ..f.clone()
+                    };
+                    lead + "law "
+                        + self.signature(&bare)
                         + self.wheres(f.effects.as_ref(), &f.generics, &f.ensures, false)
                         + ";"
                 }
@@ -1898,6 +1917,8 @@ fn range(lo: Option<i128>, hi: Option<i128>, inclusive: bool, lit: Lit) -> Strin
 enum BodyItem<'a> {
     /// A method, with whether it has a body.
     Fn(&'a FnDecl, bool),
+    /// `law fn next(&mut self) -> ..;`, in a trait.
+    Law(&'a Law),
     /// `type Item: Discard;`, in a trait.
     Decl(&'a AssocDecl),
     /// `type Item = i64;`, in an impl.
@@ -1912,6 +1933,10 @@ impl BodyItem<'_> {
     fn span(&self) -> Span {
         match self {
             BodyItem::Fn(f, _) => lead_start_span(f),
+            BodyItem::Law(l) => Span::new(
+                lead_start(l.decl.doc.as_ref(), &l.decl.allows, l.law.start),
+                l.decl.span.end,
+            ),
             BodyItem::Decl(a) => a.span,
             BodyItem::Def(a) => a.span,
             BodyItem::EffectDecl(a) => a.span,

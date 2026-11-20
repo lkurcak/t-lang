@@ -127,6 +127,14 @@ pub(super) fn names(
                 }
             }
         }
+        // A law's types, as a method's without a body.
+        for l in &t.laws {
+            w.enter("law", &l.decl.name, &l.decl.generics.types);
+            w.bounds(&l.decl.generics);
+            l.decl.params.iter().for_each(|p| w.ty(&p.ty));
+            w.ty(&l.decl.ret);
+            w.leave();
+        }
     }
     let defs = prog
         .all_types()

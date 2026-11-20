@@ -26,7 +26,7 @@ mod termination;
 pub(super) use bounds::has_proj;
 pub(super) use collect::Outer;
 pub(super) use dicts::{Site, dict_names};
-pub(super) use methods::{Found, trait_method_symbol};
+pub(super) use methods::{Found, law_symbol, trait_method_symbol};
 pub(super) use prove::{Obligation, Why};
 
 use crate::types::{AdtKind, Type};

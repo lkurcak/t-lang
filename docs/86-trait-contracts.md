@@ -270,7 +270,8 @@ file's check what the operating system says (which keeps it), as an
   measure of a trait `ExactSize: Iterator`, saying how `Iterator::next`
   changes it: a contract on another trait's method, which `Rev` needs of
   `next_back` too. So adapters still have no `len`, and `count` and
-  `enumerate` still say `with panic` (docs/84).
+  `enumerate` still say `with panic` (docs/84). (Step 88: laws,
+  docs/88-iterator-laws.md.)
 - A trait's measure can't be implemented for a slice or `str` (which only
   the built-in libraries can implement traits for): its measures are of
   the reference.

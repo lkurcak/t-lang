@@ -316,6 +316,38 @@ pub struct TraitDef {
     /// Its associated types.
     pub assoc: Vec<AssocDecl>,
     pub methods: Vec<MethodDef>,
+    /// What it says of its supertraits' methods, and of others' it's
+    /// written with (docs/88-iterator-laws.md).
+    pub laws: Vec<LawDef>,
+}
+
+/// `law fn next(&mut self) -> ..;` in trait `S`: a contract on method
+/// `name` of trait `of`, a supertrait of `S`'s, or, if it's `conditional`,
+/// one its `where Self: P` names. Every type implementing `S` (and `of`)
+/// keeps it: each impl of `S` is checked to, against the body of the
+/// type's impl of `of`'s method, under both impls' bounds (lemma L1 of
+/// docs/88-iterator-laws.md), and every call of that method where its
+/// `Self` implements `S` learns it.
+#[derive(Debug, Clone)]
+pub struct LawDef {
+    pub name: String,
+    /// Its own symbol, `<S>::law::next`, under which its contract is kept,
+    /// as a method's is under the method's.
+    pub symbol: String,
+    /// The trait whose method it's of.
+    pub of: String,
+    /// That method's symbol, `<Iterator>::next`.
+    pub method: String,
+    /// Is `of` written in its `where`, not one of the trait's supertraits?
+    pub conditional: bool,
+    /// Generic over `Self` first, then the method's own type parameters,
+    /// with `Self: S` first among its bounds, then `Self: of` if it's
+    /// conditional: the method's, at those.
+    pub scheme: Scheme,
+    pub span: Span,
+    /// The package it's in, by its root module: its impls' obligations
+    /// are checked there, and later ones' where they are.
+    pub package: usize,
 }
 
 /// An associated type of a trait: `type Item: Discard;`.

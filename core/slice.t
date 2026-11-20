@@ -1,7 +1,7 @@
 //! Slices: values one after another in memory, seen through a reference.
 
 use crate::cmp::{Ord, Ordering};
-use crate::iter::{DoubleEndedIterator, IntoIterator, Iterator};
+use crate::iter::{DoubleEndedIterator, ExactSizeIterator, IntoIterator, Iterator};
 use crate::mem;
 use crate::mem::Copy;
 use crate::ops::Range;
@@ -203,13 +203,10 @@ impl<'a, T> IntoIterator for &'a mut [T] {
 #[derive(Discard, Send where T: Sync, Sync where T: Sync)]
 export struct Iter<'a, T> { rest: &'a [T] }
 
-impl<'a, T> Iter<'a, T> {
-    /// How many values it has yet to give. It's a measure: each value
-    /// `next` or `next_back` gives takes one off, and once they give
-    /// `None`, it's `0`. So a `for` can count what it's been through:
-    /// `for x in it: s.iter() invariant n + it.len() <= s.len()`.
+/// How many values it has yet to give: what's left of the slice.
+impl<'a, T> ExactSizeIterator for Iter<'a, T> {
     #[measure]
-    export fn len(&self) -> usize { self.rest.len() }
+    fn len(&self) -> usize { self.rest.len() }
 }
 
 /// Safe code over `cut`: each value is the head of what's left, which
@@ -218,10 +215,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
     effect e = {};
 
-    fn next(&mut self) -> { r: Option<&'a T> | r.is_some() == (old(self.len()) > 0) }
-    ensures
-        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
-    {
+    fn next(&mut self) -> Option<&'a T> {
         let rest: &'a [T] = self.rest;
         if rest.len() == 0 {
             return None;
@@ -234,10 +228,7 @@ impl<'a, T> Iterator for Iter<'a, T> {
 
 /// From the back: each value is the tail of what's left.
 impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
-    fn next_back(&mut self) -> { r: Option<&'a T> | r.is_some() == (old(self.len()) > 0) }
-    ensures
-        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
-    {
+    fn next_back(&mut self) -> Option<&'a T> {
         let rest: &'a [T] = self.rest;
         let n = rest.len();
         if n == 0 {
@@ -254,10 +245,10 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
 #[derive(Discard, Send where T: Send, Sync where T: Sync)]
 export struct IterMut<'a, T> { rest: &'a mut [T] }
 
-impl<'a, T> IterMut<'a, T> {
-    /// How many values it has yet to give, as `Iter::len`.
+/// How many values it has yet to give, as `Iter`'s.
+impl<'a, T> ExactSizeIterator for IterMut<'a, T> {
     #[measure]
-    export fn len(&self) -> usize { self.rest.len() }
+    fn len(&self) -> usize { self.rest.len() }
 }
 
 /// Safe code over `cut_mut`: it takes what's left out of the iterator,
@@ -268,10 +259,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
     type Item = &'a mut T;
     effect e = {};
 
-    fn next(&mut self) -> { r: Option<&'a mut T> | r.is_some() == (old(self.len()) > 0) }
-    ensures
-        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
-    {
+    fn next(&mut self) -> Option<&'a mut T> {
         let mut rest: &'a mut [T] = empty_mut();
         mem::swap(&mut self.rest, &mut rest);
         if rest.len() == 0 {
@@ -287,10 +275,7 @@ impl<'a, T> Iterator for IterMut<'a, T> {
 /// From the back, as `next` from the front: what it gives is in no slice
 /// it keeps.
 impl<'a, T> DoubleEndedIterator for IterMut<'a, T> {
-    fn next_back(&mut self) -> { r: Option<&'a mut T> | r.is_some() == (old(self.len()) > 0) }
-    ensures
-        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
-    {
+    fn next_back(&mut self) -> Option<&'a mut T> {
         let mut rest: &'a mut [T] = empty_mut();
         mem::swap(&mut self.rest, &mut rest);
         let n = rest.len();
@@ -313,20 +298,17 @@ impl<'a, T: Copy> Iter<'a, T> {
 #[derive(Discard, Send where T: Sync, Sync where T: Sync)]
 export struct Copied<'a, T> { iter: Iter<'a, T> }
 
-impl<'a, T> Copied<'a, T> {
-    /// How many values it has yet to give, as `Iter::len`.
+/// How many values it has yet to give, as `Iter`'s.
+impl<'a, T: Copy> ExactSizeIterator for Copied<'a, T> {
     #[measure]
-    export fn len(&self) -> usize { self.iter.len() }
+    fn len(&self) -> usize { self.iter.len() }
 }
 
 impl<'a, T: Copy> Iterator for Copied<'a, T> {
     type Item = T;
     effect e = {};
 
-    fn next(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
-    ensures
-        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
-    {
+    fn next(&mut self) -> Option<T> {
         match self.iter.next() {
             Some(x) => Some(*x),
             None => None,
@@ -335,10 +317,7 @@ impl<'a, T: Copy> Iterator for Copied<'a, T> {
 }
 
 impl<'a, T: Copy> DoubleEndedIterator for Copied<'a, T> {
-    fn next_back(&mut self) -> { r: Option<T> | r.is_some() == (old(self.len()) > 0) }
-    ensures
-        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0),
-    {
+    fn next_back(&mut self) -> Option<T> {
         match self.iter.next_back() {
             Some(x) => Some(*x),
             None => None,

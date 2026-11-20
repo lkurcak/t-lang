@@ -113,6 +113,49 @@ export trait DoubleEndedIterator: Iterator {
     fn next_back(&mut self) -> Option<Self::Item> with Self::e;
 }
 
+/// An iterator that knows how many values it has yet to give, its `len`:
+/// each value `next` gives takes one off, and it gives `None` only when
+/// there are none, so code generic in it can count what it's been
+/// through. So can code given one of a double-ended one, from either end.
+/// That's a *law* of `next` and `next_back`, which every type implementing
+/// both keeps: each impl of it is checked to, against the body of its
+/// `next` (docs/88-iterator-laws.md).
+///
+/// `len` is a measure, so refinements can say it: `for x in it: s.iter()
+/// invariant n + it.len() == s.len()` counts what it's been through.
+export trait ExactSizeIterator: Iterator {
+    /// How many values it has yet to give.
+    #[measure]
+    fn len(&self) -> usize;
+
+    /// Each value it gives takes one off `len`, and it gives `None` only at
+    /// `0`, where `len` stays.
+    law fn next(&mut self) -> { r: Option<Self::Item> | r.is_some() == (old(self.len()) > 0) }
+    with Self::e
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0);
+
+    /// From the back too, of one that's double-ended.
+    law fn next_back(&mut self) -> { r: Option<Self::Item> | r.is_some() == (old(self.len()) > 0) }
+    with Self::e
+    where
+        Self: DoubleEndedIterator,
+    ensures
+        self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0);
+
+    /// `f` of each: as many.
+    law fn map<U, effect fx, F: FnMut(Self::Item) -> U with fx>(
+        self,
+        f: F,
+    ) -> { m: Map<Self, F> | m.len() == self.len() };
+
+    /// Each with its index: as many.
+    law fn enumerate(self) -> { e: Enumerate<Self> | e.len() == self.len() };
+
+    /// Back to front: as many.
+    law fn rev(self) -> { r: Rev<Self> | r.len() == self.len() } where Self: DoubleEndedIterator;
+}
+
 /// What a `for` loop can go through: `for x in c` takes the values of
 /// `c.into_iter()`. Every iterator is one, as it is, and so are references
 /// to a collection, which give references to its values: `for x in &l`.
@@ -179,6 +222,17 @@ impl<
     }
 }
 
+/// As many as `iter` has yet to give: `f` of each.
+impl<
+    U,
+    effect fx,
+    I: ExactSizeIterator,
+    F: FnMut(I::Item) -> U with fx,
+> ExactSizeIterator for Map<I, F> {
+    #[measure]
+    fn len(&self) -> usize { self.iter.len() }
+}
+
 /// What `Iterator::filter` gives: the values of `iter` that `p` says `true`
 /// of.
 #[derive(
@@ -233,6 +287,12 @@ impl<I: Iterator> Iterator for Enumerate<I> {
     }
 }
 
+/// As many as `iter` has yet to give, each with its index.
+impl<I: ExactSizeIterator> ExactSizeIterator for Enumerate<I> {
+    #[measure]
+    fn len(&self) -> usize { self.iter.len() }
+}
+
 /// What `Iterator::zip` gives: a value of `a` and one of `b`, in pairs.
 #[derive(
     Discard where A: Discard, B: Discard,
@@ -256,6 +316,18 @@ impl<A: Iterator, B: Iterator> Iterator for Zip<A, B> where A::Item: Discard {
             },
             None => None,
         }
+    }
+}
+
+/// As many as the shorter of `a` and `b` has yet to give: `next` stops at
+/// that one's end.
+impl<A: ExactSizeIterator, B: ExactSizeIterator> ExactSizeIterator for Zip<A, B>
+where
+    A::Item: Discard,
+{
+    #[measure]
+    fn len(&self) -> usize {
+        if self.a.len() <= self.b.len() { self.a.len() } else { self.b.len() }
     }
 }
 
@@ -295,4 +367,11 @@ impl<I: DoubleEndedIterator> Iterator for Rev<I> {
 impl<I: DoubleEndedIterator> DoubleEndedIterator for Rev<I> {
     #[blame_caller]
     fn next_back(&mut self) -> Option<I::Item> with I::e { self.iter.next() }
+}
+
+/// As many as `iter` has yet to give, from the other end: which it takes
+/// one off of each, as its `next_back` does, being double-ended.
+impl<I: DoubleEndedIterator + ExactSizeIterator> ExactSizeIterator for Rev<I> {
+    #[measure]
+    fn len(&self) -> usize { self.iter.len() }
 }

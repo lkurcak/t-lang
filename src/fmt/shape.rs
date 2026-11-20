@@ -125,7 +125,8 @@ structs! {
         effects, body, intrinsic, measure, ensures, test, blame_caller, konst, is_static, ext };
     Extern { span, import };
     Test { span, panics };
-    TraitDecl { doc, allows, intrinsic, sealed, span, module, vis, name, supers, assoc, effects, methods };
+    TraitDecl { doc, allows, intrinsic, sealed, span, module, vis, name, supers, assoc, effects, methods, laws };
+    Law { law, decl };
     AssocDecl { doc, span, name, bounds };
     AssocDef { doc, span, name, ty };
     EffectDecl { doc, span, name };

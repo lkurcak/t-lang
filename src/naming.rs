@@ -196,6 +196,12 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
             let ps = m.decl.params.iter().filter(|p| p.name.name != "self");
             out.extend(ps.map(|p| ident(&p.name, "variable", Case::Snake)));
         }
+        // A law's name is its method's, checked where that's declared.
+        for l in &t.laws {
+            params(&l.decl.generics, &mut out);
+            let ps = l.decl.params.iter().filter(|p| p.name.name != "self");
+            out.extend(ps.map(|p| ident(&p.name, "variable", Case::Snake)));
+        }
     }
     for d in &prog.impls {
         params(&d.generics, &mut out);

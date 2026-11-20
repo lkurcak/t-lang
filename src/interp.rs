@@ -1551,6 +1551,16 @@ impl<'p> Interp<'p, '_> {
                 let recv = self.measure_term(x, this).val();
                 self.measure_call(e.id, recv)
             }
+            ExprKind::If(c, then, Some(otherwise)) => {
+                let branch = match self.measure_term(c, this).boolean() {
+                    true => then,
+                    false => otherwise,
+                };
+                match &branch.kind {
+                    ExprKind::Block(_, Some(tail)) => self.measure_term(tail, this),
+                    _ => self.measure_term(branch, this),
+                }
+            }
             ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-self.measure_term(x, this).int()),
             ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!self.measure_term(x, this).boolean()),
             ExprKind::Binary(op, l, r) => {
@@ -1842,6 +1852,22 @@ impl<'p> Interp<'p, '_> {
                         }),
                     );
                 }
+                // And what each law of it its type keeps promises
+                // (docs/88-iterator-laws.md), with the law's names.
+                let mut law_rets = Vec::new();
+                for law in exe.laws(&name) {
+                    let env: Vec<(String, Value)> = (law.params.iter())
+                        .zip(&args)
+                        .map(|(p, v)| (p.name.name.clone(), v.clone()))
+                        .collect();
+                    if let Some(r) = self.type_refined(&law.ret, &env, true) {
+                        law_rets.push(r);
+                    }
+                    ensures.extend(
+                        (law.ensures.iter())
+                            .map(|e| self.refined_at(&[(String::new(), e)], env.clone(), true)),
+                    );
+                }
                 // The arguments as they're given, if a free theorem says
                 // what the result is of them.
                 let free = self.measures.free.get(&decl.name.id);
@@ -1898,6 +1924,12 @@ impl<'p> Interp<'p, '_> {
                 if let (Ok(v), Some(r)) = (&result, their_ret) {
                     let what = format!("the result of `{}`, as its trait's says", decl.name.name);
                     r.check(self, v, &what);
+                }
+                if let Ok(v) = &result {
+                    for r in &law_rets {
+                        let what = format!("the result of `{}`, as a law says", decl.name.name);
+                        r.check(self, v, &what);
+                    }
                 }
                 if let (Ok(v), Some(free), Some(given)) = (&result, free, &given) {
                     free_theorems(free, given, v, &decl.name.name);

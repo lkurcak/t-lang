@@ -44,6 +44,7 @@
 (const_item name: (identifier) @constant)
 (static_item name: (identifier) @constant)
 (function_signature_item name: (identifier) @function)
+(law_item name: (identifier) @function)
 (method_call_expression method: (identifier) @function.method)
 (self) @variable.builtin
 
@@ -90,7 +91,7 @@
 ; Keywords
 
 "fn" @keyword.function
-["trait" "sealed" "impl" "for" "mod" "use" "where" "ensures" "invariant" "with" "effect" "unsized" "const" "static" "extern" "unsafe"] @keyword
+["trait" "sealed" "impl" "for" "mod" "use" "where" "ensures" "invariant" "law" "with" "effect" "unsized" "const" "static" "extern" "unsafe"] @keyword
 (effect) @type.builtin
 (visibility_modifier) @keyword.storage.modifier
 "let" @keyword

@@ -34,7 +34,8 @@
 //!          | path "<" (IDENT ("=" type | ":" path ("+" path)*)),* ">"
 //!          | path "(" (type ("," type)*)? ")" ("->" type)?  -- `Fn(i64) -> i64`
 //! param    = "mut"? IDENT ":" type
-//! trait    = "sealed"? "trait" IDENT (":" path ("+" path)*)? "{" (head method)* "}"
+//! trait    = "sealed"? "trait" IDENT (":" path ("+" path)*)? "{" (head ("law"? method))* "}"
+//!                                                   -- `law`: no body (docs/88-iterator-laws.md)
 //! impl     = "impl" generics? (path "for")? type "{" (head vis? method)* "}"
 //! method   = "fn" IDENT generics? "(" ((receiver | param) ("," param)* ","?)? ")"
 //!            ("->" type)? where? (block | ";")       -- `;` only in a trait
@@ -1429,10 +1430,30 @@ impl Parser {
         let mut assoc = Vec::new();
         let mut effects = Vec::new();
         let mut methods = Vec::new();
+        let mut laws = Vec::new();
         while *self.peek() != Tok::RBrace {
             let head = (self.head()?.no_derives()?.no_intrinsic()?).no_test()?;
             self.no_pub("a trait's methods are public wherever the trait is")?;
             match self.peek() {
+                Tok::Law => {
+                    let law = self.bump().span;
+                    let head = head.no_blame_caller()?.no_measure(
+                        "a law can't be a measure: it says what another trait's method \
+                         promises",
+                    )?;
+                    if *self.peek() != Tok::Fn {
+                        return Err(self.unexpected("`fn` after `law`"));
+                    }
+                    let (decl, provided) = self.function(head, true, true, None)?;
+                    if provided {
+                        return Err(Error::syntax(
+                            decl.body.span,
+                            "a law has no body: it says what each impl's method promises; end \
+                             it with `;`",
+                        ));
+                    }
+                    laws.push(Law { law, decl });
+                }
                 Tok::Type => {
                     let head = head.no_blame_caller()?.no_measure(NOT_METHOD)?;
                     assoc.push(self.assoc_decl(head)?)
@@ -1453,7 +1474,7 @@ impl Parser {
                     ));
                 }
                 Tok::Extern => return Err(Error::syntax(self.span(), NOT_EXTERN)),
-                _ => return Err(self.unexpected("`fn`, `type`, `effect` or `}`")),
+                _ => return Err(self.unexpected("`fn`, `law`, `type`, `effect` or `}`")),
             }
         }
         let end = self.expect(Tok::RBrace)?;
@@ -1470,6 +1491,7 @@ impl Parser {
             assoc,
             effects,
             methods,
+            laws,
         })
     }
 

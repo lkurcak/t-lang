@@ -244,6 +244,22 @@ module.exports = grammar({
       ';',
     ),
 
+    // `law fn next(&mut self) -> { r: .. | .. } ensures ..;` in a trait:
+    // what a supertrait's method, or one of a trait its `where` names,
+    // promises of every type implementing this one too.
+    law_item: $ => seq(
+      'law',
+      'fn',
+      field('name', $.identifier),
+      optional(field('type_parameters', $.type_parameters)),
+      field('parameters', $.parameters),
+      optional(seq('->', field('return_type', $._type))),
+      optional(field('effects', $.effects)),
+      optional($.where_clause),
+      optional($.ensures_clause),
+      ';',
+    ),
+
     // `trait Ord: Eq { .. }`, maybe `sealed`: only its package implements
     // it.
     trait_item: $ => seq(
@@ -273,6 +289,7 @@ module.exports = grammar({
       repeat(choice(
         $.function_item,
         $.function_signature_item,
+        $.law_item,
         $.associated_type,
         $.associated_effect,
         $.attribute_item,

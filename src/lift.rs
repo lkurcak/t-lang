@@ -85,6 +85,14 @@ pub(crate) fn lift_program(prog: &Program, info: &Info) -> Program {
                     provided: m.provided,
                 })
                 .collect(),
+            // A law's signature, as a method's without a body: what each
+            // impl's method it's of keeps (docs/88-iterator-laws.md).
+            laws: (t.laws.iter())
+                .map(|l| Law {
+                    law: l.law,
+                    decl: cx.lifted(&l.decl).0,
+                })
+                .collect(),
             ..t.clone()
         })
         .collect();
