@@ -102,6 +102,17 @@ pub const BUILTIN_TRAITS: &[&str] = &[
 /// type has one follows from its fields alone (the *markers*, `MARKERS`).
 pub const DERIVABLE: &[&str] = &[COPY, DEBUG, DISCARD, EQ, ORD, SEND, SYNC];
 
+/// Does trait `tr` have impls no program wrote a body of: the checker's
+/// own (`BUILTIN_TRAITS`, and every derivable trait of a tuple), or one
+/// `#[derive]` wrote? Their methods are glue, which monomorphisation
+/// makes (`Mono::target`, which asserts it never makes any for another
+/// trait); so what a law says of one of their methods couldn't be checked
+/// of every body that runs (lemma L1 of docs/88-iterator-laws.md, H1 of
+/// retrospective 16). Every trait `builtin_arm` has a rule for is one.
+pub fn has_glue(tr: &str) -> bool {
+    BUILTIN_TRAITS.contains(&tr) || DERIVABLE.contains(&tr)
+}
+
 /// The traits that are only ever derived or built in: what a proof of one
 /// needs is only more of them, of the parts of the type (lemma D1 of
 /// docs/17-retrospective-1.md, Y2 of docs/38-statics.md).
@@ -885,6 +896,110 @@ fn assumed(anon: &Anon, ty: &Type, tr: &str) -> bool {
     in_scope || declared
 }
 
+/// What a built-in impl of a trait for a type of the language's needs
+/// (`builtin_arm`).
+pub enum Arm<'t> {
+    /// Nothing: it holds.
+    Holds,
+    /// That each of these parts implements the same trait.
+    Parts(Vec<&'t Type>),
+    /// That this part implements that trait.
+    Part(&'t Type, &'static str),
+    /// It doesn't hold, whatever the parts.
+    Fails,
+}
+
+/// The language's own rule for whether `ty` implements `tr`, if it has
+/// one: the impls no program writes. `implements_at` asks this first, and
+/// method lookup asks it which traits a type of the language's may have a
+/// method of, so the two read one table (retrospective 16 found method
+/// lookup's own list of the types with `Eq` four types short). Each trait
+/// with a rule here has glue (`has_glue`).
+///
+/// Plain values may be thrown away, and so may references, whatever they
+/// point to: dropping one doesn't drop that. A box holds what it points
+/// to, so it may be if that may, and an array its values.
+pub fn builtin_arm<'t>(tr: &str, ty: &'t Type) -> Option<Arm<'t>> {
+    let arm = match (tr, ty) {
+        // A tuple is a struct that derives every trait that can be
+        // (lemma T4 of docs/58-tuples.md): it implements one if all its
+        // values do, the fixed point of the derive with fields that
+        // are exactly its parameters.
+        (DISCARD | COPY | EQ | ORD | DEBUG | SEND | SYNC, Type::Tuple(ts)) => {
+            Arm::Parts(ts.iter().collect())
+        }
+        (
+            DISCARD,
+            Type::Int(_)
+            | Type::Bool
+            | Type::Char
+            | Type::Unit
+            | Type::Never
+            | Type::Fn(_)
+            | Type::Ref(..),
+        ) => Arm::Holds,
+        (DISCARD, Type::Box(inner)) => Arm::Parts(vec![inner]),
+        (COPY, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_)) => {
+            Arm::Holds
+        }
+        (COPY, Type::Ref(_, false, _)) => Arm::Holds,
+        (COPY, Type::Ref(_, true, _) | Type::Box(_)) => Arm::Fails,
+        (EQ, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never) => Arm::Holds,
+        // A string compares by its bytes, and a slice value by value,
+        // if its values compare: the same length, and equal values at
+        // each index.
+        (EQ, Type::Str) => Arm::Holds,
+        (EQ, Type::Slice(inner)) => Arm::Parts(vec![inner]),
+        // An array is its values: it may be thrown away, copied or
+        // compared if they may.
+        (DISCARD | COPY | EQ, Type::Array(inner, _)) => Arm::Parts(vec![inner]),
+        (INT, Type::Int(_)) => Arm::Holds,
+        (SIGNED, Type::Int(t)) if t.signed() => Arm::Holds,
+        (UNSIGNED, Type::Int(t)) if !t.signed() => Arm::Holds,
+        (SIGNED | UNSIGNED, Type::Int(_)) => Arm::Fails,
+        // References and boxes compare what they point to.
+        (EQ, Type::Ref(_, _, inner) | Type::Box(inner)) => Arm::Parts(vec![inner]),
+        (EQ, Type::Fn(_)) => Arm::Fails,
+        // Functions can be called any number of times. A reference to
+        // what can be called through a shared reference can be too, and
+        // one to what can be through a mutable one, as long as it's
+        // mutable: calling `&F` calls `F` by `&`.
+        (FN | FN_MUT | FN_ONCE, Type::Fn(_)) => Arm::Holds,
+        (FN | FN_MUT | FN_ONCE, Type::Ref(_, false, inner)) => Arm::Part(inner, FN),
+        (FN_MUT | FN_ONCE, Type::Ref(_, true, inner)) => Arm::Part(inner, FN_MUT),
+        (FN, Type::Ref(_, true, _)) => Arm::Fails,
+        // What has no parts, or only plain bytes, may go to another
+        // thread or be shared with one: nothing in it changes through a
+        // `&`. A function holds nothing; what it reaches of statics is
+        // `Sync` (lemma Y3 of docs/38-statics.md).
+        (
+            SEND | SYNC,
+            Type::Int(_)
+            | Type::Bool
+            | Type::Char
+            | Type::Unit
+            | Type::Never
+            | Type::Str
+            | Type::Fn(_),
+        ) => Arm::Holds,
+        // A box owns what it points to, and an array or slice its
+        // values: they are what's handed over or shared.
+        (SEND | SYNC, Type::Box(inner) | Type::Array(inner, _) | Type::Slice(inner)) => {
+            Arm::Parts(vec![inner])
+        }
+        // A `&T` handed to another thread shares the `T` with it, so it
+        // needs `T: Sync`, as does sharing it. A `&mut T` is the only
+        // way to the `T` while it lives, so handing it over is as
+        // handing over the `T`; sharing it shares the `T`, by `&`.
+        (SEND | SYNC, Type::Ref(_, false, inner)) | (SYNC, Type::Ref(_, true, inner)) => {
+            Arm::Part(inner, SYNC)
+        }
+        (SEND, Type::Ref(_, true, inner)) => Arm::Parts(vec![inner]),
+        _ => return None,
+    };
+    Some(arm)
+}
+
 /// `Traits::implements`, with the bounds in scope in `anon.env`: also
 /// what `project` asks of a blanket impl's bounds at a rigid type.
 pub(crate) fn implements_at(
@@ -908,95 +1023,15 @@ pub(crate) fn implements_at(
         }
         Ok(Source::Builtin)
     };
-    // The built-in impls. Plain values may be thrown away, and so may
-    // references, whatever they point to: dropping one doesn't drop
-    // that. A box holds what it points to, so it may be if that may,
-    // and an array its values.
-    match (tr, ty) {
-        // A tuple is a struct that derives every trait that can be
-        // (lemma T4 of docs/58-tuples.md): it implements one if all its
-        // values do, the fixed point of the derive with fields that
-        // are exactly its parameters.
-        (DISCARD | COPY | EQ | ORD | DEBUG | SEND | SYNC, Type::Tuple(ts)) => {
-            return all(&ts.iter().collect::<Vec<_>>());
-        }
-        (
-            DISCARD,
-            Type::Int(_)
-            | Type::Bool
-            | Type::Char
-            | Type::Unit
-            | Type::Never
-            | Type::Fn(_)
-            | Type::Ref(..),
-        ) => return Ok(Source::Builtin),
-        (DISCARD, Type::Box(inner)) => return all(&[inner]),
-        (COPY, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_)) => {
+    match builtin_arm(tr, ty) {
+        Some(Arm::Holds) => return Ok(Source::Builtin),
+        Some(Arm::Parts(parts)) => return all(&parts),
+        Some(Arm::Part(part, other)) => {
+            implements_at(impls, anon, eqs, part, other, depth + 1)?;
             return Ok(Source::Builtin);
         }
-        (COPY, Type::Ref(_, false, _)) => return Ok(Source::Builtin),
-        (COPY, Type::Ref(_, true, _) | Type::Box(_)) => return Err(fail()),
-        (EQ, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never) => {
-            return Ok(Source::Builtin);
-        }
-        // A string compares by its bytes, and a slice value by value,
-        // if its values compare: the same length, and equal values at
-        // each index.
-        (EQ, Type::Str) => return Ok(Source::Builtin),
-        (EQ, Type::Slice(inner)) => return all(&[inner]),
-        // An array is its values: it may be thrown away, copied or
-        // compared if they may.
-        (DISCARD | COPY | EQ, Type::Array(inner, _)) => return all(&[inner]),
-        (INT, Type::Int(_)) => return Ok(Source::Builtin),
-        (SIGNED, Type::Int(t)) if t.signed() => return Ok(Source::Builtin),
-        (UNSIGNED, Type::Int(t)) if !t.signed() => return Ok(Source::Builtin),
-        (SIGNED | UNSIGNED, Type::Int(_)) => return Err(fail()),
-        // References and boxes compare what they point to.
-        (EQ, Type::Ref(_, _, inner) | Type::Box(inner)) => return all(&[inner]),
-        (EQ, Type::Fn(_)) => return Err(fail()),
-        // Functions can be called any number of times. A reference to
-        // what can be called through a shared reference can be too, and
-        // one to what can be through a mutable one, as long as it's
-        // mutable: calling `&F` calls `F` by `&`.
-        (FN | FN_MUT | FN_ONCE, Type::Fn(_)) => return Ok(Source::Builtin),
-        (FN | FN_MUT | FN_ONCE, Type::Ref(_, false, inner)) => {
-            implements_at(impls, anon, eqs, inner, FN, depth + 1)?;
-            return Ok(Source::Builtin);
-        }
-        (FN_MUT | FN_ONCE, Type::Ref(_, true, inner)) => {
-            implements_at(impls, anon, eqs, inner, FN_MUT, depth + 1)?;
-            return Ok(Source::Builtin);
-        }
-        (FN, Type::Ref(_, true, _)) => return Err(fail()),
-        // What has no parts, or only plain bytes, may go to another
-        // thread or be shared with one: nothing in it changes through a
-        // `&`. A function holds nothing; what it reaches of statics is
-        // `Sync` (lemma Y3 of docs/38-statics.md).
-        (
-            SEND | SYNC,
-            Type::Int(_)
-            | Type::Bool
-            | Type::Char
-            | Type::Unit
-            | Type::Never
-            | Type::Str
-            | Type::Fn(_),
-        ) => return Ok(Source::Builtin),
-        // A box owns what it points to, and an array or slice its
-        // values: they are what's handed over or shared.
-        (SEND | SYNC, Type::Box(inner) | Type::Array(inner, _) | Type::Slice(inner)) => {
-            return all(&[inner]);
-        }
-        // A `&T` handed to another thread shares the `T` with it, so it
-        // needs `T: Sync`, as does sharing it. A `&mut T` is the only
-        // way to the `T` while it lives, so handing it over is as
-        // handing over the `T`; sharing it shares the `T`, by `&`.
-        (SEND | SYNC, Type::Ref(_, false, inner)) | (SYNC, Type::Ref(_, true, inner)) => {
-            implements_at(impls, anon, eqs, inner, SYNC, depth + 1)?;
-            return Ok(Source::Builtin);
-        }
-        (SEND, Type::Ref(_, true, inner)) => return all(&[inner]),
-        _ => {}
+        Some(Arm::Fails) => return Err(fail()),
+        None => {}
     }
     // A closure is what it captures: it may be thrown away, copied,
     // handed to another thread or shared with one, if all of that may

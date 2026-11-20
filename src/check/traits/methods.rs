@@ -5,7 +5,7 @@ use crate::ast::*;
 use crate::check::Checker;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::traits::Pred;
-use crate::traits::{DEBUG, DISCARD, EQ, ORD};
+use crate::traits::{Arm, BUILTIN_TRAITS, DERIVABLE, DISCARD, builtin_arm};
 use crate::types::{Subst, Type};
 use std::collections::HashMap;
 
@@ -123,17 +123,22 @@ impl Checker {
                             .filter(|_| could_match(&d.self_ty, &ty, &d.params))
                     })
                     .collect();
-                if builtin_eq(&ty) {
-                    out.push(EQ.into());
+                // What the language's own rules give a type of its own,
+                // by the table `implements` reads (`builtin_arm`): whether
+                // its parts implement what the rule asks of them is the
+                // obligation's to say. A closure may be thrown away, if
+                // what it captures may.
+                let glue = BUILTIN_TRAITS.iter().chain(DERIVABLE);
+                for tr in glue {
+                    match builtin_arm(tr, &ty) {
+                        None | Some(Arm::Fails) => {}
+                        Some(_) => out.push(tr.to_string()),
+                    }
                 }
-                if builtin_discard(&ty) {
+                if let Type::Adt(symbol, ..) = &ty
+                    && crate::types::is_closure(symbol)
+                {
                     out.push(DISCARD.into());
-                }
-                // A tuple derives every trait that can be (lemma T4 of
-                // docs/58-tuples.md); whether its values do is the
-                // obligation's to say.
-                if let Type::Tuple(_) = ty {
-                    out.extend([EQ, DISCARD, ORD, DEBUG].map(String::from));
                 }
                 // What an opaque type's bounds say it implements.
                 if let Type::Opaque(symbol, ..) = &ty {
@@ -519,23 +524,4 @@ fn bind_params(pat: &Type, t: &Type, params: &[String], found: &mut HashMap<Stri
 /// Is type parameter `p` in `t`?
 fn mentions(t: &Type, p: &str) -> bool {
     matches!(t, Type::Param(q, _) if q == p) || t.parts().any(|u| mentions(u, p))
-}
-
-/// Does `t` implement `Eq` by a built-in impl, whatever it holds?
-/// Could `t` be `Discard` by a built-in rule: a type of the language's, or
-/// a closure? Then `x.discard()` is `Discard`'s, which a bound proves.
-fn builtin_discard(t: &Type) -> bool {
-    match t {
-        Type::Adt(symbol, ..) => crate::types::is_closure(symbol),
-        Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never => true,
-        Type::Fn(_) | Type::Ref(..) | Type::Box(_) => true,
-        _ => false,
-    }
-}
-
-fn builtin_eq(t: &Type) -> bool {
-    matches!(
-        t,
-        Type::Int(_) | Type::Bool | Type::Unit | Type::Never | Type::Ref(..) | Type::Box(_)
-    )
 }

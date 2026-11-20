@@ -301,6 +301,16 @@ impl Checker {
                 );
             }
         };
+        // Every body that runs for the method must be walked to keep it:
+        // a trait with glue has impls with none (lemma L1 of
+        // docs/88-iterator-laws.md, H1 of retrospective 16).
+        if crate::traits::has_glue(&of) {
+            let shown = of.rsplit("::").next().unwrap_or(&of);
+            return err(format!(
+                "a law can't be of `{shown}`'s `{name}`: some impls of `{shown}` are the \
+                 compiler's, derived or built in, with no body to check what it says of"
+            ));
+        }
         let m = self.traits.method(&of, name).expect("found").clone();
         self.same_law_signature(f, &scheme, &m, conditional, &of)?;
         Ok(LawDef {

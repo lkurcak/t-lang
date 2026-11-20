@@ -90,9 +90,10 @@ pub struct Executable {
     /// copy's types, whose contract the copy has too
     /// (docs/86-trait-contracts.md), for the interpreter to check.
     inherited: HashMap<String, FnDecl>,
-    /// For each copy of an impl's method of a trait with laws its type
-    /// keeps, by name: each law's declaration, at the copy's types
-    /// (docs/88-iterator-laws.md), for the interpreter to check.
+    /// For each copy of an impl's method, or of a trait's default body,
+    /// of a method with laws its type keeps, by name: each law's
+    /// declaration, at the copy's types (docs/88-iterator-laws.md), for
+    /// the interpreter to check.
     laws: HashMap<String, Vec<FnDecl>>,
 }
 
@@ -161,8 +162,8 @@ impl Executable {
     }
 
     /// The laws copy `name` keeps, declared at its types, if it's an
-    /// impl's method of a trait whose method has some its type keeps
-    /// (docs/88-iterator-laws.md).
+    /// impl's method, or a trait's default body, of a method with some its
+    /// type keeps (docs/88-iterator-laws.md).
     pub(crate) fn laws(&self, name: &str) -> &[FnDecl] {
         self.laws.get(name).map_or(&[], Vec::as_slice)
     }
@@ -664,12 +665,21 @@ impl<'p> Mono<'p> {
                 let n = names(&f.generics).as_slice().len();
                 let args = &self.copies[&name].args;
                 let own = args[args.len() - n.min(args.len())..].to_vec();
+                let first = args.first().cloned();
+                let symbol = f.name.name.clone();
                 if let Some(t) = &self_ty {
                     let self_ty = s.apply(t);
-                    let symbol = f.name.name.clone();
                     if let Some(c) = self.contract(&symbol, &self_ty, &own) {
                         self.inherited.insert(name.clone(), c);
                     }
+                }
+                // An impl's method, or a trait's default body, whose `Self`
+                // is its first type argument.
+                let at = match &self_ty {
+                    Some(t) => Some(s.apply(t)),
+                    None => self.default_of(&symbol).and(first),
+                };
+                if let Some(self_ty) = at {
                     let laws = self.laws_of(&symbol, &self_ty, &own);
                     if !laws.is_empty() {
                         self.laws.insert(name.clone(), laws);
@@ -819,23 +829,29 @@ impl<'p> Mono<'p> {
         self.declared_at(&f, self_ty, own)
     }
 
-    /// The laws trait method `symbol`'s impl's keeps at `Self` = `self_ty`
-    /// and its own type parameters `own` (docs/88-iterator-laws.md): each
-    /// law of the method whose trait `self_ty` implements, declared at
-    /// those types, for the interpreter to check of the impl's copy.
+    /// The trait and method name of `symbol`, if it's a trait's method:
+    /// one with a default body, as a copy of it is.
+    fn default_of(&self, symbol: &str) -> Option<(String, String)> {
+        (self.info.traits.traits.iter()).find_map(|(tr, t)| {
+            let m = t.methods.iter().find(|m| m.symbol == symbol)?;
+            Some((tr.clone(), m.name.clone()))
+        })
+    }
+
+    /// The laws method `symbol` keeps at `Self` = `self_ty` and its own
+    /// type parameters `own` (docs/88-iterator-laws.md): an impl's of a
+    /// trait's method, or that method's default body. Each law of the
+    /// method whose trait `self_ty` implements, declared at those types,
+    /// for the interpreter to check of the copy (lemma L6): a default's
+    /// too, which `law_default` walked once for every type.
     fn laws_of(&mut self, symbol: &str, self_ty: &Type, own: &[Type]) -> Vec<FnDecl> {
-        let Some(d) =
-            (self.info.traits.impls.iter()).find(|d| d.methods.iter().any(|(_, s)| s == symbol))
-        else {
-            return Vec::new();
-        };
-        let Some(tr) = d.trait_name.clone() else {
-            return Vec::new();
-        };
-        let Some(name) = (d.methods.iter())
-            .find(|(_, s)| s == symbol)
-            .map(|(n, _)| n.clone())
-        else {
+        let of_impl = (self.info.traits.impls.iter())
+            .find(|d| d.methods.iter().any(|(_, s)| s == symbol))
+            .map(|d| {
+                let name = (d.methods.iter()).find(|(_, s)| s == symbol);
+                d.trait_name.clone().zip(name.map(|(n, _)| n.clone()))
+            });
+        let Some((tr, name)) = of_impl.unwrap_or_else(|| self.default_of(symbol)) else {
             return Vec::new();
         };
         let traits = &self.info.traits;
@@ -1668,7 +1684,19 @@ impl Cx<'_, '_, '_> {
             return Target::Fn(name.to_string(), args, copy);
         };
         let traits = &self.m.info.traits;
-        match traits.implements(&self_ty, &tr, &[], &[]) {
+        let found = traits.implements(&self_ty, &tr, &[], &[]);
+        // Glue is made only for the traits `has_glue` says have some,
+        // whose methods no law can be of (H1 of retrospective 16).
+        let glue = match &found {
+            Ok(Source::Impl(i, _)) => traits.impls[*i].derived,
+            Ok(Source::Builtin) => true,
+            _ => false,
+        };
+        assert!(
+            !glue || crate::traits::has_glue(&tr),
+            "glue for `{self_ty}: {tr}`, which `has_glue` doesn't say has some"
+        );
+        match found {
             Ok(Source::Impl(i, impl_args)) if !traits.impls[i].derived => {
                 let d = &traits.impls[i];
                 match d.methods.iter().find(|(m, _)| *m == method) {
@@ -2377,5 +2405,28 @@ mod used {
             | TypeExprKind::Lifetime(_)
             | TypeExprKind::Nat(_) => {}
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    /// A copy of a trait's default body is checked against the laws its
+    /// type keeps, as an impl's method is (lemma L6 of
+    /// docs/88-iterator-laws.md): `Iterator::map`'s, at a slice's
+    /// iterator, against `ExactSizeIterator`'s law of `map`.
+    #[test]
+    fn default_bodies_keep_laws() {
+        let src = "fn main() {\n    let a = [1u8, 2];\n    let m = a.iter().map(|x: &u8| *x);\n    \
+                   let _ = m;\n}\n";
+        let checked = crate::check_source(src);
+        let program = checked.result.expect("it checks");
+        let exe = program.lower();
+        let maps: Vec<&String> = (exe.laws.keys()).filter(|k| k.contains("map")).collect();
+        assert!(
+            maps.iter()
+                .any(|k| exe.laws(k).iter().any(|l| l.name.name == "map")),
+            "no copy of `map` with its law: {:?}",
+            exe.laws.keys().collect::<Vec<_>>()
+        );
     }
 }
