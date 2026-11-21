@@ -651,8 +651,13 @@ impl Checker {
                     error
                 });
             }
+            // Its conditions kept, if it has any.
+            let label = match conds.is_empty() {
+                true => effects_text(&all),
+                false => written_with(f, &all),
+            };
             let fix = Fix::new(
-                format!("say `with {}`", effects_text(&all)),
+                format!("say `with {label}`"),
                 vec![Edit {
                     span: effects_span(f),
                     text: format!(" with {}", written_with(f, &all)),
@@ -974,15 +979,19 @@ pub(super) fn set_text(items: &[String]) -> String {
 /// `all`, as `f` would say it: with the effects it says as written, and
 /// then the others.
 fn written_with(f: &FnDecl, all: &Type) -> String {
-    let mut items: Vec<String> = f
-        .effects
-        .iter()
-        .flat_map(|e| &e.items)
-        .map(Effect::to_string)
+    let written = f.effects.iter().flat_map(|e| &e.items);
+    let mut items: Vec<String> = written.clone().map(Effect::to_string).collect();
+    // Each by what it is, without its condition, which it keeps.
+    let mut atoms: Vec<String> = (written.cloned())
+        .map(|mut e| {
+            e.cond = None;
+            e.to_string()
+        })
         .collect();
     for e in all.effect_items() {
         let text = e.to_string();
-        if !items.contains(&text) {
+        if !atoms.contains(&text) {
+            atoms.push(text.clone());
             items.push(text);
         }
     }

@@ -281,3 +281,32 @@ fn conditional_effects() {
         failures.join("\n\n")
     );
 }
+
+/// The fix for an effect a function with a condition doesn't say keeps
+/// the condition: it adds the effect, and nothing else changes.
+#[test]
+fn fixes_keep_conditions() {
+    let src = "fn both(l: &mut alloc::list::List<i64>, x: i64) -> i64 with alloc if l.len() == l.capacity() {
+    l.push(x);
+    100 / x
+}
+
+fn main() with alloc {
+    let mut l = alloc::list::List::new();
+    let _v = both(&mut l, 5);
+}
+";
+    let e = match t_lang::check_source(src).result {
+        Err(e) => e,
+        Ok(_) => panic!("accepted"),
+    };
+    let fix = &e.fixes[0];
+    assert_eq!(
+        fix.title,
+        "say `with {alloc if l.len() == l.capacity(), panic}`"
+    );
+    assert_eq!(
+        fix.edits[0].text,
+        " with {alloc if l.len() == l.capacity(), panic}"
+    );
+}

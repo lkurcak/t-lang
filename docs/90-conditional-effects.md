@@ -62,7 +62,10 @@ allowed. Not of the result, which a call that panics doesn't give.
 `panic`, `alloc` and `global` can have one. Not `unsafe`, which says what
 a caller must keep (docs/09-unsafe.md), not something the body does; nor
 an effect parameter or an associated effect, which are what's given. An
-effect is said once: `||` joins two conditions.
+effect is said once: `||` joins two conditions. And a function whose
+effects have a condition has no effect parameter or associated effect
+among them: `with {e, panic if x > 3}` is refused, as `e` may be `panic`
+at a call, which ruling `x > 3` out wouldn't rule out.
 
 The function's type is what it was: `fn(Option<T>) -> T with panic`. A
 function used as a value has every effect it says, whatever their
@@ -190,7 +193,10 @@ when a condition holds, `a if P_a`; one it doesn't say has the condition
   ¬T`, which is the operators' rule as it was. A site the walk doesn't
   see, such as a static's use, keeps its effect.
 - **Lemma C3 (calls).** A call of `h` has `h`'s `U`, and each `a if Q` of
-  `h`'s whose `¬Q`, of the arguments, isn't proved where it is.
+  `h`'s whose `¬Q`, of the arguments, isn't proved where it is. `U` is
+  only of `panic`, `alloc`, `global` and `unsafe` when `h` has a
+  condition, so taking `a` out of the call's effects takes out only what
+  `a if Q` put there.
 - **Lemma C4 (values).** A value of an enum type is one of the variants
   whose fields all have types with values: as nothing builds one of the
   others, by matching's own reasoning.

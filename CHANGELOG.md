@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.103.0 (2026-11-21)
 
 Step 90: conditional effects. See
 [docs/90-conditional-effects.md](docs/90-conditional-effects.md).
@@ -13,7 +13,9 @@ Step 90: conditional effects. See
   only where its condition isn't ruled out, as an operator panics only
   where it isn't proved not to; the body may have it only where the
   condition held at the call. `panic`, `alloc` and `global` can have one,
-  in a function's or an inherent method's own signature, not a trait's.
+  in a function's or an inherent method's own signature, not a trait's,
+  and not beside an effect parameter or an associated effect, which may
+  be the same effect at a call.
 - The refinement checker knows a value of an enum is never a variant
   that can't hold a value, one with a field of type `!` or of an empty
   enum: a `Result<T, !>` is an `Ok`.

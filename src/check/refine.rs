@@ -7381,5 +7381,19 @@ fn effect_conds(f: &FnDecl, kind: SigKind) -> Result<Vec<(Type, &Expr)>, Error> 
             }
         }
     }
+    // An effect parameter, or an associated effect, may be the effect a
+    // condition is of, at a call: ruling the condition out wouldn't rule
+    // that out (lemma C3 of docs/90-conditional-effects.md).
+    let named = |i: &Effect| {
+        matches!(&i.kind, EffectKind::Named(n)
+            if matches!(n.name.as_str(), "panic" | "alloc" | "global" | "unsafe"))
+    };
+    if let Some(other) = set.items.iter().find(|i| !named(i)) {
+        return Err(Error::ty(
+            other.span,
+            "an effect with a condition can't be beside an effect parameter or an associated \
+             effect, which may be it at a call",
+        ));
+    }
     Ok(out)
 }
