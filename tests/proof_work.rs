@@ -220,8 +220,11 @@ fn main() {{}}
 
 #[test]
 fn an_enum_of_refined_pairs() {
+    // 4000 until step 90, whose `push` ensures its capacity doesn't
+    // shrink: a fact more at each push, about 3% more work, the same at
+    // each size.
     let limit = Work {
-        refutations: 4000,
+        refutations: 4200,
         cases: 400,
         carried: 1000,
     };
@@ -236,7 +239,7 @@ fn lines(k: usize) -> String {
     let puts: String = (0..k)
         .map(|i| {
             format!(
-                "            line.put(&f\"{i}: steps {{self.steps}}, time {{self.time}}, at {{self.you}}.\").into_ok();\n"
+                "            line.put(&f\"{i}: steps {{self.steps}}, time {{self.time}}, at {{self.you}}.\").unwrap();\n"
             )
         })
         .collect();
@@ -261,7 +264,7 @@ impl Game {{
         for key in keys.iter() {{
             let mut line = String::new();
 {puts}            if let Some(f) = &self.found {{
-                line.put(&f\"  found {{f.len()}}\").into_ok();
+                line.put(&f\"  found {{f.len()}}\").unwrap();
             }}
             out = core::num::wrapping_add(out, line.as_str().len());
             if *key == 1 {{

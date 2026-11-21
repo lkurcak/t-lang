@@ -221,7 +221,7 @@ module.exports = grammar({
       optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
-      optional(field('effects', $.effects)),
+      optional(field('effects', $.function_effects)),
       optional($.where_clause),
       optional($.ensures_clause),
       field('body', $.block),
@@ -238,7 +238,7 @@ module.exports = grammar({
       optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
-      optional(field('effects', $.effects)),
+      optional(field('effects', $.function_effects)),
       optional($.where_clause),
       optional($.ensures_clause),
       ';',
@@ -254,7 +254,7 @@ module.exports = grammar({
       optional(field('type_parameters', $.type_parameters)),
       field('parameters', $.parameters),
       optional(seq('->', field('return_type', $._type))),
-      optional(field('effects', $.effects)),
+      optional(field('effects', $.function_effects)),
       optional($.where_clause),
       optional($.ensures_clause),
       ';',
@@ -316,6 +316,22 @@ module.exports = grammar({
 
     // `with panic` or `with {alloc, e}`: what a call may do.
     effects: $ => seq('with', $.effect_set),
+
+    // A function's own: each may say when it happens, `with panic if x > 3`.
+    function_effects: $ => seq(
+      'with',
+      choice($._function_effect, seq('{', commaSep($._function_effect), '}')),
+    ),
+
+    _function_effect: $ => choice($._effect, $.conditional_effect),
+
+    // `panic if x > 3`: an effect a call has only when its condition holds
+    // of the arguments.
+    conditional_effect: $ => seq(
+      field('effect', $._effect),
+      'if',
+      field('condition', $._expression),
+    ),
 
     effect_set: $ => choice($._effect, seq('{', commaSep($._effect), '}')),
 

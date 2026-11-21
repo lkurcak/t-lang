@@ -55,7 +55,9 @@ which do means reading every function they call.
   out, which is part of `alloc`, not `panic`, since step 16
   (docs/16-out-of-memory.md). A box that can fail without aborting,
   `Box::try_new`, comes with fallible allocation.
-- **Calls**, which have what the callee's type says.
+- **Calls**, which have what the callee's type says: since step 90, but
+  for those it says it has only when a condition holds that the call
+  rules out (docs/90-conditional-effects.md).
 
 `core::num` has arithmetic that can't panic: `checked_add`, `checked_sub`,
 `checked_mul`, `checked_div`, `checked_rem` and `checked_neg`, each giving
@@ -291,6 +293,7 @@ work out; that's for when there's a backend.
 | effect arguments in turbofish, other than `_` | not needed yet | — |
 | subtyping of function types inside other types | coercion where a whole value is used does | — |
 | catching a panic | would need more effects, as handlers | — |
+| effects with conditions, `with panic if P` | a call has an effect only where its callee's condition isn't ruled out | 90 ✅ |
 
 ## Exercises
 

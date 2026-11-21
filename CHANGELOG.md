@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.103.0 (2026-11-21)
+
+Step 90: conditional effects. See
+[docs/90-conditional-effects.md](docs/90-conditional-effects.md).
+
+### Added
+
+- A function can say when it has an effect: `with panic if x > limit`,
+  `with {alloc if l.len() == l.capacity(), panic}`. The condition is a
+  predicate of the parameters as they're given. A call has the effect
+  only where its condition isn't ruled out, as an operator panics only
+  where it isn't proved not to; the body may have it only where the
+  condition held at the call. `panic`, `alloc` and `global` can have one,
+  in a function's or an inherent method's own signature, not a trait's,
+  and not beside an effect parameter or an associated effect, which may
+  be the same effect at a call.
+- The refinement checker knows a value of an enum is never a variant
+  that can't hold a value, one with a field of type `!` or of an empty
+  enum: a `Result<T, !>` is an `Ok`.
+- `List::with_capacity(n)` says its capacity is `n`, and `push` that it
+  doesn't shrink it.
+
+### Changed
+
+- `Option::unwrap` and `expect` say `with panic if self.is_none()`,
+  `Result::unwrap` and `expect` `with panic if self.is_err()`: they can't
+  panic where it's known which it is, as of a `Result<T, !>`, after an
+  `is_some()`, or of what `pop` gave from a list that isn't empty.
+- `List::push` says `with alloc if self.len() == self.capacity()`: it
+  allocates only when there's no room.
+- The `unwrap_infallible` warning is only of `unwrap_or` and
+  `unwrap_or_else` now, and its fix is `unwrap()`.
+- The interpreter checks each condition where its function is called,
+  and lets only the effects whose conditions held happen in it.
+
+### Removed
+
+- `Result::into_ok`: `unwrap` does what it did, without a panic, of a
+  `Result<T, !>`.
+
 ## 0.102.1 (2026-11-20)
 
 Step 89: laws only of written bodies (retrospective 16). See

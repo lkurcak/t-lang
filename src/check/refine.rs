@@ -327,6 +327,21 @@ pub(super) struct RefinedSig {
     /// and which the impl's refines, which the walk of its body proves is
     /// enough for what it asks (D1 of docs/86-trait-contracts.md).
     asked: Option<Asked>,
+    /// The effects it says when it has: `with panic if P` (lemma C2 of
+    /// docs/90-conditional-effects.md).
+    pub(super) conds: Vec<Cond>,
+}
+
+/// An effect a function has only when its condition holds of what it's
+/// given: `panic if x > 3`.
+#[derive(Debug, Clone)]
+pub(super) struct Cond {
+    /// `panic`, `alloc` or `global`.
+    pub(super) atom: Type,
+    /// Of the parameters, as they're given.
+    pub(super) pred: Refinement,
+    /// As written, for messages.
+    pub(super) text: String,
 }
 
 /// What a trait's method asks of an impl's that refines a parameter
@@ -643,7 +658,11 @@ impl Checker {
         let written: Vec<TypeExpr> = (f.params.iter().map(|p| &p.ty).chain([&f.ret]))
             .map(|t| self.written_out(t))
             .collect();
-        if written.iter().all(|t| t.refinements().is_empty()) && f.ensures.is_empty() {
+        let conditional = (f.effects.iter()).any(|s| s.items.iter().any(|i| i.cond.is_some()));
+        if written.iter().all(|t| t.refinements().is_empty())
+            && f.ensures.is_empty()
+            && !conditional
+        {
             return Ok(());
         }
         // Its predicates may call measures of impls not collected yet, so
@@ -1112,6 +1131,7 @@ impl Checker {
             scoped,
             framed,
             asked: None,
+            conds: Vec::new(),
         }
     }
 
@@ -1249,7 +1269,8 @@ impl Checker {
             .find(|(_, w)| refined(w))
             .map(|(p, _)| &p.ty);
         let result = refined(&&ret_written).then_some(&f.ret);
-        if param.is_none() && result.is_none() && f.ensures.is_empty() {
+        let conds = effect_conds(f, kind)?;
+        if param.is_none() && result.is_none() && f.ensures.is_empty() && conds.is_empty() {
             return Ok(());
         }
         let scheme = self.scheme_of(&self.sig_owner.0).cloned();
@@ -1271,6 +1292,7 @@ impl Checker {
             scoped: call_scoped(params, ret, &bounds),
             framed: Vec::new(),
             asked: None,
+            conds: Vec::new(),
         };
         // An intrinsic's postconditions are trusted, and may say what's
         // behind a `&mut` whose borrow outlives the call: what it is when
@@ -1329,7 +1351,10 @@ impl Checker {
                 Level::Export,
             )),
         };
-        let checked = self.sig_refinements_reached(f, params, ret, consts, &mut sig);
+        let mut checked = self.sig_refinements_reached(f, params, ret, consts, &mut sig);
+        if checked.is_ok() {
+            checked = self.cond_refinements(f, params, consts, conds, &mut sig);
+        }
         self.pred_reach = None;
         checked?;
         let symbol = self.sig_owner.0.clone();
@@ -1406,6 +1431,41 @@ impl Checker {
             if w.is_some() {
                 sig.scoped[i] = true;
             }
+        }
+        Ok(())
+    }
+
+    /// Checks the conditions `conds` of `f`'s effects into `sig`: `bool`
+    /// predicates of its parameters as they're given, so a `mut` one's
+    /// name is its value at the call (lemma C6 of
+    /// docs/90-conditional-effects.md), and no `old(..)`, which is the same.
+    fn cond_refinements(
+        &mut self,
+        f: &FnDecl,
+        params: &[Type],
+        consts: &[Ident],
+        conds: Vec<(Type, &Expr)>,
+        sig: &mut RefinedSig,
+    ) -> Result<(), Error> {
+        let scope = |name: &str| {
+            f.params
+                .iter()
+                .position(|q| q.name.name == name)
+                .map(|j| Named::Value(params[j].clone(), PredName::Param(j), f.params[j].name.span))
+                .or_else(|| const_named(consts, name))
+        };
+        for (atom, e) in conds {
+            if self.pred_type(e, &scope)? != Sort::Bool {
+                return Err(Error::ty(
+                    e.span,
+                    format!("expected `bool`, found {}", Sort::Int),
+                ));
+            }
+            sig.conds.push(Cond {
+                atom,
+                pred: Refinement::whole(e.clone()),
+                text: crate::pretty::expr_text(e),
+            });
         }
         Ok(())
     }
@@ -3095,7 +3155,7 @@ impl Checker {
             known,
             proved,
             failures,
-            ..
+            cut,
         } = done;
         self.proof_errors.append(&mut failed);
         result?;
@@ -3122,9 +3182,48 @@ impl Checker {
         let keep = |node: Option<NodeId>| node.is_none_or(|n| !proved.contains(&n));
         self.effect_sites.retain(|s| keep(s.node));
         self.withins.retain(|w| keep(w.node));
+        self.cut_sites(&cut);
         self.info.proved.extend(proved);
         self.implicit_panics();
         Ok(())
+    }
+
+    /// Takes out of each site what `cut` says can't happen there, and
+    /// notes of each what of its function's own conditional effects it may
+    /// have only where their conditions hold (docs/90-conditional-effects.md).
+    /// A site is its call's node, or else its operator's.
+    fn cut_sites(&mut self, cut: &Cut) {
+        let without = |t: Type, gone: &[Type]| {
+            Type::effects(
+                t.effect_items()
+                    .iter()
+                    .filter(|e| !gone.contains(e))
+                    .cloned(),
+            )
+        };
+        let mut sites = std::mem::take(&mut self.effect_sites);
+        for s in &mut sites {
+            let Some(n) = s.at.or(s.node) else {
+                continue;
+            };
+            if let Some(gone) = cut.excused.get(&n) {
+                s.effects = without(self.solved(&s.effects), gone);
+            }
+            if let Some(mine) = cut.covered.get(&n) {
+                s.covered.extend(mine.iter().cloned());
+            }
+        }
+        sites.retain(|s| !s.effects.is_no_effects());
+        self.effect_sites = sites;
+        let mut withins = std::mem::take(&mut self.withins);
+        for w in &mut withins {
+            if let Some(n) = w.at
+                && let Some(gone) = cut.excused.get(&n)
+            {
+                w.sub = without(self.solved(&w.sub), gone);
+            }
+        }
+        self.withins = withins;
     }
 
     /// A walk of the body of `f`, the function being checked, at its start.
@@ -3159,6 +3258,11 @@ impl Checker {
             alias: HashMap::new(),
             declared: Vec::new(),
             proved: HashSet::new(),
+            own_conds: Vec::new(),
+            excused: HashMap::new(),
+            covered: HashMap::new(),
+            kept: Vec::new(),
+            always: Vec::new(),
             params: f.params.iter().map(|p| p.name.id).collect(),
             entry: Vec::new(),
             ret: None,
@@ -3222,11 +3326,21 @@ struct Walked {
     known: Option<Known>,
     proved: HashSet<NodeId>,
     failures: HashMap<NodeId, ProofFailure>,
+    cut: Cut,
 }
 
 /// The operators a walk proved can't panic, and why each other one
-/// wasn't.
-type Found = (HashSet<NodeId>, HashMap<NodeId, ProofFailure>);
+/// wasn't; and which effects can't happen at which sites (`Cut`).
+type Found = (HashSet<NodeId>, HashMap<NodeId, ProofFailure>, Cut);
+
+/// By site, the effects of its callee's that can't happen there, and the
+/// function's own conditional ones it has only where they may (`Walk::excused`,
+/// `Walk::covered`).
+#[derive(Default)]
+struct Cut {
+    excused: HashMap<NodeId, Vec<Type>>,
+    covered: HashMap<NodeId, Vec<Type>>,
+}
 
 /// Which of parameters `params` (of a function with result `ret` and
 /// lifetime bounds `bounds`) are *call-scoped* `&mut`s: `&'a mut U` where
@@ -3722,6 +3836,24 @@ struct Walk<'c> {
     declared: Vec<NodeId>,
     /// The operators proved not to panic, by node.
     proved: HashSet<NodeId>,
+    /// The effects the function says it has only when a condition holds,
+    /// each with its condition, of what it was given (lemma C6 of
+    /// docs/90-conditional-effects.md).
+    own_conds: Vec<(Type, Formula)>,
+    /// By site (`effects::Site::at`), the effects of its callee's that
+    /// can't happen there, as their conditions are ruled out (lemma C3).
+    excused: HashMap<NodeId, Vec<Type>>,
+    /// By site, or operator, the function's own conditional effects that
+    /// it has only where their conditions hold (lemma C2).
+    covered: HashMap<NodeId, Vec<Type>>,
+    /// The effects the function has always, if it says them: a site's
+    /// callee's condition needn't be ruled out for one of those, outside a
+    /// closure, as the site may have it anyway.
+    always: Vec<Type>,
+    /// What a visit of a site couldn't take out, as `excused` (`false`) or
+    /// `covered` (`true`): what's taken out must be on every path that
+    /// reaches it.
+    kept: Vec<(NodeId, Type, bool)>,
     /// The ids of the function's parameters.
     params: Vec<NodeId>,
     /// Their values at the call (see `Walk::settled`).
@@ -3815,6 +3947,8 @@ struct CallAt {
     texts: Vec<String>,
     coerced: Vec<Option<(usize, Type)>>,
     span: Span,
+    /// Its node, if it's a site of effects (`effects::Site::at`).
+    at: Option<NodeId>,
 }
 
 /// A call's postconditions, to learn once what it's lent is forgotten.
@@ -4117,7 +4251,20 @@ impl Walk<'_> {
             Some((k, _)) => Lin::constant(i128::try_from(k).expect("few variants")),
             None => {
                 let last = i128::try_from(n).expect("few variants") - 1;
-                Lin::var(self.fresh(Kind::Int(Lin::constant(0), Lin::constant(last.max(0)))))
+                let tag =
+                    Lin::var(self.fresh(Kind::Int(Lin::constant(0), Lin::constant(last.max(0)))));
+                // It's never a variant that can't hold a value, as `Err` of a
+                // `Result<T, !>` can't, whatever the path (lemma C4 of
+                // docs/90-conditional-effects.md).
+                for v in 0..n {
+                    if !crate::exhaust::variant_inhabited(&self.cx.adts, t, v)
+                        && let Some(f) =
+                            Formula::eq(&tag, &Lin::constant(i128::try_from(v).expect("few")))
+                    {
+                        self.laws.push(f.not());
+                    }
+                }
+                tag
             }
         };
         let symbol = symbol.clone();
@@ -4675,6 +4822,79 @@ impl Walk<'_> {
 
     /// Does `goal` follow from what's known? Anything does where nothing
     /// gets to.
+    /// What can't happen at site `n`: a call of a function of signature
+    /// `sig`, with arguments `vals` and type arguments `targs`, or a
+    /// `Box::new`, with neither. Each of the callee's effects whose
+    /// condition is ruled out here, which the call doesn't have (lemma C3
+    /// of docs/90-conditional-effects.md); and, outside a closure, each of
+    /// the function's own conditional effects whose condition held at the
+    /// call wherever the site may have it (lemma C2): where the callee's
+    /// condition, if it has one for it, implies it, or else holds here.
+    pub(super) fn cut_effects(
+        &mut self,
+        n: NodeId,
+        sig: Option<&RefinedSig>,
+        vals: &[Val],
+        targs: &[(String, Type)],
+    ) {
+        let mut triggers: Vec<(Type, Formula)> = Vec::new();
+        for c in sig.map_or(&[][..], |s| &s.conds) {
+            if self.closures == 0 && self.always.contains(&c.atom) {
+                self.kept.push((n, c.atom.clone(), false));
+                continue;
+            }
+            match self.pred(&c.pred, &Val::Other, Env::Call(vals, targs)) {
+                Some(q) if self.proves(Some(&q.clone().not())).is_ok() => {
+                    self.excused.entry(n).or_default().push(c.atom.clone());
+                }
+                Some(q) => {
+                    self.kept.push((n, c.atom.clone(), false));
+                    triggers.push((c.atom.clone(), q));
+                }
+                // Not said in the logic: it may hold.
+                None => {
+                    self.kept.push((n, c.atom.clone(), false));
+                    triggers.push((c.atom.clone(), Formula::True));
+                }
+            }
+        }
+        if self.closures > 0 {
+            return;
+        }
+        let excused = self.excused.get(&n).cloned().unwrap_or_default();
+        for (atom, p) in self.own_conds.clone() {
+            if excused.contains(&atom) {
+                continue;
+            }
+            let goal = match triggers.iter().find(|(a, _)| *a == atom) {
+                Some((_, q)) => Formula::or([q.clone().not(), p]),
+                None => p,
+            };
+            if self.proves(Some(&goal)).is_ok() {
+                self.covered.entry(n).or_default().push(atom);
+            } else {
+                self.kept.push((n, atom, true));
+            }
+        }
+    }
+
+    /// `excused` and `covered`, but what any visit of a site kept.
+    pub(super) fn cut(&mut self) -> Cut {
+        let kept = std::mem::take(&mut self.kept);
+        let keep = |m: HashMap<NodeId, Vec<Type>>, covered: bool| -> HashMap<NodeId, Vec<Type>> {
+            (m.into_iter())
+                .map(|(n, mut atoms)| {
+                    atoms.retain(|a| !kept.contains(&(n, a.clone(), covered)));
+                    (n, atoms)
+                })
+                .collect()
+        };
+        Cut {
+            excused: keep(std::mem::take(&mut self.excused), false),
+            covered: keep(std::mem::take(&mut self.covered), true),
+        }
+    }
+
     fn proves(&self, goal: Option<&Formula>) -> Result<(), Failure> {
         if !self.reachable {
             return Ok(());
@@ -6168,6 +6388,9 @@ impl Walk<'_> {
                 }
             }
         }
+        if let Some(n) = site.at {
+            self.cut_effects(n, sig.as_ref(), &vals, &targs);
+        }
         // A call through a value: nothing keeps what's at an invariant
         // position of what it's given, so nothing may be declared there.
         if resolved.is_none() && self.reachable {
@@ -7073,4 +7296,104 @@ fn remainder(a: &Lin, b: &Lin, q: &Lin) -> Option<Formula> {
         parts.push(when(a_neg.clone(), [le(&lo, q)?, le(q, &zero)?, le(a, q)?]));
     }
     Some(Formula::and(parts))
+}
+
+/// The effects `f` says with conditions, `with panic if P`, of what `kind`
+/// says it is, each with its condition; refused where they can't be (see
+/// docs/90-conditional-effects.md): of a trait's method or an impl's of
+/// one, whose calls through the trait know only the trait's; of an
+/// intrinsic, an `extern fn` or a const; of `unsafe`, which says what a
+/// caller must keep, not what the call does; of an effect parameter or an
+/// associated effect, which are what's given; and of an effect said twice.
+fn effect_conds(f: &FnDecl, kind: SigKind) -> Result<Vec<(Type, &Expr)>, Error> {
+    let Some(set) = &f.effects else {
+        return Ok(Vec::new());
+    };
+    let Some(first) = set.items.iter().find_map(|i| i.cond.as_deref()) else {
+        return Ok(Vec::new());
+    };
+    let refuse = |what: &str| {
+        Err(Error::ty(
+            first.span,
+            format!("{what} can't say when it has an effect"),
+        ))
+    };
+    match kind {
+        SigKind::Trait(_) => return refuse("a trait's method"),
+        SigKind::Impl { .. } => return refuse("an impl's method of a trait"),
+        SigKind::Own => {}
+    }
+    if f.intrinsic.is_some() {
+        return refuse("an intrinsic");
+    }
+    if f.ext.is_some() {
+        return refuse("an `extern fn`");
+    }
+    if f.konst.is_some() {
+        return refuse("a const");
+    }
+    let mut out = Vec::new();
+    let mut seen: Vec<(Type, bool)> = Vec::new();
+    for item in &set.items {
+        let atom = match &item.kind {
+            EffectKind::Named(n) => match n.name.as_str() {
+                "panic" => Some(Type::Panic),
+                "alloc" => Some(Type::Alloc),
+                "global" => Some(Type::Global),
+                "unsafe" => Some(Type::Unsafe),
+                _ => None,
+            },
+            EffectKind::Proj(..) => None,
+        };
+        if let Some(a) = &atom
+            && let Some((_, conditional)) = seen.iter().find(|(t, _)| t == a)
+            && (*conditional || item.cond.is_some())
+        {
+            return Err(Error::ty(
+                item.span,
+                format!("`{a}` is said twice: say it once, with `||` between its conditions"),
+            ));
+        }
+        let Some(cond) = &item.cond else {
+            if let Some(a) = atom {
+                seen.push((a, false));
+            }
+            continue;
+        };
+        match atom {
+            Some(Type::Unsafe) => {
+                return Err(Error::ty(
+                    item.span,
+                    "`unsafe` can't have a condition: it says what the caller must keep, not \
+                     what the call does",
+                ));
+            }
+            Some(a) => {
+                seen.push((a.clone(), true));
+                out.push((a, &**cond));
+            }
+            None => {
+                return Err(Error::ty(
+                    item.span,
+                    "only `panic`, `alloc` and `global` can have a condition: an effect \
+                     parameter or an associated effect is what's given",
+                ));
+            }
+        }
+    }
+    // An effect parameter, or an associated effect, may be the effect a
+    // condition is of, at a call: ruling the condition out wouldn't rule
+    // that out (lemma C3 of docs/90-conditional-effects.md).
+    let named = |i: &Effect| {
+        matches!(&i.kind, EffectKind::Named(n)
+            if matches!(n.name.as_str(), "panic" | "alloc" | "global" | "unsafe"))
+    };
+    if let Some(other) = set.items.iter().find(|i| !named(i)) {
+        return Err(Error::ty(
+            other.span,
+            "an effect with a condition can't be beside an effect parameter or an associated \
+             effect, which may be it at a call",
+        ));
+    }
+    Ok(out)
 }

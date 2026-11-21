@@ -16,7 +16,7 @@ export fn panic(why: &str) -> ! with panic;
 #[blame_caller]
 export fn panic_with<unsized D: Display>(why: &D) -> ! with panic {
     let mut m = Message::new();
-    why.fmt(&mut m).into_ok();
+    why.fmt(&mut m).unwrap();
     m.abort()
 }
 

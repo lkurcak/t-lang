@@ -1155,12 +1155,16 @@ impl Printer<'_> {
     }
 
     fn effect(&mut self, e: &Effect) -> Doc {
-        match &e.kind {
+        let atom = match &e.kind {
             EffectKind::Named(n) => text(&n.name),
             EffectKind::Proj(t, Some(tr), name) => {
                 text("<") + self.ty(t) + " as " + &tr.name + ">::" + &name.name
             }
             EffectKind::Proj(t, None, name) => self.ty(t) + "::" + &name.name,
+        };
+        match &e.cond {
+            Some(c) => atom + " if " + self.expr(c, 0, Ctx::default()),
+            None => atom,
         }
     }
 

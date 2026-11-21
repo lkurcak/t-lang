@@ -125,6 +125,25 @@ impl Walk<'_> {
                 self.proved.insert(site);
             }
             Err(reason) => {
+                // Not proved, but the function may panic where its own
+                // condition held at the call: a panic here then is one it
+                // says (lemma C2 of docs/90-conditional-effects.md). It's
+                // still checked when it runs, so it's not `proved`.
+                let mine = (self.closures == 0)
+                    .then(|| self.own_conds.iter().find(|(a, _)| *a == Type::Panic))
+                    .flatten()
+                    .map(|(_, p)| p.clone());
+                if let Some(p) = mine {
+                    let goal = match goal.as_ref() {
+                        Some(g) => Formula::or([g.clone(), p]),
+                        None => p,
+                    };
+                    if self.proves(Some(&goal)).is_ok() {
+                        self.covered.entry(site).or_default().push(Type::Panic);
+                        return;
+                    }
+                    self.kept.push((site, Type::Panic, true));
+                }
                 let failure = self.proof_failure(reason, goal.as_ref(), None, fallback);
                 self.failures.insert(site, failure);
             }

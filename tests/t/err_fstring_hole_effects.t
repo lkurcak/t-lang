@@ -9,7 +9,7 @@ fn half(n: i64) -> i64 with panic {
 
 fn length(n: i64) -> usize with {} {
     let mut c = Counter { n: 0 };
-    f"{half(n)}".fmt(&mut c).into_ok();
+    f"{half(n)}".fmt(&mut c).unwrap();
     c.n
 }
 

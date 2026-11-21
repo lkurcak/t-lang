@@ -22,7 +22,7 @@ use std::sync::{Arc, Condvar, Mutex};
 /// What's a thread's own of the interpreter, kept while another runs.
 pub(super) struct Saved<'p> {
     calls: Vec<(Span, Blame)>,
-    frames: Vec<String>,
+    frames: Vec<(String, Vec<String>)>,
     sites: Vec<Site<'p>>,
     depth: usize,
     message: String,

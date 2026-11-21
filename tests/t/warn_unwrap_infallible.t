@@ -1,14 +1,15 @@
 // Getting what's in a `Result` whose error type is `!` needs nothing for an
-// `Err`, which it can't be: `unwrap` and `expect` say they may panic, and
-// `unwrap_or` and `unwrap_or_else` make a default or pass a function for
-// nothing. `into_ok` is the fix. So is it of a sink's result, once the sink
-// is known, as a `String` is.
+// `Err`, which it can't be: `unwrap_or` and `unwrap_or_else` make a default
+// or pass a function for nothing. `unwrap` is the fix, which can't panic
+// there, nor `expect`: their panic is for an `Err` (docs/90-conditional-
+// effects.md). So is it of a sink's result, once the sink is known, as a
+// `String` is.
 use alloc::string::String;
 use core::fmt::Write;
 
 fn sure(x: i64) -> Result<i64, !> { Ok(x) }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     out.line(&sure(1).unwrap())?;              // expect: 1
     out.line(&sure(2).expect("can't fail"))?;  // expect: 2
@@ -20,8 +21,5 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     s.discard();
     w
 }
-// warning: `unwrap` of a `Result` whose error type is `!`, which can't be an `Err`: it says it may panic, though it can't
-// warning: `expect` of a `Result` whose error type is `!`, which can't be an `Err`: it says it may panic, though it can't
 // warning: `unwrap_or` of a `Result` whose error type is `!`, which can't be an `Err`: the default is made for nothing
 // warning: `unwrap_or_else` of a `Result` whose error type is `!`, which can't be an `Err`: the function is never called
-// warning: `unwrap` of a `Result` whose error type is `!`, which can't be an `Err`: it says it may panic, though it can't

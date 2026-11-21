@@ -24,6 +24,6 @@ fn say<W: Write>(w: &mut W) -> Result<(), W::Error> with W::e { w.write_str("hi"
 
 fn main() with panic {
     let mut w = Loud {};
-    say(&mut w).into_ok();
+    say(&mut w).unwrap();
 }
 // error: blame_caller_effect_var.t:27:5

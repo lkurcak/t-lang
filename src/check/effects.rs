@@ -32,6 +32,15 @@
 //! called through a type parameter, a function value or a trait's method
 //! has no more effects than its bound, its type or the trait's method
 //! says (`Within`, `traits::fits`, `Checker::impl_effects`).
+//!
+//! Since step 90 an effect a function says may have a condition, `with
+//! panic if P` (docs/90-conditional-effects.md). Invariant: an effect is
+//! taken out of a site only by a proof, on every path the walk takes to
+//! it, that it can't happen there (`Walk::cut_effects`: the callee's
+//! condition is ruled out), and a site may have one of its function's
+//! conditional effects only where a proof says the condition held at the
+//! call (`Site::covered`); every other site is checked against the
+//! effects the function has always.
 
 use super::Checker;
 use super::infer::has_placeholder;
@@ -57,6 +66,15 @@ pub(super) struct Site {
     /// The function it calls, by symbol, if it's a call of one by name: to
     /// say why it has an effect, if it's inferred (`why_inferred`).
     pub callee: Option<String>,
+    /// The call it is, or `Box::new`, by node, if it's one: the walk may
+    /// find some of its effects can't happen there, which are taken out
+    /// (docs/90-conditional-effects.md).
+    pub at: Option<NodeId>,
+    /// The function's own effects it may have only where their conditions
+    /// hold, as the walk found: which it doesn't need its function to have
+    /// always, though they're of use (lemma C2 of
+    /// docs/90-conditional-effects.md).
+    pub covered: Vec<Type>,
 }
 
 /// `sub ⊆ sup`, of two effect sets, which must hold once the function's
@@ -72,6 +90,8 @@ pub(super) struct Within {
     /// Is it for a site in an `unsafe` block, whose `unsafe` doesn't
     /// count?
     pub discharged: bool,
+    /// The call it's for, if it's a site of one in a closure (`Site::at`).
+    pub at: Option<NodeId>,
 }
 
 #[derive(Debug, Clone)]
@@ -113,15 +133,16 @@ impl Checker {
     /// Records that what's at `span`, described as `what`, has `effects`,
     /// in the body being checked.
     pub(super) fn effect(&mut self, span: Span, what: impl Into<String>, effects: Type) {
-        self.call_effect(span, what, effects, None);
+        self.call_effect(span, None, what, effects, None);
     }
 
-    /// Records that a call at `span`, described as `what`, of function
-    /// `callee` if it's one named, has `effects`, in the body being
-    /// checked.
+    /// Records that a call at `span`, of node `at` if it's one the walk
+    /// sees, described as `what`, of function `callee` if it's one named,
+    /// has `effects`, in the body being checked.
     pub(super) fn call_effect(
         &mut self,
         span: Span,
+        at: Option<NodeId>,
         what: impl Into<String>,
         effects: Type,
         callee: Option<String>,
@@ -136,6 +157,8 @@ impl Checker {
             node: None,
             unsafe_block: None,
             callee,
+            at,
+            covered: Vec::new(),
         });
     }
 
@@ -149,6 +172,8 @@ impl Checker {
             node: Some(e.id),
             unsafe_block: None,
             callee: None,
+            at: None,
+            covered: Vec::new(),
         });
     }
 
@@ -182,6 +207,7 @@ impl Checker {
             why,
             node: None,
             discharged: false,
+            at: None,
         });
     }
 
@@ -237,6 +263,7 @@ impl Checker {
             self.within(s.effects, effects.clone(), s.span, why);
             let w = self.withins.last_mut().expect("pushed");
             w.node = s.node;
+            w.at = s.at;
             w.discharged = s.unsafe_block.is_some();
         }
     }
@@ -523,12 +550,32 @@ impl Checker {
         if self.inferring.contains(&id.0) {
             return self.inferred_sites(id, sites);
         }
+        // What it says it has only when a condition holds isn't what it
+        // has always: a site may have one only where the walk found it
+        // does, `covered` (lemma C2 of docs/90-conditional-effects.md).
+        let symbol = self.fns[id.0].symbol.clone();
+        let conds: Vec<(Type, String)> = (self.refined.get(&symbol))
+            .map(|s| {
+                (s.conds.iter())
+                    .map(|c| (c.atom.clone(), c.text.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let always = Type::effects(
+            (declared.effect_items().iter())
+                .filter(|e| !conds.iter().any(|(a, _)| a == *e))
+                .cloned(),
+        );
+        let declared = &always;
         let mut used: Vec<Type> = Vec::new();
         for s in &sites {
             let mut effects = self.solved(&s.effects);
             if s.unsafe_block.is_some() {
                 effects = without_unsafe(&effects);
             }
+            used.extend(s.covered.iter().cloned());
+            let here = Type::effects(declared.effect_items().iter().chain(&s.covered).cloned());
+            let declared = &here;
             // What's in it of a function whose effects are being inferred
             // waits for them.
             if has_placeholder(&effects) {
@@ -561,6 +608,21 @@ impl Checker {
                 let message = format!("{} is unsafe, but it isn't in an `unsafe` block", s.what);
                 return Err(Error::ty(s.span, message));
             }
+            // One it says it has when a condition holds, which may not here.
+            if let Some((_, cond)) = conds.iter().find(|(a, _)| a == first) {
+                let atom = effects_text(&Type::effects([first.clone()]));
+                let message = format!(
+                    "{} when `{cond}` doesn't hold, but `{}` says `with {atom} if {cond}`",
+                    says(&s.what, &Type::effects([first.clone()])),
+                    f.name.name,
+                );
+                let err = Error::ty(s.span, message);
+                return Err(if *first == Type::Panic {
+                    self.explain_proof(err)
+                } else {
+                    err
+                });
+            }
             let message = match first {
                 Type::Unsafe => format!(
                     "{} is unsafe, but it isn't in an `unsafe` block, and `{}` doesn't say \
@@ -589,8 +651,13 @@ impl Checker {
                     error
                 });
             }
+            // Its conditions kept, if it has any.
+            let label = match conds.is_empty() {
+                true => effects_text(&all),
+                false => written_with(f, &all),
+            };
             let fix = Fix::new(
-                format!("say `with {}`", effects_text(&all)),
+                format!("say `with {label}`"),
                 vec![Edit {
                     span: effects_span(f),
                     text: format!(" with {}", written_with(f, &all)),
@@ -912,15 +979,19 @@ pub(super) fn set_text(items: &[String]) -> String {
 /// `all`, as `f` would say it: with the effects it says as written, and
 /// then the others.
 fn written_with(f: &FnDecl, all: &Type) -> String {
-    let mut items: Vec<String> = f
-        .effects
-        .iter()
-        .flat_map(|e| &e.items)
-        .map(Effect::to_string)
+    let written = f.effects.iter().flat_map(|e| &e.items);
+    let mut items: Vec<String> = written.clone().map(Effect::to_string).collect();
+    // Each by what it is, without its condition, which it keeps.
+    let mut atoms: Vec<String> = (written.cloned())
+        .map(|mut e| {
+            e.cond = None;
+            e.to_string()
+        })
         .collect();
     for e in all.effect_items() {
         let text = e.to_string();
-        if !items.contains(&text) {
+        if !atoms.contains(&text) {
+            atoms.push(text.clone());
             items.push(text);
         }
     }

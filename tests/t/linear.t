@@ -59,16 +59,16 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
     // value uses it up in every arm, `None` too.
     let o = Option::Some(open(4));
     match o {
-        Option::Some(fd) => stdout.line(&close(fd)).into_ok(), // expect: 4
+        Option::Some(fd) => stdout.line(&close(fd)).unwrap(), // expect: 4
         Option::None => {},
     }
     let e = Either::Right(open(5));
     match e {
-        Either::Left(fd) | Either::Right(fd) => stdout.line(&close(fd)).into_ok(), // expect: 5
+        Either::Left(fd) | Either::Right(fd) => stdout.line(&close(fd)).unwrap(), // expect: 5
     }
     let nested = Option::Some(Pair { a: open(6), b: open(7) });
     match nested {
-        Option::Some(Pair { a, b }) => stdout.line(&(close(a) + close(b))).into_ok(), // expect: 13
+        Option::Some(Pair { a, b }) => stdout.line(&(close(a) + close(b))).unwrap(), // expect: 13
         Option::None => {},
     }
 
@@ -102,7 +102,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {panic, alloc} {
     // Matching through a reference only looks.
     let fd = open(12);
     match &fd {
-        Fd { n } => stdout.line(&(*n)).into_ok(), // expect: 12
+        Fd { n } => stdout.line(&(*n)).unwrap(), // expect: 12
     }
     stdout.line(&close(fd)); // expect: 12
     let mut out = os.stdout;
