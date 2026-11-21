@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.104.0 (2026-11-21)
 
 Step 91: the order operands are worked out in. See
 [docs/91-evaluation-order.md](docs/91-evaluation-order.md).
@@ -31,9 +31,9 @@ Step 91: the order operands are worked out in. See
 ### Fixed
 
 - `f(p.a, eat(p))`, a `Copy` field read before a later argument moves
-  the whole, was refused as a use of a moved value; and `(*r, r)`, what's
-  behind a `&mut` read before the reference is given away, as a use of
-  what's borrowed.
+  the whole, was refused as a use of a moved value; and `(*r, r)` and
+  `f(*r, r)`, what's behind a `&mut` read before the reference is given
+  away, as a use of what's borrowed.
 
 ## 0.103.0 (2026-11-21)
 

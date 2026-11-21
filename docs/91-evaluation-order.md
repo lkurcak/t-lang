@@ -195,11 +195,9 @@ accepted, rightly then.
   place, or an operator on such. Working one of those out assigns
   nothing, moves nothing and calls nothing, so every place is, where the
   operands are used, what it was where the first was written, and still
-  usable: reading it there is reading it earlier. A `&mut` of a place is
-  quiet as a call's argument, where it's taken when the call is made, and
-  not in a tuple or a struct, where it's taken where it's written, and
-  what's behind it can't be read until it's used: so `(*r, r)` reads `*r`
-  first. A
+  usable: reading it there is reading it earlier. A `&mut` of a place
+  isn't quiet: once it's taken, what's behind it can't be read until
+  it's used, so `(*r, r)` and `f(*r, r)` read `*r` first. A
   comparison or an operator on a type that isn't an integer is a call of
   `eq` or `cmp`, with `&`s, which can't change a `Copy` place either.
   Saying an operand isn't quiet is always right: it costs a temporary.
@@ -271,8 +269,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with global {
    three operands are copied to temporaries?
 2. `first(c, d)` copies nothing. Why is that the same as copying `c`
    first? What if `d` is `d + 1`? What if it's `g(d)`?
-3. Why is a `&mut` variable quiet as a call's argument, and not as a
-   tuple's field?
+3. `f(v, &mut v)` gives `f` what `v` was and a `&mut` to it. Why would
+   reading `v` when the call is made be refused?
 4. Write a program that the old order accepted and ran without a panic,
    and the new one accepts and panics in. Could the checker have been
    wrong about it before?

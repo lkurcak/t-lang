@@ -76,6 +76,14 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let held = (*re, re);
     *held.1 = 9;
     out.line(&held.0)?;                 // expect: 5
+    let mut u2 = 5u8;
+    let r2 = &mut u2;
+    out.line(&set9(*r2, r2))?;          // expect: 5
+    let mut u3 = 5u8;
+    out.line(&set9(u3, &mut u3))?;      // expect: 5
+    let both2 = (u3, &mut u3);
+    *both2.1 = 1;
+    out.line(&both2.0)?;                // expect: 9
     // The checker reads them the same way.
     let mut v = 5u8;
     out.line(&need5(first(v, { v = 7; 7 })))?; // expect: 5
@@ -99,3 +107,8 @@ fn eat(p: (u8, List<u8>)) -> u8 {
 fn both(a: u8, p: (u8, List<u8>)) -> u8 with panic { a + eat(p) }
 
 fn deref(a: &u8, _b: u8) -> u8 { *a }
+
+fn set9(was: u8, r: &mut u8) -> u8 {
+    *r = 9;
+    was
+}
