@@ -188,6 +188,17 @@ binding does not make a function generic; declare a generic `fn` to use
 one implementation at several types. Explicit call arguments use
 `identity::<i64>(3)`, with `_` available for arguments to infer.
 
+Operands are evaluated left to right, each to its value before the next:
+a call's callee, then a receiver taken by value, then its arguments; an
+operator's left side, then its right; the fields of a tuple, struct
+literal, array or variant as written. An assignment evaluates its value,
+then its place, and `a += b` evaluates `b` and then is `a = a + b`. So
+`f(c, { c = 7; 7 })` passes what `c` was. A borrow passed to a call is the
+exception: it is taken when the call is made, after the arguments, which
+is what lets `v.push(v.len())` be written, so `f(&c, { c = 7; 7 })` passes
+a reference to a `c` that is 7. See
+[evaluation order](91-evaluation-order.md).
+
 Integers have no default type. Comparing two unsuffixed literals or
 printing an integer does not choose its width:
 

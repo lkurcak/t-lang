@@ -130,15 +130,10 @@ pub(super) struct Deferred {
 }
 
 impl Checker {
-    /// Records that what's at `span`, described as `what`, has `effects`,
-    /// in the body being checked.
-    pub(super) fn effect(&mut self, span: Span, what: impl Into<String>, effects: Type) {
-        self.call_effect(span, None, what, effects, None);
-    }
-
-    /// Records that a call at `span`, of node `at` if it's one the walk
-    /// sees, described as `what`, of function `callee` if it's one named,
-    /// has `effects`, in the body being checked.
+    /// Records that what's at `span`, a call or a static's use, of node
+    /// `at` if it's one the walk sees, described as `what`, of function
+    /// `callee` if it's a call of one named, has `effects`, in the body
+    /// being checked.
     pub(super) fn call_effect(
         &mut self,
         span: Span,
@@ -611,9 +606,13 @@ impl Checker {
             // One it says it has when a condition holds, which may not here.
             if let Some((_, cond)) = conds.iter().find(|(a, _)| a == first) {
                 let atom = effects_text(&Type::effects([first.clone()]));
+                // A static's use says what it is: here, that it's used.
+                let does = match s.what.strip_suffix(" is a static") {
+                    Some(name) => format!("{name} is used"),
+                    None => says(&s.what, &Type::effects([first.clone()])),
+                };
                 let message = format!(
-                    "{} when `{cond}` doesn't hold, but `{}` says `with {atom} if {cond}`",
-                    says(&s.what, &Type::effects([first.clone()])),
+                    "{does} when `{cond}` doesn't hold, but `{}` says `with {atom} if {cond}`",
                     f.name.name,
                 );
                 let err = Error::ty(s.span, message);

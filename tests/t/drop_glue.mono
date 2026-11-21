@@ -192,20 +192,21 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with alloc {
     let _38: Box<i64>;
     let _39: i64;
     let _40: i64;
-    let _41: Two;
-    let _42: Box<i64>;
-    let _43: i64;
+    let _41: &Two;
+    let _42: Two;
+    let _43: Box<i64>;
     let _44: i64;
-    let _45: ();
-    let _46: ControlFlow<Result<!, Error>, ()>;
-    let _47: Result<(), Error>;
-    let _48: &mut Stdout;
-    let _49: &bool;
-    let _50: (); // {try}
-    let _51: Result<!, Error>; // {try}
-    let _52: ();
-    let _53: &Two;
+    let _45: i64;
+    let _46: ();
+    let _47: ControlFlow<Result<!, Error>, ()>;
+    let _48: Result<(), Error>;
+    let _49: &mut Stdout;
+    let _50: &bool;
+    let _51: (); // {try}
+    let _52: Result<!, Error>; // {try}
+    let _53: ();
     let _54: &Two;
+    let _55: &Two;
     bb0: {
         _4 = move _1.1;
         _3 = move _4;
@@ -348,20 +349,22 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with alloc {
         _38 = Box::new(move _39);
         _40 = 6_i64;
         _37 = Two { a: move _38, b: move _40 };
-        _43 = 5_i64;
-        _42 = Box::new(move _43);
-        _44 = 6_i64;
-        _41 = Two { a: move _42, b: move _44 };
-        _53 = &_37;
-        _54 = &_41;
-        _36 = {eq}::<Two>(move _53, move _54);
+        _41 = &_37;
+        _44 = 5_i64;
+        _43 = Box::new(move _44);
+        _45 = 6_i64;
+        _42 = Two { a: move _43, b: move _45 };
+        _54 = &(*_41);
+        _55 = &_42;
+        _36 = {eq}::<Two>(move _54, move _55);
+        dead _55;
         dead _54;
-        dead _53;
         _35 = copy _36;
+        dead _45;
         dead _44;
         dead _43;
+        drop _42;
         dead _42;
-        drop _41;
         dead _41;
         dead _40;
         dead _39;
@@ -369,45 +372,45 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with alloc {
         drop _37;
         dead _37;
         dead _36;
-        _48 = &mut _2;
-        _49 = &_35;
-        _47 = <std::io::Stdout>::line::<bool>(move _48, move _49);
-        _46 = <core::result::Result::<(), core::io::Error> as core::ops::Try>::branch(move _47);
-        inspect _46;
-        inspect _46;
-        match _46 { #0(_) => bb13, #1(_) => bb14 };
+        _49 = &mut _2;
+        _50 = &_35;
+        _48 = <std::io::Stdout>::line::<bool>(move _49, move _50);
+        _47 = <core::result::Result::<(), core::io::Error> as core::ops::Try>::branch(move _48);
+        inspect _47;
+        inspect _47;
+        match _47 { #0(_) => bb13, #1(_) => bb14 };
     }
     bb13: {
-        _50 = copy (_46 as #0).0;
-        kept _46;
-        _45 = copy _50;
-        dead _50;
+        _51 = copy (_47 as #0).0;
+        kept _47;
+        _46 = copy _51;
+        dead _51;
         goto bb15;
     }
     bb14: {
-        _51 = copy (_46 as #1).0;
-        kept _46;
-        _0 = <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residual(copy _51);
-        dead _51;
+        _52 = copy (_47 as #1).0;
+        kept _47;
+        _0 = <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residual(copy _52);
+        dead _52;
+        dead _50;
         dead _49;
         dead _48;
         dead _47;
         dead _46;
-        dead _45;
         dead _35;
         dead _2;
         dead _1;
         return;
     }
     bb15: {
+        dead _50;
         dead _49;
         dead _48;
         dead _47;
         dead _46;
-        dead _45;
-        _52 = ();
-        _0 = core::result::Result::<(), core::io::Error>::Ok(move _52);
-        dead _52;
+        _53 = ();
+        _0 = core::result::Result::<(), core::io::Error>::Ok(move _53);
+        dead _53;
         dead _35;
         dead _2;
         dead _1;

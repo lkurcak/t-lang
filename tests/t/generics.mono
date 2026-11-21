@@ -358,14 +358,20 @@ fn twice::<i64>(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic {
     let _0: i64;
     let _1: fn(i64) -> i64 with panic; // f
     let _2: i64; // x
-    let _3: i64;
+    let _3: fn(i64) -> i64 with panic;
     let _4: i64;
     let _5: i64;
+    let _6: fn(i64) -> i64 with panic;
+    let _7: i64;
     bb0: {
-        _5 = move _2;
-        _4 = copy _1(move _5);
-        _3 = id::<i64>(move _4);
-        _0 = copy _1(move _3);
+        _3 = copy _1;
+        _6 = copy _1;
+        _7 = move _2;
+        _5 = move _6(move _7);
+        _4 = id::<i64>(move _5);
+        _0 = move _3(move _4);
+        dead _7;
+        dead _6;
         dead _5;
         dead _4;
         dead _3;
@@ -383,10 +389,12 @@ fn repeat::<i64>(f: fn(i64) -> i64 with panic, x: i64, n: i64) -> i64 with panic
     let _4: bool;
     let _5: i64;
     let _6: i64;
-    let _7: i64;
+    let _7: fn(i64) -> i64 with panic;
     let _8: i64;
-    let _9: i64;
+    let _9: fn(i64) -> i64 with panic;
     let _10: i64;
+    let _11: i64;
+    let _12: i64;
     bb0: {
         _5 = 0_i64;
         _4 = copy _3 == copy _5;
@@ -400,11 +408,15 @@ fn repeat::<i64>(f: fn(i64) -> i64 with panic, x: i64, n: i64) -> i64 with panic
         goto bb3;
     }
     bb2: {
-        _8 = move _2;
-        _7 = copy _1(move _8);
-        _10 = 1_i64;
-        _9 = copy _3 - move _10;
-        _0 = repeat::<i64>(copy _1, move _7, move _9);
+        _7 = copy _1;
+        _9 = copy _1;
+        _10 = move _2;
+        _8 = move _9(move _10);
+        _12 = 1_i64;
+        _11 = copy _3 - move _12;
+        _0 = repeat::<i64>(move _7, move _8, move _11);
+        dead _12;
+        dead _11;
         dead _10;
         dead _9;
         dead _8;
