@@ -142,6 +142,7 @@ impl Walk<'_> {
                         self.covered.entry(site).or_default().push(Type::Panic);
                         return;
                     }
+                    self.kept.push((site, Type::Panic, true));
                 }
                 let failure = self.proof_failure(reason, goal.as_ref(), None, fallback);
                 self.failures.insert(site, failure);

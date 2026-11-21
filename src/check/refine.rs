@@ -659,7 +659,9 @@ impl Checker {
             .map(|t| self.written_out(t))
             .collect();
         let conditional = (f.effects.iter()).any(|s| s.items.iter().any(|i| i.cond.is_some()));
-        if written.iter().all(|t| t.refinements().is_empty()) && f.ensures.is_empty() && !conditional
+        if written.iter().all(|t| t.refinements().is_empty())
+            && f.ensures.is_empty()
+            && !conditional
         {
             return Ok(());
         }
@@ -1449,9 +1451,7 @@ impl Checker {
             f.params
                 .iter()
                 .position(|q| q.name.name == name)
-                .map(|j| {
-                    Named::Value(params[j].clone(), PredName::Param(j), f.params[j].name.span)
-                })
+                .map(|j| Named::Value(params[j].clone(), PredName::Param(j), f.params[j].name.span))
                 .or_else(|| const_named(consts, name))
         };
         for (atom, e) in conds {
@@ -3194,7 +3194,12 @@ impl Checker {
     /// A site is its call's node, or else its operator's.
     fn cut_sites(&mut self, cut: &Cut) {
         let without = |t: Type, gone: &[Type]| {
-            Type::effects(t.effect_items().iter().filter(|e| !gone.contains(e)).cloned())
+            Type::effects(
+                t.effect_items()
+                    .iter()
+                    .filter(|e| !gone.contains(e))
+                    .cloned(),
+            )
         };
         let mut sites = std::mem::take(&mut self.effect_sites);
         for s in &mut sites {
@@ -3256,6 +3261,8 @@ impl Checker {
             own_conds: Vec::new(),
             excused: HashMap::new(),
             covered: HashMap::new(),
+            kept: Vec::new(),
+            always: Vec::new(),
             params: f.params.iter().map(|p| p.name.id).collect(),
             entry: Vec::new(),
             ret: None,
@@ -3839,6 +3846,14 @@ struct Walk<'c> {
     /// By site, or operator, the function's own conditional effects that
     /// it has only where their conditions hold (lemma C2).
     covered: HashMap<NodeId, Vec<Type>>,
+    /// The effects the function has always, if it says them: a site's
+    /// callee's condition needn't be ruled out for one of those, outside a
+    /// closure, as the site may have it anyway.
+    always: Vec<Type>,
+    /// What a visit of a site couldn't take out, as `excused` (`false`) or
+    /// `covered` (`true`): what's taken out must be on every path that
+    /// reaches it.
+    kept: Vec<(NodeId, Type, bool)>,
     /// The ids of the function's parameters.
     params: Vec<NodeId>,
     /// Their values at the call (see `Walk::settled`).
@@ -4824,13 +4839,23 @@ impl Walk<'_> {
     ) {
         let mut triggers: Vec<(Type, Formula)> = Vec::new();
         for c in sig.map_or(&[][..], |s| &s.conds) {
+            if self.closures == 0 && self.always.contains(&c.atom) {
+                self.kept.push((n, c.atom.clone(), false));
+                continue;
+            }
             match self.pred(&c.pred, &Val::Other, Env::Call(vals, targs)) {
                 Some(q) if self.proves(Some(&q.clone().not())).is_ok() => {
                     self.excused.entry(n).or_default().push(c.atom.clone());
                 }
-                Some(q) => triggers.push((c.atom.clone(), q)),
+                Some(q) => {
+                    self.kept.push((n, c.atom.clone(), false));
+                    triggers.push((c.atom.clone(), q));
+                }
                 // Not said in the logic: it may hold.
-                None => triggers.push((c.atom.clone(), Formula::True)),
+                None => {
+                    self.kept.push((n, c.atom.clone(), false));
+                    triggers.push((c.atom.clone(), Formula::True));
+                }
             }
         }
         if self.closures > 0 {
@@ -4847,7 +4872,26 @@ impl Walk<'_> {
             };
             if self.proves(Some(&goal)).is_ok() {
                 self.covered.entry(n).or_default().push(atom);
+            } else {
+                self.kept.push((n, atom, true));
             }
+        }
+    }
+
+    /// `excused` and `covered`, but what any visit of a site kept.
+    pub(super) fn cut(&mut self) -> Cut {
+        let kept = std::mem::take(&mut self.kept);
+        let keep = |m: HashMap<NodeId, Vec<Type>>, covered: bool| -> HashMap<NodeId, Vec<Type>> {
+            (m.into_iter())
+                .map(|(n, mut atoms)| {
+                    atoms.retain(|a| !kept.contains(&(n, a.clone(), covered)));
+                    (n, atoms)
+                })
+                .collect()
+        };
+        Cut {
+            excused: keep(std::mem::take(&mut self.excused), false),
+            covered: keep(std::mem::take(&mut self.covered), true),
         }
     }
 
@@ -7268,7 +7312,12 @@ fn effect_conds(f: &FnDecl, kind: SigKind) -> Result<Vec<(Type, &Expr)>, Error> 
     let Some(first) = set.items.iter().find_map(|i| i.cond.as_deref()) else {
         return Ok(Vec::new());
     };
-    let refuse = |what: &str| Err(Error::ty(first.span, format!("{what} can't say when it has an effect")));
+    let refuse = |what: &str| {
+        Err(Error::ty(
+            first.span,
+            format!("{what} can't say when it has an effect"),
+        ))
+    };
     match kind {
         SigKind::Trait(_) => return refuse("a trait's method"),
         SigKind::Impl { .. } => return refuse("an impl's method of a trait"),

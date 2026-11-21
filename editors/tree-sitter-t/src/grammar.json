@@ -909,7 +909,7 @@
               "name": "effects",
               "content": {
                 "type": "SYMBOL",
-                "name": "effects"
+                "name": "function_effects"
               }
             },
             {
@@ -1047,7 +1047,7 @@
               "name": "effects",
               "content": {
                 "type": "SYMBOL",
-                "name": "effects"
+                "name": "function_effects"
               }
             },
             {
@@ -1161,7 +1161,7 @@
               "name": "effects",
               "content": {
                 "type": "SYMBOL",
-                "name": "effects"
+                "name": "function_effects"
               }
             },
             {
@@ -1517,6 +1517,120 @@
         {
           "type": "SYMBOL",
           "name": "effect_set"
+        }
+      ]
+    },
+    "function_effects": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "STRING",
+          "value": "with"
+        },
+        {
+          "type": "CHOICE",
+          "members": [
+            {
+              "type": "SYMBOL",
+              "name": "_function_effect"
+            },
+            {
+              "type": "SEQ",
+              "members": [
+                {
+                  "type": "STRING",
+                  "value": "{"
+                },
+                {
+                  "type": "CHOICE",
+                  "members": [
+                    {
+                      "type": "SEQ",
+                      "members": [
+                        {
+                          "type": "SYMBOL",
+                          "name": "_function_effect"
+                        },
+                        {
+                          "type": "REPEAT",
+                          "content": {
+                            "type": "SEQ",
+                            "members": [
+                              {
+                                "type": "STRING",
+                                "value": ","
+                              },
+                              {
+                                "type": "SYMBOL",
+                                "name": "_function_effect"
+                              }
+                            ]
+                          }
+                        },
+                        {
+                          "type": "CHOICE",
+                          "members": [
+                            {
+                              "type": "STRING",
+                              "value": ","
+                            },
+                            {
+                              "type": "BLANK"
+                            }
+                          ]
+                        }
+                      ]
+                    },
+                    {
+                      "type": "BLANK"
+                    }
+                  ]
+                },
+                {
+                  "type": "STRING",
+                  "value": "}"
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "_function_effect": {
+      "type": "CHOICE",
+      "members": [
+        {
+          "type": "SYMBOL",
+          "name": "_effect"
+        },
+        {
+          "type": "SYMBOL",
+          "name": "conditional_effect"
+        }
+      ]
+    },
+    "conditional_effect": {
+      "type": "SEQ",
+      "members": [
+        {
+          "type": "FIELD",
+          "name": "effect",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_effect"
+          }
+        },
+        {
+          "type": "STRING",
+          "value": "if"
+        },
+        {
+          "type": "FIELD",
+          "name": "condition",
+          "content": {
+            "type": "SYMBOL",
+            "name": "_expression"
+          }
         }
       ]
     },

@@ -742,8 +742,10 @@ struct Interp<'p, 'o> {
     memory: Memory,
     depth: usize,
     /// The functions being run, outermost first, by name: whose effects
-    /// each panic and allocation must be among (see `effect`).
-    frames: Vec<String>,
+    /// each panic and allocation must be among (see `effect`); each with
+    /// those it says it has only when a condition holds, whose conditions
+    /// held when it was called (lemma C7 of docs/90-conditional-effects.md).
+    frames: Vec<(String, Vec<String>)>,
     /// Where each function and closure being run is, innermost last (see
     /// `unsafe_op`).
     sites: Vec<Site<'p>>,
@@ -1772,7 +1774,7 @@ impl<'p> Interp<'p, '_> {
     /// `name`, as one that's happening. Closures are checked through the
     /// functions that call them, which have their effects.
     fn effect(&self, name: &str) {
-        for f in &self.frames {
+        for (f, allowed) in &self.frames {
             // A const's initializer may panic, while compiling, where it's
             // run: once it's known not to, it's its value (`crate::consts`).
             // A static's too, which is run to make the static, at its
@@ -1784,13 +1786,32 @@ impl<'p> Interp<'p, '_> {
                 .effects
                 .iter()
                 .flat_map(|e| &e.items)
-                .any(|e| e.to_string() == name);
+                .any(|e| e.cond.is_none() && e.to_string() == name)
+                || allowed.iter().any(|a| a == name);
             if !says {
                 unsound(&format!(
                     "`{f}` doesn't say `with {name}`, but it's running at a `{name}`"
                 ));
             }
         }
+    }
+
+    /// The effects function `decl` says it has only when a condition
+    /// holds, whose conditions hold of its parameters' values `env`.
+    fn allowed_effects(&self, decl: &FnDecl, env: &[(String, Value)]) -> Vec<String> {
+        let items = decl.effects.iter().flat_map(|s| &s.items);
+        let conds = items.filter_map(|i| Some((i, i.cond.as_deref()?)));
+        let mut allowed = Vec::new();
+        for (item, cond) in conds {
+            let EffectKind::Named(n) = &item.kind else {
+                continue;
+            };
+            let r = self.refined_at(&[(String::new(), cond)], env.to_vec(), false);
+            if let PredValue::Bool(true) = r.eval(self, cond, "", &Value::Unit) {
+                allowed.push(n.name.clone());
+            }
+        }
+        allowed
     }
 
     fn call(&mut self, f: Value, args: Vec<Value>, span: Span) -> Result<Value, Error> {
@@ -1913,7 +1934,10 @@ impl<'p> Interp<'p, '_> {
                     let exe = self.exe;
                     let (name, body) = (exe.body_named(&name))
                         .unwrap_or_else(|| unsound(&format!("`{name}` has no body")));
-                    self.frames.push(name.to_string());
+                    // Its effects with conditions, of which those whose
+                    // conditions hold of what it's given may happen.
+                    let allowed = self.allowed_effects(decl, &env);
+                    self.frames.push((name.to_string(), allowed));
                     let result = self.run(body, Some(name), args, refined, span);
                     self.frames.pop();
                     result

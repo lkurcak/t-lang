@@ -32,6 +32,15 @@
 //! called through a type parameter, a function value or a trait's method
 //! has no more effects than its bound, its type or the trait's method
 //! says (`Within`, `traits::fits`, `Checker::impl_effects`).
+//!
+//! Since step 90 an effect a function says may have a condition, `with
+//! panic if P` (docs/90-conditional-effects.md). Invariant: an effect is
+//! taken out of a site only by a proof, on every path the walk takes to
+//! it, that it can't happen there (`Walk::cut_effects`: the callee's
+//! condition is ruled out), and a site may have one of its function's
+//! conditional effects only where a proof says the condition held at the
+//! call (`Site::covered`); every other site is checked against the
+//! effects the function has always.
 
 use super::Checker;
 use super::infer::has_placeholder;
@@ -546,7 +555,11 @@ impl Checker {
         // does, `covered` (lemma C2 of docs/90-conditional-effects.md).
         let symbol = self.fns[id.0].symbol.clone();
         let conds: Vec<(Type, String)> = (self.refined.get(&symbol))
-            .map(|s| (s.conds.iter()).map(|c| (c.atom.clone(), c.text.clone())).collect())
+            .map(|s| {
+                (s.conds.iter())
+                    .map(|c| (c.atom.clone(), c.text.clone()))
+                    .collect()
+            })
             .unwrap_or_default();
         let always = Type::effects(
             (declared.effect_items().iter())

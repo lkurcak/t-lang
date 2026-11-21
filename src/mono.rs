@@ -1100,7 +1100,25 @@ impl<'p> Mono<'p> {
                     (None, Some(t)) => cx.subst(t),
                     (e, _) => cx.resolved_effects(e.as_ref()),
                 };
-                cx.written_effects(&effects, f.span)
+                let mut set = cx.written_effects(&effects, f.span);
+                // Each with its condition, if it has one, for the
+                // interpreter to check where it's called (lemma C7 of
+                // docs/90-conditional-effects.md): only `panic`, `alloc` and
+                // `global` can, which are themselves in any copy.
+                let conds = (f.effects.iter()).flat_map(|s| &s.items);
+                for (item, cond) in conds.filter_map(|i| Some((i, i.cond.as_deref()?))) {
+                    let EffectKind::Named(atom) = &item.kind else {
+                        continue;
+                    };
+                    let cond = *cx.pred(cond);
+                    let copied = set.iter_mut().flat_map(|s| s.items.iter_mut());
+                    for it in copied {
+                        if matches!(&it.kind, EffectKind::Named(n) if n.name == atom.name) {
+                            it.cond = Some(Box::new(cond.clone()));
+                        }
+                    }
+                }
+                set
             },
             // What it does is its MIR (`Mono::bodies`).
             body: Expr {

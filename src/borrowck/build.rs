@@ -1325,7 +1325,14 @@ impl<'a> Builder<'a> {
         let ft = self.fn_value(&symbol, &targs, e.span);
         let f = Operand::Const(self.fn_const(&symbol, &targs));
         let receiver = Arg::Value(o, t, e.span);
-        self.call_into(f, ft, Some(receiver), &[], &Place::local(tmp), (e.span, e.id));
+        self.call_into(
+            f,
+            ft,
+            Some(receiver),
+            &[],
+            &Place::local(tmp),
+            (e.span, e.id),
+        );
         (Operand::Move(Place::local(tmp)), slice)
     }
 

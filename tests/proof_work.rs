@@ -220,8 +220,11 @@ fn main() {{}}
 
 #[test]
 fn an_enum_of_refined_pairs() {
+    // 4000 until step 90, whose `push` ensures its capacity doesn't
+    // shrink: a fact more at each push, about 3% more work, the same at
+    // each size.
     let limit = Work {
-        refutations: 4000,
+        refutations: 4200,
         cases: 400,
         carried: 1000,
     };

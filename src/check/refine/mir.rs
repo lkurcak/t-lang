@@ -293,6 +293,18 @@ impl Checker {
             let v = w.settled(v, ENTRY_DEPTH);
             w.entry.push(v);
         }
+        // The effects it says it has always, if it says them, and not as a
+        // placeholder for what's inferred.
+        if !self.inferring.contains(&id.0)
+            && let Some(Type::Fn(fs)) = self.scheme_of(&symbol).map(|s| &s.ty)
+        {
+            let conds = sig.as_ref().map_or(&[][..], |s| &s.conds);
+            w.always = (self.solved(&fs.effects).effect_items().iter())
+                .filter(|e| matches!(e, Type::Panic | Type::Alloc | Type::Global))
+                .filter(|e| !conds.iter().any(|c| c.atom == **e))
+                .cloned()
+                .collect();
+        }
         // Its own effects' conditions, of what it's given: what a caller
         // asks of its arguments (lemma C6 of docs/90-conditional-effects.md).
         // One the logic can't say holds of nothing.
@@ -300,7 +312,8 @@ impl Checker {
             let entry = w.entry.clone();
             for c in &sig.conds {
                 let p = w.pred(&c.pred, &Val::Other, Env::Call(&entry, &[]));
-                w.own_conds.push((c.atom.clone(), p.unwrap_or(Formula::False)));
+                w.own_conds
+                    .push((c.atom.clone(), p.unwrap_or(Formula::False)));
             }
         }
         if let Some(sig) = &sig
@@ -319,10 +332,7 @@ impl Checker {
         *known_value = w.known.take();
         let proved = std::mem::take(&mut w.proved);
         let failures = std::mem::take(&mut w.failures);
-        let cut = Cut {
-            excused: std::mem::take(&mut w.excused),
-            covered: std::mem::take(&mut w.covered),
-        };
+        let cut = w.cut();
         Ok((proved, failures, cut))
     }
 }
