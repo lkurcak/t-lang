@@ -236,7 +236,7 @@ fn lines(k: usize) -> String {
     let puts: String = (0..k)
         .map(|i| {
             format!(
-                "            line.put(&f\"{i}: steps {{self.steps}}, time {{self.time}}, at {{self.you}}.\").into_ok();\n"
+                "            line.put(&f\"{i}: steps {{self.steps}}, time {{self.time}}, at {{self.you}}.\").unwrap();\n"
             )
         })
         .collect();
@@ -261,7 +261,7 @@ impl Game {{
         for key in keys.iter() {{
             let mut line = String::new();
 {puts}            if let Some(f) = &self.found {{
-                line.put(&f\"  found {{f.len()}}\").into_ok();
+                line.put(&f\"  found {{f.len()}}\").unwrap();
             }}
             out = core::num::wrapping_add(out, line.as_str().len());
             if *key == 1 {{

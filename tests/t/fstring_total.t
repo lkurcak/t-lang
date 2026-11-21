@@ -28,7 +28,7 @@ enum Tree { Leaflet(i64), Doubled(&'static str, [u8; 2]) }
 
 fn length(t: &Tree, k: i32) -> usize with {} {
     let mut c = Counter { n: 0 };
-    f"{k} {t:?}".fmt(&mut c).into_ok();
+    f"{k} {t:?}".fmt(&mut c).unwrap();
     c.n
 }
 

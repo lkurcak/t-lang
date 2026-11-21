@@ -1796,6 +1796,11 @@ impl Rewrite<'_> {
         for e in &mut f.ensures {
             self.pred(e)?;
         }
+        for item in (f.effects.iter_mut()).flat_map(|s| s.items.iter_mut()) {
+            if let Some(c) = &mut item.cond {
+                self.pred(c)?;
+            }
+        }
         self.interface = None;
         self.expr(&mut f.body)?;
         self.interface = outer;

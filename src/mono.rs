@@ -1628,6 +1628,7 @@ impl Cx<'_, '_, '_> {
                     kind: EffectKind::Named(Ident { name, span, id }),
                     span,
                     id: self.m.id(),
+                    cond: None,
                 }
             })
             .collect();

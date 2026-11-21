@@ -582,6 +582,7 @@ impl Checker {
         let what = format!("`{}`", name.name);
         self.call_effect(
             e.span,
+            Some(e.id),
             what,
             (*sig.effects).clone(),
             Some(found.symbol.clone()),
@@ -637,7 +638,7 @@ impl Checker {
         // It allocates, and aborts if memory has run out, which is `alloc`
         // too (see docs/16-out-of-memory.md).
         let effects = Type::effects([Type::Alloc]);
-        self.effect(e.span, "`Box::new`", effects);
+        self.call_effect(e.span, Some(e.id), "`Box::new`", effects, None);
         Ok(Type::Box(Box::new(t)))
     }
 }

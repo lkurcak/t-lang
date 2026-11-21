@@ -243,7 +243,8 @@ impl Checker {
     pub(super) fn walk_mir_as(&self, f: &FnDecl, sig: Option<RefinedSig>) -> Walked {
         let mut failed = Vec::new();
         let mut known = None;
-        let (result, (proved, failures)) = match self.mir_walk(f, sig, &mut failed, &mut known) {
+        let (result, (proved, failures, cut)) = match self.mir_walk(f, sig, &mut failed, &mut known)
+        {
             Ok(found) => (Ok(()), found),
             Err(e) => (Err(e), Default::default()),
         };
@@ -253,6 +254,7 @@ impl Checker {
             known,
             proved,
             failures,
+            cut,
         }
     }
 
@@ -291,6 +293,16 @@ impl Checker {
             let v = w.settled(v, ENTRY_DEPTH);
             w.entry.push(v);
         }
+        // Its own effects' conditions, of what it's given: what a caller
+        // asks of its arguments (lemma C6 of docs/90-conditional-effects.md).
+        // One the logic can't say holds of nothing.
+        if let Some(sig) = &sig {
+            let entry = w.entry.clone();
+            for c in &sig.conds {
+                let p = w.pred(&c.pred, &Val::Other, Env::Call(&entry, &[]));
+                w.own_conds.push((c.atom.clone(), p.unwrap_or(Formula::False)));
+            }
+        }
         if let Some(sig) = &sig
             && let Some(r) = &sig.ret
         {
@@ -307,7 +319,11 @@ impl Checker {
         *known_value = w.known.take();
         let proved = std::mem::take(&mut w.proved);
         let failures = std::mem::take(&mut w.failures);
-        Ok((proved, failures))
+        let cut = Cut {
+            excused: std::mem::take(&mut w.excused),
+            covered: std::mem::take(&mut w.covered),
+        };
+        Ok((proved, failures, cut))
     }
 }
 
@@ -1285,6 +1301,13 @@ impl Walk<'_> {
         ty: &Type,
         ops: &[Operand],
     ) -> Result<Val, Error> {
+        // `Box::new` allocates, which may be one of the function's own
+        // conditional effects (docs/90-conditional-effects.md).
+        if agg == Agg::Box
+            && let Some(n) = fr.notes.sites.get(&at)
+        {
+            self.cut_effects(*n, None, &[], &[]);
+        }
         let spans: Vec<Span> = match fr.notes.stmts.get(&at) {
             Some(StmtNote::Operands(spans, _)) => spans.clone(),
             _ => Vec::new(),
@@ -2186,6 +2209,7 @@ impl Walk<'_> {
             texts,
             coerced: vec![None; args.len()],
             span,
+            at: fr.notes.sites.get(&at).copied(),
         };
         let called = self.call_at(&site, vals, places.clone());
         self.call_summaries.clear();
@@ -2287,6 +2311,7 @@ impl Walk<'_> {
             texts: Vec::new(),
             coerced: vec![None; n],
             span,
+            at: None,
         };
         // What it gives, and what's known once it's returned. A call that
         // fails, which is checked where the function's given (as what it

@@ -1264,8 +1264,13 @@ pub struct EffectSet {
 #[derive(Debug, Clone)]
 pub struct Effect {
     pub kind: EffectKind,
+    /// The whole of it, its condition included.
     pub span: Span,
     pub id: NodeId,
+    /// `if x > 3` after it: when a call has it, a predicate of the
+    /// function's parameters as they're given, or `None` if it may have it
+    /// whenever (see docs/90-conditional-effects.md).
+    pub cond: Option<Box<Expr>>,
 }
 
 #[derive(Debug, Clone)]
@@ -1322,11 +1327,15 @@ impl fmt::Display for EffectSet {
 impl fmt::Display for Effect {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
-            EffectKind::Named(n) => f.write_str(&n.name),
+            EffectKind::Named(n) => f.write_str(&n.name)?,
             EffectKind::Proj(t, Some(tr), name) => {
-                write!(f, "<{t} as {}>::{}", tr.name, name.name)
+                write!(f, "<{t} as {}>::{}", tr.name, name.name)?
             }
-            EffectKind::Proj(t, None, name) => write!(f, "{t}::{}", name.name),
+            EffectKind::Proj(t, None, name) => write!(f, "{t}::{}", name.name)?,
+        }
+        match &self.cond {
+            Some(c) => write!(f, " if {}", crate::pretty::expr_text(c)),
+            None => Ok(()),
         }
     }
 }

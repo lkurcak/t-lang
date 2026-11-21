@@ -293,6 +293,15 @@ pub fn endless(adts: &Adts, ty: &Type) -> bool {
     !cx.inhabited_in(ty, &mut Vec::new(), false) && cx.inhabited_in(ty, &mut Vec::new(), true)
 }
 
+/// Can variant `v` of enum type `ty` hold a value? Not if a field's type
+/// has none: then no value of `ty` is that variant, which is why a match
+/// needn't have an arm for it, and the refinement checker knows it of
+/// every value of `ty` (lemma C4 of docs/90-conditional-effects.md). The
+/// same function decides both.
+pub fn variant_inhabited(adts: &Adts, ty: &Type, v: usize) -> bool {
+    Cx { adts }.inhabited_ctor(Ctor::Variant(v), ty)
+}
+
 struct Cx<'a> {
     adts: &'a Adts,
 }

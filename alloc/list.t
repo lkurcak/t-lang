@@ -31,9 +31,9 @@ impl<T> List<T> {
 
     /// An empty list with room for `cap` values before it grows.
     #[blame_caller]
-    export fn with_capacity(cap: usize) -> { l: List<T> | l.len() == 0 } with alloc {
-        List { buf: RawBuf::new(cap), len: 0 }
-    }
+    export fn with_capacity(cap: usize) -> { l: List<T> | l.len() == 0 && l.capacity() == cap }
+    with alloc
+    { List { buf: RawBuf::new(cap), len: 0 } }
 
     /// How many values it holds. It's a measure, so refinements can say
     /// it: `l[i]` needs `i < l.len()`.
@@ -49,11 +49,16 @@ impl<T> List<T> {
     export fn capacity(&self) -> usize { self.buf.cap() }
 
     /// Puts `v` at the end. When there's no room, it doubles the buffer
-    /// first, which moves its values somewhere new. A list as long as a
-    /// `usize` can count has no room, and its buffer can't double, which
-    /// aborts, as running out of memory does.
+    /// first, which moves its values somewhere new: so it allocates only
+    /// then. A list as long as a `usize` can count has no room, and its
+    /// buffer can't double, which aborts, as running out of memory does.
     #[blame_caller]
-    export fn push(&mut self, v: T) with alloc ensures self.len() == old(self.len()) + 1 {
+    export fn push(&mut self, v: T)
+    with alloc if self.len() == self.capacity()
+    ensures
+        self.len() == old(self.len()) + 1,
+        self.capacity() >= old(self.capacity()),
+    {
         let cap = self.buf.cap();
         if self.len == cap {
             self.buf.grow(if cap == 0 { 4 } else { cap });

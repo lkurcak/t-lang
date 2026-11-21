@@ -113,28 +113,20 @@ impl<T: Discard, E: Discard> Result<T, E> {
 }
 
 impl<T, E: Discard> Result<T, E> {
-    /// What's in an `Ok`, or else a panic. The error is thrown away.
+    /// What's in an `Ok`, or else a panic. The error is thrown away. Where
+    /// it's known to be an `Ok`, it can't panic: as one whose error type is
+    /// `!`, such as what a sink that can't fail gives, a `String` (see
+    /// `core::fmt`), is.
     #[blame_caller]
-    export fn unwrap(self) -> T with panic { self.expect("`unwrap` of `Err`") }
+    export fn unwrap(self) -> T with panic if self.is_err() { self.expect("`unwrap` of `Err`") }
 
     /// What's in an `Ok`, or else a panic, saying `why`. The error is
-    /// thrown away.
+    /// thrown away. Where it's known to be an `Ok`, it can't panic.
     #[blame_caller]
-    export fn expect(self, why: &str) -> T with panic {
+    export fn expect(self, why: &str) -> T with panic if self.is_err() {
         match self {
             Ok(x) => x,
             Err(_) => crate::panic::panic(why),
-        }
-    }
-}
-
-impl<T> Result<T, !> {
-    /// What's in it, which is an `Ok`, as nothing is a `!`: so, unlike
-    /// `unwrap`, it can't panic. What a sink that can't fail gives, such as
-    /// a `String`, is one (see `core::fmt`).
-    export fn into_ok(self) -> T {
-        match self {
-            Ok(x) => x,
         }
     }
 }

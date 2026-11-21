@@ -106,6 +106,9 @@ pub(crate) struct Notes {
     pub(crate) loops: Vec<LoopNote>,
     /// By statement, what messages about it say.
     pub(crate) stmts: std::collections::HashMap<Point, StmtNote>,
+    /// By statement, the node of the call or `Box::new` it is, whose
+    /// effects the checker's site for it says (`check::effects::Site::at`).
+    pub(crate) sites: std::collections::HashMap<Point, NodeId>,
     /// By statement, the places whose values may be dropped there, as drop
     /// elaboration will drop them (`borrowck::drops::may_drop`): only in
     /// the copy kept for the refinement checker.

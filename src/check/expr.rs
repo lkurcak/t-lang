@@ -1257,7 +1257,7 @@ impl Checker {
         };
         let (params, ret) = match self.shallow(&ft) {
             Type::Fn(sig) => {
-                self.call_effect(e.span, what, *sig.effects, callee);
+                self.call_effect(e.span, Some(e.id), what, *sig.effects, callee);
                 (sig.params, *sig.ret)
             }
             t @ Type::Var(_) if self.int_var(&t) => {
@@ -1277,7 +1277,7 @@ impl Checker {
                 let sig = Type::func_with(params.clone(), ret.clone(), effects.clone());
                 self.unify(&ft, &sig)
                     .unwrap_or_else(|_| unreachable!("fresh variables fit anything"));
-                self.effect(e.span, what, effects);
+                self.call_effect(e.span, Some(e.id), what, effects, None);
                 (params, ret)
             }
             // A closure, or what a bound says can be called, or a
@@ -1303,7 +1303,7 @@ impl Checker {
                 let pred = Checker::callable_pred(&t);
                 self.oblige(pred, f.span, traits::Why::Call)?;
                 self.calls.push((e.id, t, e.span));
-                self.effect(e.span, what, *sig.effects);
+                self.call_effect(e.span, Some(e.id), what, *sig.effects, None);
                 (sig.params, *sig.ret)
             }
         };
@@ -1401,6 +1401,7 @@ impl Checker {
         self.typed.exprs.insert(call.id, (*sig.ret).clone());
         self.call_effect(
             call.span,
+            Some(call.id),
             "`index_mut`".to_string(),
             (*sig.effects).clone(),
             Some(found.symbol.clone()),
@@ -1521,6 +1522,7 @@ impl Checker {
         let what = format!("`{}`", name.name);
         self.call_effect(
             e.span,
+            Some(e.id),
             what,
             (*sig.effects).clone(),
             Some(found.symbol.clone()),

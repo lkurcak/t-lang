@@ -48,8 +48,9 @@ A `String` can't fail to take text, so its `Error` is `!`, and its `e` is
 `alloc`, as growing may run out of memory. A `Result<(), !>` can only be
 an `Ok`, and is `Discard`, so what writing to a string gives can be
 dropped, as above. Where a value is wanted, as in a `match` arm whose
-others are `()`, `into_ok` gives what's in it. Unlike `unwrap`, it can't
-panic, as its signature says: it's only on a `Result<T, !>`.
+others are `()`, `unwrap` gives what's in it, and can't panic: its
+`panic` is only for an `Err`, which a `Result<T, !>` isn't (since step 90,
+docs/90-conditional-effects.md; until then, a total `into_ok` did this).
 
 ```rust
 use alloc::string::String;
@@ -60,22 +61,21 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut s = String::new();
     let n = 0u8;
     match n {
-        0 => s.write_str("none").into_ok(),
-        _ => s.put(&n).into_ok(),
+        0 => s.write_str("none").unwrap(),
+        _ => s.put(&n).unwrap(),
     }
     let written = out.line(&s.as_str()); // expect: none
     written
 }
 ```
 
-`unwrap` can't be made to do it: its signature, the same for every
-`Result<T, E>`, says `with panic`, and a call has what the signature
-says, whatever `E` is (docs/14-packages.md). So where the error type is
-`!`, `unwrap` and `expect` get a warning, `unwrap_infallible`, whose fix
-is `into_ok()`: they make their caller say `with panic` for a panic that
-can't happen. `unwrap_or` and `unwrap_or_else` get it too, for a default
-made, or a function passed, for nothing, as a `match` gets one for an
-`Err` arm that can't match. Not `map_err`, which can be how a
+`unwrap`'s signature is the same for every `Result<T, E>`, `with panic if
+self.is_err()`, and a call has what the signature says (docs/14-packages.md):
+the panic only where the call can't rule an `Err` out, which it can of a
+`Result<T, !>`. Where the error type is `!`, `unwrap_or` and
+`unwrap_or_else` get a warning, `unwrap_infallible`, for a default made,
+or a function passed, for nothing, as a `match` gets one for an `Err` arm
+that can't match; its fix is `unwrap()`. Not `map_err`, which can be how a
 `Result<T, !>` becomes one another `?` wants, and not where the error type
 is a type parameter, or a sink's `W::Error`, which is `!` only in some
 uses.

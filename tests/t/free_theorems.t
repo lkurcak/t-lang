@@ -90,10 +90,10 @@ fn missing(n: usize) -> u8 {
     }
 }
 
-// `into_ok` of a `Result` that can't be an `Err`.
+// `unwrap` of a `Result` that can't be an `Err`.
 fn sure(n: { v: usize | v < 4 }) -> Result<{ v: usize | v < 4 }, !> { Ok(n) }
 
-fn at_sure(a: [u8; 4], n: { v: usize | v < 4 }) -> u8 { a[sure(n).into_ok()] }
+fn at_sure(a: [u8; 4], n: { v: usize | v < 4 }) -> u8 { a[sure(n).unwrap()] }
 
 // `branch` by itself, which `?` is made of.
 fn at_branch(a: [u8; 4], n: usize) -> u8 {

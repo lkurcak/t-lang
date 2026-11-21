@@ -34,13 +34,15 @@ impl<T> Option<T> {
         }
     }
 
-    /// What's in it, or else a panic.
+    /// What's in it, or else a panic. Where it's known to be a `Some`, it
+    /// can't panic.
     #[blame_caller]
-    export fn unwrap(self) -> T with panic { self.expect("`unwrap` of `None`") }
+    export fn unwrap(self) -> T with panic if self.is_none() { self.expect("`unwrap` of `None`") }
 
-    /// What's in it, or else a panic, saying `why`.
+    /// What's in it, or else a panic, saying `why`. Where it's known to be
+    /// a `Some`, it can't panic.
     #[blame_caller]
-    export fn expect(self, why: &str) -> T with panic {
+    export fn expect(self, why: &str) -> T with panic if self.is_none() {
         match self {
             Some(x) => x,
             None => crate::panic::panic(why),

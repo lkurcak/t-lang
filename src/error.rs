@@ -296,8 +296,8 @@ pub enum Lint {
     /// An `unsafe` block without a `// SAFETY:` comment just before it,
     /// saying why the obligations of what's in it are kept.
     MissingSafetyComments,
-    /// `unwrap`, `expect`, `unwrap_or` or `unwrap_or_else` of a `Result`
-    /// whose error type is `!`, so that it can't be an `Err`.
+    /// `unwrap_or` or `unwrap_or_else` of a `Result` whose error type is
+    /// `!`, so that it can't be an `Err`.
     UnwrapInfallible,
     /// A statement whose value is a `Result` that may be an `Err`, which
     /// is thrown away unseen.

@@ -85,7 +85,7 @@ Then at a call, each value of `T` in the result is one of the values of
 - `o.unwrap_or(d)` is what's in `o`, if it's a `Some`, or `d`.
 - `r.ok()`'s `Some` holds what `r`'s `Ok` did, and is only a `Some` if
   `r` was an `Ok`; `o.ok_or(e)` the same the other way, its `Err` is `e`;
-  `r.err()`, `r.into_ok()`.
+  `r.err()`.
 - `pick(c, a, b)`, with `fn pick<T: Copy>(c: bool, a: T, b: T) -> T`, is
   `a` or `b`.
 - A part of the result with no part of the arguments it could be isn't

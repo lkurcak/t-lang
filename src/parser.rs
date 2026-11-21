@@ -1185,7 +1185,7 @@ impl Parser {
                 id: self.id(),
             }
         };
-        let effects = self.with_effects()?;
+        let effects = self.with_effects(true)?;
         let mut generics = generics;
         if *self.peek() == Tok::Where {
             self.where_clause(&mut generics)?;
@@ -1566,7 +1566,7 @@ impl Parser {
         head.no_allows()?;
         let name = self.ident()?;
         self.expect(Tok::Eq)?;
-        let effects = self.effect_set(None)?;
+        let effects = self.effect_set(None, false)?;
         let end = self.expect(Tok::Semi)?;
         Ok(EffectDef {
             doc: head.doc,
@@ -1576,30 +1576,32 @@ impl Parser {
         })
     }
 
-    /// `with panic` or `with {alloc, e}`, if a `with` is next.
-    fn with_effects(&mut self) -> Result<Option<EffectSet>, Error> {
+    /// `with panic` or `with {alloc, e}`, if a `with` is next: of a
+    /// function's own signature if `conds`, where each may have a
+    /// condition.
+    fn with_effects(&mut self, conds: bool) -> Result<Option<EffectSet>, Error> {
         match *self.peek() == Tok::With {
             true => {
                 let with = self.bump().span;
-                Ok(Some(self.effect_set(Some(with))?))
+                Ok(Some(self.effect_set(Some(with), conds)?))
             }
             false => Ok(None),
         }
     }
 
     /// One effect, or a set of them in braces, after the `with` at `with`
-    /// if there is one.
-    fn effect_set(&mut self, with: Option<Span>) -> Result<EffectSet, Error> {
+    /// if there is one, each with a condition if `conds` allows.
+    fn effect_set(&mut self, with: Option<Span>, conds: bool) -> Result<EffectSet, Error> {
         let start = with.unwrap_or_else(|| self.span());
         if self.eat(&Tok::LBrace) {
-            let (items, end) = self.comma_list(Tok::RBrace, Self::effect)?;
+            let (items, end) = self.comma_list(Tok::RBrace, |p| p.effect(conds))?;
             return Ok(EffectSet {
                 items,
                 span: start.to(end),
                 with: with.is_some(),
             });
         }
-        let item = self.effect()?;
+        let item = self.effect(conds)?;
         Ok(EffectSet {
             span: start.to(item.span),
             items: vec![item],
@@ -1608,8 +1610,9 @@ impl Parser {
     }
 
     /// `panic`, `alloc`, `unsafe`, an effect parameter `e`, or an
-    /// associated effect `I::e` or `<I as Iterator>::e`.
-    fn effect(&mut self) -> Result<Effect, Error> {
+    /// associated effect `I::e` or `<I as Iterator>::e`, with a condition
+    /// if `conds` allows one.
+    fn effect(&mut self, conds: bool) -> Result<Effect, Error> {
         if *self.peek() == Tok::Unsafe {
             let span = self.bump().span;
             let name = Ident {
@@ -1617,11 +1620,13 @@ impl Parser {
                 span,
                 id: self.id(),
             };
-            return Ok(Effect {
+            let e = Effect {
                 kind: EffectKind::Named(name),
                 span,
                 id: self.id(),
-            });
+                cond: None,
+            };
+            return self.effect_cond(e, conds);
         }
         let t = self.ty()?;
         let kind = match t.kind {
@@ -1641,11 +1646,32 @@ impl Parser {
                 ));
             }
         };
-        Ok(Effect {
+        let e = Effect {
             kind,
             span: t.span,
             id: self.id(),
-        })
+            cond: None,
+        };
+        self.effect_cond(e, conds)
+    }
+
+    /// Effect `e`'s condition, `if x > 3`, if one is next: an expression,
+    /// with no struct literal, as a function's body may follow it. Only a
+    /// function's own effects (`conds`) can have one: a type's are of
+    /// whatever has it, whose parameters aren't named.
+    fn effect_cond(&mut self, mut e: Effect, conds: bool) -> Result<Effect, Error> {
+        if *self.peek() == Tok::If && !conds {
+            return Err(Error::syntax(
+                self.span(),
+                "only a function's own effects can have a condition, not a type's or a bound's",
+            ));
+        }
+        if self.eat(&Tok::If) {
+            let cond = self.structs(false, Self::expr)?;
+            e.span = e.span.to(cond.span);
+            e.cond = Some(Box::new(cond));
+        }
+        Ok(e)
     }
 
     /// `impl<T> Show for Option<T> { .. }` or `impl Point { .. }`, after
@@ -1825,7 +1851,7 @@ impl Parser {
                 }
                 false => None,
             };
-            let effects = self.with_effects()?;
+            let effects = self.with_effects(false)?;
             if let Some(e) = &effects {
                 end = e.span;
             }
@@ -1850,7 +1876,7 @@ impl Parser {
                     // .. }` is a refined type.
                     let refined = matches!(p.peek2(), Tok::Ident(_)) && *p.peek3() == Tok::Colon;
                     match *p.peek() == Tok::LBrace && !refined {
-                        true => AssocBoundKind::Effects(p.effect_set(None)?),
+                        true => AssocBoundKind::Effects(p.effect_set(None, false)?),
                         false => AssocBoundKind::Eq(p.ty()?),
                     }
                 }
@@ -2154,7 +2180,7 @@ impl Parser {
                         id: self.id(),
                     }
                 };
-                let effects = self.with_effects()?;
+                let effects = self.with_effects(false)?;
                 let span = start.to(effects.as_ref().map_or(ret.span, |e| e.span));
                 Ok(TypeExpr {
                     kind: TypeExprKind::Fn(params, Box::new(ret), effects),

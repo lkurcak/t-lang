@@ -580,12 +580,12 @@ impl<'a> Builder<'a> {
                     Some(receiver),
                     args,
                     dest,
-                    span,
+                    (span, e.id),
                 );
             }
             ExprKind::Call(f, args) => {
                 let (f, ft) = self.operand(f);
-                self.call_into(f, ft, None, args, dest, span);
+                self.call_into(f, ft, None, args, dest, (span, e.id));
             }
             // The receiver first: what's before the `.`, through its `*`s,
             // borrowed if the method takes `&self` or `&mut self`, which,
@@ -611,7 +611,7 @@ impl<'a> Builder<'a> {
                     }
                 };
                 let f = Operand::Const(self.fn_const(&symbol, &targs));
-                self.call_into(f, ft, Some(receiver), args, dest, span);
+                self.call_into(f, ft, Some(receiver), args, dest, (span, e.id));
             }
             // A `for`'s `IntoIterator::into_iter(it)` of an iterator `it`:
             // `it` itself, by the one impl an iterator has, whose body is
@@ -633,7 +633,7 @@ impl<'a> Builder<'a> {
                 let ft = self.fn_value(symbol, targs, span);
                 let f = Operand::Const(self.fn_const(symbol, targs));
                 match parens {
-                    true => self.call_into(f, ft, None, args, dest, span),
+                    true => self.call_into(f, ft, None, args, dest, (span, e.id)),
                     false => self.assign(dest, Rvalue::Use(f), &ft, span, false),
                 }
             }
@@ -770,6 +770,7 @@ impl<'a> Builder<'a> {
                 };
                 let (o, ot) = self.operand(&args[0]);
                 self.regions.subtype(self.info, &ot, inner, args[0].span);
+                self.notes.sites.insert(self.point(), e.id);
                 self.assign(
                     dest,
                     Rvalue::Aggregate(Agg::Box, t.erased(), vec![o]),
@@ -969,7 +970,7 @@ impl<'a> Builder<'a> {
         first: Option<Arg>,
         args: &'a [Expr],
         dest: &Place,
-        span: Span,
+        (span, at): (Span, NodeId),
     ) {
         let Type::Fn(sig) = ft else {
             unreachable!("calling `{ft}`")
@@ -1061,6 +1062,7 @@ impl<'a> Builder<'a> {
         };
         let note = StmtNote::Operands(spans, texts);
         self.notes.stmts.insert(self.point(), note);
+        self.notes.sites.insert(self.point(), at);
         self.assign(dest, Rvalue::Call(f, ops), &ret, span, false);
         // A function that returns a `!` never does.
         if ret == Type::Never {
@@ -1268,7 +1270,7 @@ impl<'a> Builder<'a> {
                 let tmp = self.temp(t.clone(), e.span);
                 let ft = self.fn_value(&symbol, &[], e.span);
                 let f = Operand::Const(self.fn_const(&symbol, &[]));
-                self.call_into(f, ft, None, &[], &Place::local(tmp), e.span);
+                self.call_into(f, ft, None, &[], &Place::local(tmp), (e.span, e.id));
                 (Operand::Move(Place::local(tmp)), t)
             }
             ExprKind::Var(_, _) => {
@@ -1323,7 +1325,7 @@ impl<'a> Builder<'a> {
         let ft = self.fn_value(&symbol, &targs, e.span);
         let f = Operand::Const(self.fn_const(&symbol, &targs));
         let receiver = Arg::Value(o, t, e.span);
-        self.call_into(f, ft, Some(receiver), &[], &Place::local(tmp), e.span);
+        self.call_into(f, ft, Some(receiver), &[], &Place::local(tmp), (e.span, e.id));
         (Operand::Move(Place::local(tmp)), slice)
     }
 

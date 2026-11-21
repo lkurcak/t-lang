@@ -53,17 +53,18 @@ pub(super) struct Unwrap {
 }
 
 impl Unwrap {
-    /// What's for getting what's in an `Ok`, and doing something else for
-    /// an `Err`. Not `map_err` or `or_else`, which can make a `Result<T, !>`
-    /// into one with an error type another `?` wants.
-    pub const METHODS: [&str; 4] = ["unwrap", "expect", "unwrap_or", "unwrap_or_else"];
+    /// What's for getting what's in an `Ok`, and making something else for
+    /// an `Err`. Not `unwrap` or `expect`, whose panic for one has a
+    /// condition a `Result<T, !>` rules out, so it isn't counted (docs/90-
+    /// conditional-effects.md); nor `map_err` or `or_else`, which can make
+    /// a `Result<T, !>` into one with an error type another `?` wants.
+    pub const METHODS: [&str; 2] = ["unwrap_or", "unwrap_or_else"];
 }
 
 /// `call`, of a `Result` whose error type is `!`, which can't be an `Err`:
-/// what it does for one never happens. For `unwrap` and `expect`, that's a
-/// panic, which its caller must still say it may have; for `unwrap_or` and
-/// `unwrap_or_else`, a default that's made, or a function that's passed,
-/// for nothing. The fix is `into_ok()`, which can't panic.
+/// what it does for one never happens, a default that's made, or a
+/// function that's passed, for nothing. The fix is `unwrap()`, which can't
+/// panic there.
 ///
 /// Only where the error type is `!` as the function is checked, not where
 /// it's a type parameter that's `!` in some uses: there what's done for an
@@ -71,7 +72,6 @@ impl Unwrap {
 pub(super) fn unwrap_infallible(call: &Unwrap) -> Warning {
     let m = &call.method;
     let why = match m.as_str() {
-        "unwrap" | "expect" => "it says it may panic, though it can't".to_string(),
         "unwrap_or" => "the default is made for nothing".to_string(),
         _ => "the function is never called".to_string(),
     };
@@ -83,10 +83,10 @@ pub(super) fn unwrap_infallible(call: &Unwrap) -> Warning {
             "`{m}` of a `Result` whose error type is `!`, which can't be an `Err`: {why}"
         ),
         fixes: vec![Fix::new(
-            "use `into_ok()`",
+            "use `unwrap()`",
             vec![Edit {
                 span: call.span,
-                text: "into_ok()".into(),
+                text: "unwrap()".into(),
             }],
         )],
     }

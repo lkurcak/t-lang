@@ -8,11 +8,11 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let mut buf = String::new();
     let s: &str = "a\"b";
-    Debug::fmt(s, &mut buf).into_ok();
-    Display::fmt(s, &mut buf).into_ok();
+    Debug::fmt(s, &mut buf).unwrap();
+    Display::fmt(s, &mut buf).unwrap();
     let a = [1u8, 2];
     let xs: &[u8] = a.as_slice();
-    Debug::fmt(xs, &mut buf).into_ok();
+    Debug::fmt(xs, &mut buf).unwrap();
     out.line(&buf)?; // expect: "a\"b"a"b[1, 2]
     Ok(())
 }

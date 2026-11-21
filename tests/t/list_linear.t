@@ -12,7 +12,7 @@ fn close(fd: Fd) -> i64 {
     n
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = String::new();
     let mut l: List<Fd> = List::new();
     l.push(Fd { n: 1 });
