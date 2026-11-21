@@ -108,14 +108,17 @@ fn same::<A>(x: &A, y: &A) -> bool {
     let _2: &A; // y
     let _3: i64;
     let _4: &A;
-    let _5: i64;
-    let _6: &A;
+    let _5: &i64;
+    let _6: i64;
+    let _7: &A;
     bb0: {
         _4 = &(*_1);
         _3 = <A as Tr>::out(move _4);
-        _6 = &(*_2);
-        _5 = <A as Tr>::out(move _6);
-        _0 = copy _3 == copy _5;
+        _5 = &_3;
+        _7 = &(*_2);
+        _6 = <A as Tr>::out(move _7);
+        _0 = copy (*_5) == copy _6;
+        dead _7;
         dead _6;
         dead _5;
         dead _4;
@@ -132,14 +135,17 @@ fn same::<B>(x: &B, y: &B) -> bool {
     let _2: &B; // y
     let _3: bool;
     let _4: &B;
-    let _5: bool;
-    let _6: &B;
+    let _5: &bool;
+    let _6: bool;
+    let _7: &B;
     bb0: {
         _4 = &(*_1);
         _3 = <B as Tr>::out(move _4);
-        _6 = &(*_2);
-        _5 = <B as Tr>::out(move _6);
-        _0 = copy _3 == copy _5;
+        _5 = &_3;
+        _7 = &(*_2);
+        _6 = <B as Tr>::out(move _7);
+        _0 = copy (*_5) == copy _6;
+        dead _7;
         dead _6;
         dead _5;
         dead _4;

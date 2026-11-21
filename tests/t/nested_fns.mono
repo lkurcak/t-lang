@@ -663,6 +663,7 @@ fn main::fact(n: i64) -> i64 with panic {
     let _4: i64;
     let _5: i64;
     let _6: i64;
+    let _7: i64;
     bb0: {
         _3 = 0_i64;
         _2 = copy _1 == copy _3;
@@ -674,10 +675,12 @@ fn main::fact(n: i64) -> i64 with panic {
         goto bb3;
     }
     bb2: {
-        _6 = 1_i64;
-        _5 = copy _1 - move _6;
-        _4 = main::fact(move _5);
-        _0 = copy _1 * move _4;
+        _4 = copy _1;
+        _7 = 1_i64;
+        _6 = copy _1 - move _7;
+        _5 = main::fact(move _6);
+        _0 = move _4 * move _5;
+        dead _7;
         dead _6;
         dead _5;
         dead _4;
@@ -758,12 +761,18 @@ fn main::twice::<i64>(f: fn(i64) -> i64 with panic, x: i64) -> i64 with panic {
     let _0: i64;
     let _1: fn(i64) -> i64 with panic; // f
     let _2: i64; // x
-    let _3: i64;
+    let _3: fn(i64) -> i64 with panic;
     let _4: i64;
+    let _5: fn(i64) -> i64 with panic;
+    let _6: i64;
     bb0: {
-        _4 = move _2;
-        _3 = copy _1(move _4);
-        _0 = copy _1(move _3);
+        _3 = copy _1;
+        _5 = copy _1;
+        _6 = move _2;
+        _4 = move _5(move _6);
+        _0 = move _3(move _4);
+        dead _6;
+        dead _5;
         dead _4;
         dead _3;
         dead _2;
@@ -776,12 +785,18 @@ fn main::twice::<bool>(f: fn(bool) -> bool with panic, x: bool) -> bool with pan
     let _0: bool;
     let _1: fn(bool) -> bool with panic; // f
     let _2: bool; // x
-    let _3: bool;
+    let _3: fn(bool) -> bool with panic;
     let _4: bool;
+    let _5: fn(bool) -> bool with panic;
+    let _6: bool;
     bb0: {
-        _4 = move _2;
-        _3 = copy _1(move _4);
-        _0 = copy _1(move _3);
+        _3 = copy _1;
+        _5 = copy _1;
+        _6 = move _2;
+        _4 = move _5(move _6);
+        _0 = move _3(move _4);
+        dead _6;
+        dead _5;
         dead _4;
         dead _3;
         dead _2;

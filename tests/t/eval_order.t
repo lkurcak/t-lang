@@ -68,6 +68,14 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     l.push(3);
     let pair = (4u8, l);
     out.line(&first(pair.0, eat(pair)))?; // expect: 4
+    let whole = (6u8, List::new());
+    out.line(&both(whole.0, whole))?;     // expect: 12
+    // What's behind a `&mut`, read before the reference is given away.
+    let mut under = 5u8;
+    let re = &mut under;
+    let held = (*re, re);
+    *held.1 = 9;
+    out.line(&held.0)?;                 // expect: 5
     // The checker reads them the same way.
     let mut v = 5u8;
     out.line(&need5(first(v, { v = 7; 7 })))?; // expect: 5
@@ -87,5 +95,7 @@ fn eat(p: (u8, List<u8>)) -> u8 {
     l.discard();
     a
 }
+
+fn both(a: u8, p: (u8, List<u8>)) -> u8 with panic { a + eat(p) }
 
 fn deref(a: &u8, _b: u8) -> u8 { *a }

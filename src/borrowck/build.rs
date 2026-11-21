@@ -533,7 +533,7 @@ impl<'a> Builder<'a> {
                 l,
                 r,
             ) => {
-                let after = self.quiet(r);
+                let after = self.quiet(r, false);
                 let mut l = self.place(l);
                 // The left side is what it is now, whatever the right does
                 // (lemma E1 of docs/91-evaluation-order.md): read now if
@@ -562,7 +562,7 @@ impl<'a> Builder<'a> {
                 self.assign(dest, value, &Type::Bool, span, false);
             }
             ExprKind::Binary(op, l, r) => {
-                let after = self.quiet(r);
+                let after = self.quiet(r, false);
                 let (l, _) = self.operand_before(l, after);
                 let (r, _) = self.operand(r);
                 let t = self.ty(e);
@@ -769,7 +769,7 @@ impl<'a> Builder<'a> {
                     let i = fields.iter().position(|(f, _)| *f == init.name.name);
                     let i = i.expect("the checker found the field");
                     spans[i] = init.value.span;
-                    let after = inits[k + 1..].iter().all(|i| self.quiet(&i.value));
+                    let after = inits[k + 1..].iter().all(|i| self.quiet(&i.value, false));
                     let (o, ot) = self.operand_before(&init.value, after);
                     self.regions
                         .subtype(self.info, &ot, &fields[i].1, init.value.span);
@@ -811,7 +811,7 @@ impl<'a> Builder<'a> {
                 let fields = variant_fields(self.adts(), &t, i);
                 let mut ops = Vec::new();
                 for (k, (a, f)) in args.iter().zip(&fields).enumerate() {
-                    let after = args[k + 1..].iter().all(|a| self.quiet(a));
+                    let after = args[k + 1..].iter().all(|a| self.quiet(a, false));
                     let (o, ot) = self.operand_before(a, after);
                     self.regions.subtype(self.info, &ot, f, a.span);
                     ops.push(o);
@@ -836,7 +836,7 @@ impl<'a> Builder<'a> {
                 };
                 let mut ops = Vec::new();
                 for (k, (a, et)) in items.iter().zip(ts).enumerate() {
-                    let after = items[k + 1..].iter().all(|a| self.quiet(a));
+                    let after = items[k + 1..].iter().all(|a| self.quiet(a, false));
                     let (o, ot) = self.operand_before(a, after);
                     self.regions.subtype(self.info, &ot, et, a.span);
                     ops.push(o);
@@ -856,7 +856,7 @@ impl<'a> Builder<'a> {
                 };
                 let mut ops = Vec::new();
                 for (k, a) in items.iter().enumerate() {
-                    let after = items[k + 1..].iter().all(|a| self.quiet(a));
+                    let after = items[k + 1..].iter().all(|a| self.quiet(a, false));
                     let (o, ot) = self.operand_before(a, after);
                     self.regions.subtype(self.info, &ot, elem, a.span);
                     ops.push(o);
@@ -1012,7 +1012,7 @@ impl<'a> Builder<'a> {
         let (params, ret) = sig.instantiate(&vars);
         // What's called, and a receiver taken by value, are worked out
         // before the arguments (lemma E1 of docs/91-evaluation-order.md).
-        let after = args.iter().all(|a| self.quiet(a));
+        let after = args.iter().all(|a| self.quiet(a, true));
         let f = match f {
             Operand::Copy(p) => {
                 let t = self.place_ty(&p);
@@ -1033,7 +1033,7 @@ impl<'a> Builder<'a> {
         }
         let mut pending: Vec<Arg> = first.into_iter().collect();
         for (i, a) in args.iter().enumerate() {
-            let after = args[i + 1..].iter().all(|a| self.quiet(a));
+            let after = args[i + 1..].iter().all(|a| self.quiet(a, true));
             let coerced = self.cx.typed().coerced.get(&a.id).copied();
             // An array as a slice is a call, of `as_slice`, made here.
             if self.cx.typed().unsized_.contains_key(&a.id) {
@@ -1298,11 +1298,15 @@ impl<'a> Builder<'a> {
 
     /// Does working `e` out as an operand leave every place as it is, and
     /// usable? Then an operand before it needn't be read before it
-    /// (`read_before`). So of a literal, a function's name, a place that's
-    /// read, as a `Copy` one is, or reborrowed, a borrow of a place, which
-    /// is taken later still, and an operator on such. Not of anything that may call, assign or move:
-    /// saying no is always right, and only costs a temporary.
-    fn quiet(&self, e: &Expr) -> bool {
+    /// (`read_before`). So of a literal, a function's name, a `Copy` place
+    /// that's read, a `&` of a place, and an operator on such. A `&mut`
+    /// of a place, written or made by reborrowing a `&mut` variable, is
+    /// quiet where it's taken late, `late`, as a call's argument is
+    /// (`call_into`): elsewhere it's taken where it's written, and what's
+    /// behind it can't be read until it's used. Not anything that may
+    /// call, assign or move: saying no is always right, and only costs a
+    /// temporary.
+    fn quiet(&self, e: &Expr, late: bool) -> bool {
         let typed = self.cx.typed();
         if typed.reified.contains_key(&e.id) || typed.unsized_.contains_key(&e.id) {
             return false;
@@ -1314,17 +1318,24 @@ impl<'a> Builder<'a> {
             | ExprKind::Str(_)
             | ExprKind::ByteStr(_)
             | ExprKind::Unit => true,
-            ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) => quiet_place(x),
+            ExprKind::Unary(UnOp::Ref, x) => quiet_place(x),
+            ExprKind::Unary(UnOp::RefMut, x) => late && quiet_place(x),
             ExprKind::Var(..) | ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
-                let place = self.is_operand_place(e) && quiet_place(e);
-                let fun = matches!(typed.vars.get(&e.id), Some(Res::Fn(..) | Res::Const(_)));
-                // A `&mut` is reborrowed, which changes nothing.
-                let t = self.erased_ty(e);
-                let read = matches!(t, Type::Ref(..)) || self.cx.is_copy(&t);
-                fun || (place && (typed.coerced.contains_key(&e.id) || read))
+                if matches!(typed.vars.get(&e.id), Some(Res::Fn(..) | Res::Const(_))) {
+                    return true;
+                }
+                let read = match (typed.coerced.get(&e.id).copied(), self.erased_ty(e)) {
+                    (Some((_, mutable)), _) | (None, Type::Ref(_, mutable, _)) => {
+                        !mutable || late
+                    }
+                    (None, t) => self.cx.is_copy(&t),
+                };
+                self.is_operand_place(e) && quiet_place(e) && read
             }
-            ExprKind::Unary(UnOp::Neg | UnOp::Not, x) | ExprKind::As(x, _) => self.quiet(x),
-            ExprKind::Binary(_, l, r) => self.quiet(l) && self.quiet(r),
+            ExprKind::Unary(UnOp::Neg | UnOp::Not, x) | ExprKind::As(x, _) => {
+                self.quiet(x, false)
+            }
+            ExprKind::Binary(_, l, r) => self.quiet(l, false) && self.quiet(r, false),
             _ => false,
         }
     }

@@ -92,7 +92,8 @@ the call. Each place in its body that may panic, a *site*, is checked:
   `fn add(a: u8, b: u8) -> u8 with panic if a > 255 - b { a + b }`;
 - a call with a condition of its own must be one whose condition follows
   from `P`, wherever it's made;
-- any other, a `panic(..)` say, must be where `P` holds.
+- any other, a `panic(..)` say, or a static's use, must be where `P`
+  holds.
 
 ```rust,error
 fn bump(x: u8) -> u8 with panic if x > 10 { x + 250 }
@@ -191,7 +192,8 @@ when a condition holds, `a if P_a`; one it doesn't say has the condition
   P_a`, where `T` is its trigger and `P_a` the condition of the
   parameters at the call. For `a` the function doesn't say, that's `Φ ⊢
   ¬T`, which is the operators' rule as it was. A site the walk doesn't
-  see, such as a static's use, keeps its effect.
+  see keeps its effect. (A static's use is one it sees, since
+  docs/91-evaluation-order.md.)
 - **Lemma C3 (calls).** A call of `h` has `h`'s `U`, and each `a if Q` of
   `h`'s whose `¬Q`, of the arguments, isn't proved where it is. `U` is
   only of `panic`, `alloc`, `global` and `unsafe` when `h` has a

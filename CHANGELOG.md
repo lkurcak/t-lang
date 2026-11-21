@@ -1,5 +1,40 @@
 # Changelog
 
+## Unreleased
+
+Step 91: the order operands are worked out in. See
+[docs/91-evaluation-order.md](docs/91-evaluation-order.md).
+
+### Changed
+
+- Operands are worked out left to right, each to its value before the
+  next: what's called, a receiver taken by value, a call's arguments, an
+  operator's and a comparison's sides, the fields of a tuple, a struct
+  literal, an array and a variant. A variable that's `Copy`, a field of
+  one, or what's behind a reference used to be read where it was used,
+  after the operands that followed it: `f(c, { c = 7; 7 })` was given 7,
+  and `d + bump(&mut d)` what `bump` left in `d`. Now they're what the
+  variable was where it's written. A borrow passed to a call is still
+  taken when the call is made (`v.push(v.len())`), and `a += b` still
+  works `b` out first.
+- A comparison's left side that isn't `Copy` is borrowed where it's
+  written, so `a == { a.push(1); b }` is refused.
+- An argument that reads a variable before a later argument calls a
+  closure that changes it is refused, as the closure borrows the
+  variable until then: `f(v, inc())`.
+
+### Added
+
+- A static's use is a site the refinement checker sees, so a function
+  that says `with global if c` can use one where `c` holds.
+
+### Fixed
+
+- `f(p.a, eat(p))`, a `Copy` field read before a later argument moves
+  the whole, was refused as a use of a moved value; and `(*r, r)`, what's
+  behind a `&mut` read before the reference is given away, as a use of
+  what's borrowed.
+
 ## 0.103.0 (2026-11-21)
 
 Step 90: conditional effects. See
