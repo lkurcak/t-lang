@@ -533,13 +533,37 @@ impl<'a> Builder<'a> {
                 l,
                 r,
             ) => {
-                let l = self.place(l);
+                let after = self.quiet(r);
+                let mut l = self.place(l);
+                // The left side is what it is now, whatever the right does
+                // (lemma E1 of docs/91-evaluation-order.md): read now if
+                // it's `Copy`, and else borrowed now, so the right can't
+                // change it.
+                if !after && self.reachable() {
+                    let t = self.place_ty(&l);
+                    l = match self.cx.is_copy(&t) {
+                        true => {
+                            let tmp = self.temp(t.clone(), span);
+                            let value = Rvalue::Use(Operand::Copy(l));
+                            self.assign(&Place::local(tmp), value, &t, span, false);
+                            Place::local(tmp)
+                        }
+                        false => {
+                            let (region, rt) = self.borrow(&l, false, span);
+                            let tmp = self.temp(rt.clone(), span);
+                            let value = Rvalue::Ref(region, false, l);
+                            self.assign(&Place::local(tmp), value, &rt, span, false);
+                            Place::local(tmp).project(Proj::Deref)
+                        }
+                    };
+                }
                 let r = self.place(r);
                 let value = Rvalue::Binary(*op, Operand::Copy(l), Operand::Copy(r), e.id);
                 self.assign(dest, value, &Type::Bool, span, false);
             }
             ExprKind::Binary(op, l, r) => {
-                let (l, _) = self.operand(l);
+                let after = self.quiet(r);
+                let (l, _) = self.operand_before(l, after);
                 let (r, _) = self.operand(r);
                 let t = self.ty(e);
                 self.assign(dest, Rvalue::Binary(*op, l, r, e.id), &t, span, false);
@@ -741,11 +765,12 @@ impl<'a> Builder<'a> {
                 let fields = struct_fields(self.adts(), &t).expect("a struct");
                 let mut ops: Vec<Option<Operand>> = vec![None; fields.len()];
                 let mut spans = vec![span; fields.len()];
-                for init in inits {
+                for (k, init) in inits.iter().enumerate() {
                     let i = fields.iter().position(|(f, _)| *f == init.name.name);
                     let i = i.expect("the checker found the field");
                     spans[i] = init.value.span;
-                    let (o, ot) = self.operand(&init.value);
+                    let after = inits[k + 1..].iter().all(|i| self.quiet(&i.value));
+                    let (o, ot) = self.operand_before(&init.value, after);
                     self.regions
                         .subtype(self.info, &ot, &fields[i].1, init.value.span);
                     ops[i] = Some(o);
@@ -785,8 +810,9 @@ impl<'a> Builder<'a> {
                 let i = variant_index(self.adts(), &t, &variant.name);
                 let fields = variant_fields(self.adts(), &t, i);
                 let mut ops = Vec::new();
-                for (a, f) in args.iter().zip(&fields) {
-                    let (o, ot) = self.operand(a);
+                for (k, (a, f)) in args.iter().zip(&fields).enumerate() {
+                    let after = args[k + 1..].iter().all(|a| self.quiet(a));
+                    let (o, ot) = self.operand_before(a, after);
                     self.regions.subtype(self.info, &ot, f, a.span);
                     ops.push(o);
                 }
@@ -809,8 +835,9 @@ impl<'a> Builder<'a> {
                     unreachable!("a tuple literal makes a tuple")
                 };
                 let mut ops = Vec::new();
-                for (a, et) in items.iter().zip(ts) {
-                    let (o, ot) = self.operand(a);
+                for (k, (a, et)) in items.iter().zip(ts).enumerate() {
+                    let after = items[k + 1..].iter().all(|a| self.quiet(a));
+                    let (o, ot) = self.operand_before(a, after);
                     self.regions.subtype(self.info, &ot, et, a.span);
                     ops.push(o);
                 }
@@ -828,8 +855,9 @@ impl<'a> Builder<'a> {
                     unreachable!("an array literal makes an array")
                 };
                 let mut ops = Vec::new();
-                for a in items {
-                    let (o, ot) = self.operand(a);
+                for (k, a) in items.iter().enumerate() {
+                    let after = items[k + 1..].iter().all(|a| self.quiet(a));
+                    let (o, ot) = self.operand_before(a, after);
                     self.regions.subtype(self.info, &ot, elem, a.span);
                     ops.push(o);
                 }
@@ -982,12 +1010,30 @@ impl<'a> Builder<'a> {
             .map(|_| Region::Var(self.regions.fresh()))
             .collect();
         let (params, ret) = sig.instantiate(&vars);
+        // What's called, and a receiver taken by value, are worked out
+        // before the arguments (lemma E1 of docs/91-evaluation-order.md).
+        let after = args.iter().all(|a| self.quiet(a));
+        let f = match f {
+            Operand::Copy(p) => {
+                let t = self.place_ty(&p);
+                self.read_before(Operand::Copy(p), t, span, after).0
+            }
+            f => f,
+        };
+        let first = match first {
+            Some(Arg::Value(o, t, at)) => {
+                let (o, t) = self.read_before(o, t, at, after);
+                Some(Arg::Value(o, t, at))
+            }
+            first => first,
+        };
         let pins = self.pins.len();
         if let Some(Arg::Borrow(place, _, _, at, _)) = &first {
             self.pin(place, *at);
         }
         let mut pending: Vec<Arg> = first.into_iter().collect();
-        for a in args {
+        for (i, a) in args.iter().enumerate() {
+            let after = args[i + 1..].iter().all(|a| self.quiet(a));
             let coerced = self.cx.typed().coerced.get(&a.id).copied();
             // An array as a slice is a call, of `as_slice`, made here.
             if self.cx.typed().unsized_.contains_key(&a.id) {
@@ -1016,7 +1062,7 @@ impl<'a> Builder<'a> {
                     Arg::Borrow(p, true, None, a.span, None)
                 }
                 (_, None) => {
-                    let (o, t) = self.operand(a);
+                    let (o, t) = self.operand_before(a, after);
                     Arg::Value(o, t, a.span)
                 }
             };
@@ -1219,6 +1265,68 @@ impl<'a> Builder<'a> {
         let value = Rvalue::Cast(o, ft.erased(), e.id);
         self.assign(&Place::local(tmp), value, &ft, e.span, false);
         (Operand::Move(Place::local(tmp)), ft)
+    }
+
+    /// `e`'s value, as an operand with others worked out after it: what
+    /// it is now, whatever they do (lemma E1 of
+    /// docs/91-evaluation-order.md). `quiet_after` says they do nothing
+    /// that could change it (`quiet`).
+    fn operand_before(&mut self, e: &'a Expr, quiet_after: bool) -> (Operand, Type) {
+        let (o, t) = self.operand(e);
+        self.read_before(o, t, e.span, quiet_after)
+    }
+
+    /// Operand `o`, of type `t`, read here if it's a `Copy` place, which
+    /// is otherwise read where it's used, after the operands that follow
+    /// it are worked out: into a temporary, as a place that isn't `Copy`
+    /// is moved into one (`use_place`). Not if what follows is quiet: then
+    /// the place is what it'll be there.
+    fn read_before(
+        &mut self,
+        o: Operand,
+        t: Type,
+        span: Span,
+        quiet_after: bool,
+    ) -> (Operand, Type) {
+        if quiet_after || !matches!(o, Operand::Copy(_)) || !self.reachable() {
+            return (o, t);
+        }
+        let tmp = self.temp(t.clone(), span);
+        self.assign(&Place::local(tmp), Rvalue::Use(o), &t, span, false);
+        (Operand::Move(Place::local(tmp)), t)
+    }
+
+    /// Does working `e` out as an operand leave every place as it is, and
+    /// usable? Then an operand before it needn't be read before it
+    /// (`read_before`). So of a literal, a function's name, a place that's
+    /// read, as a `Copy` one is, or reborrowed, a borrow of a place, which
+    /// is taken later still, and an operator on such. Not of anything that may call, assign or move:
+    /// saying no is always right, and only costs a temporary.
+    fn quiet(&self, e: &Expr) -> bool {
+        let typed = self.cx.typed();
+        if typed.reified.contains_key(&e.id) || typed.unsized_.contains_key(&e.id) {
+            return false;
+        }
+        match &e.kind {
+            ExprKind::Int(..)
+            | ExprKind::Bool(_)
+            | ExprKind::Char(_)
+            | ExprKind::Str(_)
+            | ExprKind::ByteStr(_)
+            | ExprKind::Unit => true,
+            ExprKind::Unary(UnOp::Ref | UnOp::RefMut, x) => quiet_place(x),
+            ExprKind::Var(..) | ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
+                let place = self.is_operand_place(e) && quiet_place(e);
+                let fun = matches!(typed.vars.get(&e.id), Some(Res::Fn(..) | Res::Const(_)));
+                // A `&mut` is reborrowed, which changes nothing.
+                let t = self.erased_ty(e);
+                let read = matches!(t, Type::Ref(..)) || self.cx.is_copy(&t);
+                fun || (place && (typed.coerced.contains_key(&e.id) || read))
+            }
+            ExprKind::Unary(UnOp::Neg | UnOp::Not, x) | ExprKind::As(x, _) => self.quiet(x),
+            ExprKind::Binary(_, l, r) => self.quiet(l) && self.quiet(r),
+            _ => false,
+        }
     }
 
     /// Is `e` a place, which `operand` uses as one (`use_place`), rather
@@ -1581,6 +1689,10 @@ impl<'a> Builder<'a> {
                     };
                     self.body.locals[tmp.0].of_static = Some(name.clone());
                     let value = Rvalue::Use(Operand::Const(Const::Static(symbol)));
+                    // A site, as a call is: of `global`, which its function
+                    // may say it has only when a condition holds
+                    // (docs/90-conditional-effects.md).
+                    self.notes.sites.insert(self.point(), e.id);
                     self.assign(&Place::local(tmp), value, &r, e.span, false);
                     return Place::local(tmp).project(Proj::Deref);
                 }
@@ -2094,6 +2206,16 @@ fn field_index(adts: &Adts, t: &Type, name: &str) -> usize {
 
 /// Does place expression `e` call something on the way to where it is, as
 /// `*s.index_mut(i)`, which `s[i]` is?
+/// Is `e` a place whose path has nothing to work out: a variable, or a
+/// field or `*` of one?
+fn quiet_place(e: &Expr) -> bool {
+    match &e.kind {
+        ExprKind::Var(..) => true,
+        ExprKind::Field(x, _) | ExprKind::Unary(UnOp::Deref, x) => quiet_place(x),
+        _ => false,
+    }
+}
+
 fn calls_in(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Call(..) | ExprKind::MethodCall(..) => true,

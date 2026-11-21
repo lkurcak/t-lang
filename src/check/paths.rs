@@ -104,7 +104,7 @@ impl Checker {
                 // is the effect `global` (lemma Y5 of docs/38-statics.md).
                 if is_static {
                     let what = format!("`{name}` is a static");
-                    self.effect(at, what, Type::effects([Type::Global]));
+                    self.call_effect(at, Some(id), what, Type::effects([Type::Global]), None);
                     return Ok(Some((ty, Res::Static(symbol))));
                 }
                 return Ok(Some((ty, Res::Item(symbol))));

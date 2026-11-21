@@ -1201,7 +1201,17 @@ impl Walk<'_> {
                 );
                 Ok(v)
             }
-            Rvalue::Use(o) => self.operand(fr, o, span),
+            Rvalue::Use(o) => {
+                // A static's use is `global`, which may be one of the
+                // function's own conditional effects, as `Box::new`'s
+                // `alloc` (docs/90-conditional-effects.md).
+                if let Operand::Const(Const::Static(_)) = o
+                    && let Some(n) = fr.notes.sites.get(&at)
+                {
+                    self.cut_effects(*n, None, &[], &[]);
+                }
+                self.operand(fr, o, span)
+            }
             Rvalue::Ref(_, m, q) => self.mir_borrow(fr, bodies, at, span, dest, *m, q),
             Rvalue::Unary(UnOp::Neg, o, site) => {
                 let v = self.operand(fr, o, span)?;
