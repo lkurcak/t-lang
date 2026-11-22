@@ -2,7 +2,13 @@
 //! imports itself.
 
 export use crate::cmp::{Eq, Ord};
-export use crate::iter::{DoubleEndedIterator, ExactSizeIterator, IntoIterator, Iterator};
+export use crate::iter::{
+    BoundedIterator,
+    DoubleEndedIterator,
+    ExactSizeIterator,
+    IntoIterator,
+    Iterator,
+};
 export use crate::mem::{Copy, Discard};
 export use crate::num::{Int, Signed, Unsigned};
 export use crate::num::{

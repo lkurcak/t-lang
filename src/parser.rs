@@ -1625,6 +1625,7 @@ impl Parser {
                 span,
                 id: self.id(),
                 cond: None,
+                unless: None,
             };
             return self.effect_cond(e, conds);
         }
@@ -1651,6 +1652,7 @@ impl Parser {
             span: t.span,
             id: self.id(),
             cond: None,
+            unless: None,
         };
         self.effect_cond(e, conds)
     }
@@ -1670,6 +1672,19 @@ impl Parser {
             let cond = self.structs(false, Self::expr)?;
             e.span = e.span.to(cond.span);
             e.cond = Some(Box::new(cond));
+        }
+        // `unless T: Trait`: `unless` is a word only here, after an effect.
+        if matches!(self.peek(), Tok::Ident(n) if n == "unless") {
+            if !conds {
+                return Err(Error::syntax(
+                    self.span(),
+                    "only a function's own effects can say `unless`, not a type's or a bound's",
+                ));
+            }
+            self.bump();
+            let guard = self.guard()?;
+            e.span = e.span.to(guard.span);
+            e.unless = Some(Box::new(guard));
         }
         Ok(e)
     }
@@ -3044,11 +3059,48 @@ impl Parser {
 
     /// A loop's `invariant p`, between its head and its body, if it has
     /// one: an expression, as a condition is, with no struct literal.
+    ///
+    /// A clause may end `where T: Trait`, to be said only where that
+    /// holds, and there may be several, each after its own `invariant`
+    /// (docs/92-where-a-bound-holds.md).
     fn invariant(&mut self) -> Result<Invariant, Error> {
-        if !self.eat(&Tok::Invariant) {
-            return Ok(None);
+        let mut clauses = Vec::new();
+        while self.eat(&Tok::Invariant) {
+            let p = self.structs(false, Self::expr)?;
+            clauses.push(match self.eat(&Tok::Where) {
+                true => {
+                    let guard = self.guard()?;
+                    Expr {
+                        span: p.span.to(guard.span),
+                        kind: ExprKind::Where(Box::new(p), Box::new(guard)),
+                        id: self.id(),
+                    }
+                }
+                false => p,
+            });
         }
-        Ok(Some(Box::new(self.structs(false, Self::expr)?)))
+        if clauses.len() < 2 {
+            return Ok(clauses.pop().map(Box::new));
+        }
+        let span = clauses[0].span.to(clauses[clauses.len() - 1].span);
+        Ok(Some(Box::new(Expr {
+            kind: ExprKind::Clauses(clauses),
+            span,
+            id: self.id(),
+        })))
+    }
+
+    /// `T: Trait`, after a `where` in an invariant or an `unless` in an
+    /// effect: one bound, on one type.
+    fn guard(&mut self) -> Result<Guard, Error> {
+        let subject = self.ty()?;
+        self.expect(Tok::Colon)?;
+        let bound = self.trait_bound()?;
+        Ok(Guard {
+            span: subject.span.to(bound.span),
+            subject,
+            bound,
+        })
     }
 
     /// `return e`, `break 'a e` or `continue 'a`, where the label is there

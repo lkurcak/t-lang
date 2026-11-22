@@ -132,7 +132,8 @@ structs! {
     EffectDecl { doc, span, name };
     EffectDef { doc, span, name, effects };
     EffectSet { items, span, with };
-    Effect { kind, span, id, cond };
+    Effect { kind, span, id, unless, cond };
+    Guard { subject, bound, span };
     TraitMethod { decl, provided };
     ImplDecl { doc, allows, span, module, generics, unsafe_, trait_name, self_ty, assoc, effects, methods };
     Param { doc, allows, mutable, vis, name, ty };
@@ -179,7 +180,7 @@ enums! {
     };
     ExprKind {
         Int(n, ty), Bool(b), Char(c), Str(s), ByteStr(bytes), Format(pieces), Unit, Var(name, args),
-        Unary(op, expr), As(expr, ty), Binary(op, left, right), Call(callee, args),
+        Unary(op, expr), As(expr, ty), Where(pred, guard), Clauses(clauses), Binary(op, left, right), Call(callee, args),
         MethodCall(receiver, name, types, args), If(cond, then, otherwise),
         IfLet(cond, then, otherwise), Array(elems), Tuple(elems),
         Repeat(value, len), Block(stmts, tail), Unsafe(block), StructLit(name, types, fields),

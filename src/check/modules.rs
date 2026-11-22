@@ -1800,6 +1800,10 @@ impl Rewrite<'_> {
             if let Some(c) = &mut item.cond {
                 self.pred(c)?;
             }
+            if let Some(g) = &mut item.unless {
+                self.ty(&mut g.subject)?;
+                self.bound(&mut g.bound)?;
+            }
         }
         self.interface = None;
         self.expr(&mut f.body)?;
@@ -1922,6 +1926,11 @@ impl Rewrite<'_> {
         }
         if let ExprKind::IfLet(c, ..) | ExprKind::WhileLet(_, c, ..) = &mut e.kind {
             self.pattern(&mut c.pat)?;
+        }
+        // The bound a clause of an invariant hangs on.
+        if let ExprKind::Where(_, g) = &mut e.kind {
+            self.ty(&mut g.subject)?;
+            self.bound(&mut g.bound)?;
         }
         // A loop's invariant names what any expression can. Not as a
         // refinement's predicate does: `old(x)` means nothing in it. A
@@ -3425,6 +3434,7 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             .collect(),
         ExprKind::Unary(_, x)
         | ExprKind::As(x, _)
+        | ExprKind::Where(x, _)
         | ExprKind::Field(x, _)
         | ExprKind::Loop(_, _, x)
         | ExprKind::Unsafe(x) => vec![&mut **x],
@@ -3464,7 +3474,10 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             .chain(tail.as_deref_mut())
             .collect(),
         ExprKind::StructLit(_, _, inits) => inits.iter_mut().map(|i| &mut i.value).collect(),
-        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) | ExprKind::Tuple(args) => {
+        ExprKind::Variant(_, _, _, args, ..)
+        | ExprKind::Array(args)
+        | ExprKind::Clauses(args)
+        | ExprKind::Tuple(args) => {
             args.iter_mut().collect()
         }
         ExprKind::Repeat(v, n) => vec![&mut **v, &mut **n],

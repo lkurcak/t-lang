@@ -494,6 +494,9 @@ impl Checker {
             | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
+            ExprKind::Where(..) | ExprKind::Clauses(_) => {
+                unreachable!("only a loop's invariant is one, which isn't run")
+            }
             //   τ an integer type          ------------------- (T-True/False)
             //  ------------------- (T-Int)   Γ ⊢ true : bool
             //      Γ ⊢ 42 : τ

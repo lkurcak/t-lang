@@ -1798,6 +1798,57 @@ impl Checker {
         }
     }
 
+    /// The bound `g` is, written after a `where` in an invariant or an
+    /// `unless` in an effect, in the function being checked: a trait, of a
+    /// type parameter, `Self`, or an associated type of one, which a call
+    /// may or may not meet. Of any other type it's already so or not.
+    pub(super) fn guard_pred(
+        &mut self,
+        g: &crate::ast::Guard,
+    ) -> Result<crate::traits::Pred, Error> {
+        if !g.bound.assoc.is_empty() || g.bound.sig.is_some() || g.bound.effects.is_some() {
+            return Err(Error::ty(
+                g.bound.span,
+                "expected a trait alone here: `T: Trait`, with nothing said of what's in it",
+            ));
+        }
+        let mut lts = super::Lifetimes::Any;
+        let t = self.resolve_with(&g.subject, &self.type_params, &mut lts)?;
+        let t = match &self.self_ty {
+            Some(s) => Subst::new(&["Self".to_string()], std::slice::from_ref(s)).apply(&t),
+            None => t,
+        };
+        fn open(t: &Type) -> bool {
+            match t {
+                Type::Param(..) => true,
+                Type::Proj(s, ..) => open(s),
+                _ => false,
+            }
+        }
+        if !open(&t) {
+            return Err(Error::ty(
+                g.subject.span,
+                format!(
+                    "a bound here can only be on a type parameter, `Self`, or an associated type                      of one, not `{t}`, which either meets it or doesn't"
+                ),
+            ));
+        }
+        let tr = self.trait_named(&g.bound.name)?;
+        Ok(crate::traits::Pred {
+            ty: t,
+            trait_name: tr,
+        })
+    }
+
+    /// Does the bound that clause `id` of an invariant hangs on hold where
+    /// the body is being walked: by its function's bounds, and those the
+    /// walk is under (`keep_laws`)?
+    pub(super) fn guard_holds(&self, id: NodeId) -> bool {
+        let (env, local) = (&self.adts.proj.env, &self.adts.proj.local);
+        (self.info.guards.get(&id))
+            .is_some_and(|g| self.traits.implements(&g.ty, &g.trait_name, env, local).is_ok())
+    }
+
     /// Checks loop invariant `p`, in the scope of the locals at the loop:
     /// a predicate, as a refinement's, but of `mut` variables too, as it's
     /// of their values each time the loop is about to go round, where the
@@ -2101,6 +2152,23 @@ impl Checker {
         match &e.kind {
             ExprKind::Int(..) => Ok(Sort::Int),
             ExprKind::Bool(_) => Ok(Sort::Bool),
+            // An invariant's clauses, each a `bool`.
+            ExprKind::Clauses(clauses) => {
+                for c in clauses {
+                    want(self, c, Sort::Bool)?;
+                }
+                Ok(Sort::Bool)
+            }
+            // One said where a bound holds, and so checked as where it
+            // does: a measure of the bound's trait is one there.
+            ExprKind::Where(p, g) => {
+                let pred = self.guard_pred(g)?;
+                self.adts.proj.env.push(pred.clone());
+                let got = self.pred_type(p, scope);
+                self.adts.proj.env.pop();
+                self.info.guards.insert(e.id, pred);
+                got
+            }
             ExprKind::Var(name, targs) if targs.is_empty() => {
                 match self.pred_name(e, name, scope) {
                     Some(Named::Value(t, what, def)) => {
@@ -2709,8 +2777,12 @@ impl Checker {
                     false => &muts[..],
                 };
                 let through_mut = counted.iter().any(|m| *m);
+                // A trait's measure is seen wherever the trait is, which
+                // `trait_measure` found in scope: also one it has a body
+                // for.
                 let fn_def = self.fn_def(&symbol);
                 if let Some(f) = fn_def
+                    && measure.of_trait.is_none()
                     && !self.modules.visible(f.module, f.level, self.module)
                 {
                     return Err(Error::ty(
@@ -5788,20 +5860,20 @@ impl Walk<'_> {
         &mut self,
         changed: &[Invalidation],
         frames: &[(Place, Vec<String>)],
-        inv: Option<&Expr>,
+        inv: Vec<Expr>,
         span: Span,
     ) -> Result<(), Error> {
-        let inv = inv.map(|p| Refinement::whole(p.clone()));
-        if let Some(r) = &inv {
+        let inv: Vec<Refinement> = inv.into_iter().map(Refinement::whole).collect();
+        for r in &inv {
             let span = r.parts[0].pred.span;
             let what = "the loop's invariant, as the loop starts".to_string();
             self.need(r, &Val::Other, Env::Here, span, what)?;
         }
         self.forget(changed, frames, span);
-        if let Some(r) = &inv
-            && let Some(f) = self.pred(r, &Val::Other, Env::Here)
-        {
-            self.fact(f);
+        for r in &inv {
+            if let Some(f) = self.pred(r, &Val::Other, Env::Here) {
+                self.fact(f);
+            }
         }
         Ok(())
     }

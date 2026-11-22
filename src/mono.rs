@@ -1361,6 +1361,35 @@ impl Cx<'_, '_, '_> {
     /// (`Mono::measure_copy`).
     fn pred(&mut self, e: &Expr) -> Box<Expr> {
         fn go(cx: &mut Cx, e: &mut Expr) {
+            // An invariant's clauses, as one predicate: those said in the
+            // copy, whose bounds hold of its types
+            // (docs/92-where-a-bound-holds.md).
+            if let ExprKind::Clauses(clauses) = &mut e.kind {
+                let mut all = std::mem::take(clauses).into_iter();
+                let mut whole = all.next().expect("an invariant has a clause");
+                for c in all {
+                    whole = Expr {
+                        span: whole.span.to(c.span),
+                        kind: ExprKind::Binary(BinOp::And, Box::new(whole), Box::new(c)),
+                        id: cx.m.id(),
+                    };
+                }
+                *e = whole;
+            }
+            if let ExprKind::Where(p, _) = &mut e.kind {
+                let said = (cx.m.info.guards.get(&e.id).cloned()).is_some_and(|g| {
+                    let ty = cx.subst(&g.ty);
+                    cx.m.info.traits.implements(&ty, &g.trait_name, &[], &[]).is_ok()
+                });
+                *e = match said {
+                    true => (**p).clone(),
+                    false => Expr {
+                        kind: ExprKind::Bool(true),
+                        span: e.span,
+                        id: e.id,
+                    },
+                };
+            }
             if let ExprKind::MethodCall(..) = &e.kind
                 && let Some((symbol, derefs, by)) = cx.m.info.measures.calls.get(&e.id).cloned()
                 && let Some(recv) = cx.m.info.measures.recv.get(&e.id).cloned()
@@ -1647,6 +1676,7 @@ impl Cx<'_, '_, '_> {
                     span,
                     id: self.m.id(),
                     cond: None,
+                    unless: None,
                 }
             })
             .collect();

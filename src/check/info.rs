@@ -113,6 +113,12 @@ pub struct Info {
     /// symbol, for monomorphisation to write its value there for the
     /// interpreter, as it does a const parameter's.
     pub(crate) pred_consts: HashMap<NodeId, String>,
+    /// The bound each clause of a loop's invariant that has a `where`
+    /// hangs on, by the clause's node, in the terms of the function it's
+    /// in (docs/92-where-a-bound-holds.md): the walk says the clause where
+    /// its bounds prove it, and monomorphisation writes it, or `true`, in
+    /// each copy, for the interpreter.
+    pub(crate) guards: HashMap<NodeId, crate::traits::Pred>,
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -926,6 +932,11 @@ fn each_annotation<'e>(e: &'e Expr, f: &mut impl FnMut(&TypeExpr), heads: &mut V
             each_annotation(x, f, heads);
             f(t);
         }
+        ExprKind::Where(x, g) => {
+            each_annotation(x, f, heads);
+            f(&g.subject);
+        }
+        ExprKind::Clauses(items) => items.iter().for_each(|x| each_annotation(x, f, heads)),
         ExprKind::Unary(_, x)
         | ExprKind::Field(x, _)
         | ExprKind::Loop(_, _, x)

@@ -143,15 +143,24 @@ impl<'b> Frame<'b> {
         self.notes.loops.iter().find(|lp| lp.head == b)
     }
 
-    /// The invariant of the loop whose head is `b`, if it has one.
-    fn invariant(&self, b: Bb) -> Option<&'b Expr> {
-        self.body.blocks[b.0]
-            .stmts
-            .iter()
-            .find_map(|s| match s.kind {
-                StmtKind::Holds(r) => self.body.refinements[r].parts.first().map(|(_, e)| e),
-                _ => None,
+    /// The invariant of the loop whose head is `b`: its clauses that are
+    /// said where the walk is, those with no `where` and those whose bound
+    /// holds there (`Checker::guard_holds`); none, if it has none. A
+    /// clause that isn't said is neither assumed nor proved: an invariant
+    /// is only ever what the walk that assumes it proves (lemma B3 of
+    /// docs/92-where-a-bound-holds.md).
+    fn invariant(&self, cx: &Checker, b: Bb) -> Vec<Expr> {
+        let whole = (self.body.blocks[b.0].stmts.iter()).find_map(|s| match s.kind {
+            StmtKind::Holds(r) => self.body.refinements[r].parts.first().map(|(_, e)| e),
+            _ => None,
+        });
+        (whole.into_iter())
+            .flat_map(Expr::clauses)
+            .filter_map(|c| match &c.kind {
+                ExprKind::Where(p, _) => cx.guard_holds(c.id).then(|| (**p).clone()),
+                _ => Some(c.clone()),
             })
+            .collect()
     }
 
     /// The call at `at`: what's called and its operands.
@@ -536,7 +545,7 @@ impl Walk<'_> {
     fn mir_loop_start(&mut self, fr: &Frame, bodies: &Bodies, lp: &LoopNote) -> Result<(), Error> {
         let (changed, changes) = self.changes_in(fr, bodies, &lp.blocks);
         let frames = self.frames_of(&changes, &changed);
-        self.loop_start(&changed, &frames, fr.invariant(lp.head), lp.span)
+        self.loop_start(&changed, &frames, fr.invariant(self.cx, lp.head), lp.span)
     }
 
     /// What `blocks` of body `fr` change: each place assigned or lent
@@ -676,15 +685,18 @@ impl Walk<'_> {
     /// Along an edge from `from` back to loop head `head`: its invariant
     /// must hold, for the next time round.
     fn back_edge(&mut self, fr: &Frame, from: Bb, head: Bb) -> Result<(), Error> {
-        let (Some(lp), Some(inv)) = (fr.loop_at(head), fr.invariant(head)) else {
+        let Some(lp) = fr.loop_at(head) else {
             return Ok(());
         };
-        let r = Refinement::whole(inv.clone());
         let (span, what) = match lp.continues.get(&from) {
             Some(span) => (*span, "the loop's invariant, at this `continue`"),
             None => (lp.end, "the loop's invariant, at the end of its body"),
         };
-        self.need(&r, &Val::Other, Env::Here, span, what.to_string())
+        for inv in fr.invariant(self.cx, head) {
+            let r = Refinement::whole(inv);
+            self.need(&r, &Val::Other, Env::Here, span, what.to_string())?;
+        }
+        Ok(())
     }
 
     fn mir_stmt(

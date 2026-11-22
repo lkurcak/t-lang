@@ -1,6 +1,6 @@
 //! Arrays: a number of values fixed by their type, inline.
 
-use crate::iter::{ExactSizeIterator, IntoIterator, Iterator};
+use crate::iter::{BoundedIterator, ExactSizeIterator, IntoIterator, Iterator};
 use crate::mem::Copy;
 use crate::ops::Range;
 use crate::option::Option;
@@ -125,10 +125,13 @@ impl<T: Copy, const N: usize> Iterator for IntoIter<T, N> {
 }
 
 /// How many values it has yet to give: those from index `next` on.
-impl<T: Copy, const N: usize> ExactSizeIterator for IntoIter<T, N> {
+impl<T: Copy, const N: usize> BoundedIterator for IntoIter<T, N> {
     #[measure]
-    fn len(&self) -> usize { self.values.len() - self.next }
+    fn most(&self) -> usize { self.values.len() - self.next }
 }
+
+/// And no fewer.
+impl<T: Copy, const N: usize> ExactSizeIterator for IntoIter<T, N> {}
 
 /// An array whose value at each index `i` is `f(i)`, made front to back:
 /// so its values needn't be `Copy`. It does what `f` does.

@@ -1162,11 +1162,18 @@ impl Printer<'_> {
             }
             EffectKind::Proj(t, None, name) => self.ty(t) + "::" + &name.name,
         };
-        match &e.cond {
+        let atom = match &e.cond {
             Some(c) => atom + " if " + self.expr(c, 0, Ctx::default()),
+            None => atom,
+        };
+        match &e.unless {
+            Some(g) => atom + " unless " + self.guard(g),
             None => atom,
         }
     }
+
+    /// `T: Trait`, after a `where` or an `unless`.
+    fn guard(&mut self, g: &Guard) -> Doc { self.ty(&g.subject) + ": " + self.bound(&g.bound) }
 
     /// Prints `e`, in parentheses if it binds less tightly than `min`, or if
     /// `ctx` needs them.
@@ -1214,6 +1221,17 @@ impl Printer<'_> {
             }
             ExprKind::Unary(op, x) => text(op.to_string()) + self.expr(x, UNARY, ctx.inner()),
             ExprKind::As(x, t) => self.expr(x, AS, ctx.inner()) + " as " + self.ty(t),
+            ExprKind::Where(p, g) => self.expr(p, 0, ctx) + " where " + self.guard(g),
+            ExprKind::Clauses(clauses) => {
+                let mut doc = text("");
+                for (i, c) in clauses.iter().enumerate() {
+                    if i > 0 {
+                        doc = doc + " invariant ";
+                    }
+                    doc = doc + self.expr(c, 0, ctx);
+                }
+                doc
+            }
             ExprKind::Binary(..) => self.binary(e, ctx),
             ExprKind::Call(f, args) => {
                 // Something more than a name or a call needs parentheses to
@@ -1239,6 +1257,13 @@ impl Printer<'_> {
                     + self.args(end, args)
             }
             ExprKind::If(..) | ExprKind::IfLet(..) => self.if_chain(e),
+            ExprKind::While(label, c, Some(inv), body) if clauses(inv) => group(
+                label_doc(label)
+                    + "while "
+                    + self.bare_head(c)
+                    + self.clauses(inv)
+                    + self.block_or_expr(body),
+            ),
             ExprKind::While(label, c, inv, body) => group(
                 label_doc(label)
                     + "while "
@@ -1246,13 +1271,23 @@ impl Printer<'_> {
                     + self.invariant(inv)
                     + self.block_or_expr(body),
             ),
+            ExprKind::WhileLet(label, c, Some(inv), body) if clauses(inv) => group(
+                label_doc(label)
+                    + "while "
+                    + self.let_cond(c, true)
+                    + self.clauses(inv)
+                    + self.block_or_expr(body),
+            ),
             ExprKind::WhileLet(label, c, inv, body) => group(
                 label_doc(label)
                     + "while "
-                    + self.let_cond(c)
+                    + self.let_cond(c, false)
                     + self.invariant(inv)
                     + self.block_or_expr(body),
             ),
+            ExprKind::Loop(label, Some(inv), body) if clauses(inv) => {
+                group(label_doc(label) + "loop" + self.clauses(inv) + self.block_or_expr(body))
+            }
             ExprKind::Loop(label, inv, body) => {
                 group(label_doc(label) + "loop " + self.invariant(inv) + self.block_or_expr(body))
             }
@@ -1265,8 +1300,10 @@ impl Printer<'_> {
                         Some(n) => text(format!("{}: ", n.name)),
                         None => Doc::nil(),
                     }
-                    + self.head(&f.iter)
-                    + self.invariant(&f.invariant)
+                    + match &f.invariant {
+                        Some(inv) if clauses(inv) => self.bare_head(&f.iter) + self.clauses(inv),
+                        inv => self.head(&f.iter) + self.invariant(inv),
+                    }
                     + self.block_or_expr(&f.body),
             ),
             // Its ends bind more tightly than it, whatever they are but an
@@ -1535,7 +1572,7 @@ impl Printer<'_> {
         loop {
             let (head, then, els) = match &e.kind {
                 ExprKind::If(c, then, els) => (self.head(c), then, els),
-                ExprKind::IfLet(c, then, els) => (self.let_cond(c), then, els),
+                ExprKind::IfLet(c, then, els) => (self.let_cond(c, false), then, els),
                 _ => {
                     doc = doc + self.block_or_expr(e);
                     break;
@@ -1579,6 +1616,34 @@ impl Printer<'_> {
 
     /// A loop's `invariant p `, with the space before the `{`, if it has
     /// one.
+    /// `e` before a block, as `head` prints it, without the space after.
+    fn bare_head(&mut self, e: &Expr) -> Doc {
+        self.expr(
+            e,
+            0,
+            Ctx {
+                no_struct: true,
+                stmt: false,
+            },
+        )
+    }
+
+    /// The clauses of invariant `inv`, which has several or one with a
+    /// `where`, after a loop's head and before its body: all on the
+    /// head's line, or else each on a line of its own, and the body's `{`
+    /// on the next.
+    fn clauses(&mut self, inv: &Expr) -> Doc {
+        let mut doc = Doc::nil();
+        for c in inv.clauses() {
+            let pred = match &c.kind {
+                ExprKind::Where(p, g) => self.bare_head(p) + " where " + self.guard(g),
+                _ => self.bare_head(c),
+            };
+            doc = doc + Doc::Line + "invariant " + pred;
+        }
+        group(nest(doc) + Doc::Line)
+    }
+
     fn invariant(&mut self, inv: &Invariant) -> Doc {
         match inv {
             Some(p) => text("invariant ") + self.head(p),
@@ -1588,10 +1653,13 @@ impl Printer<'_> {
 
     /// `let pat = e ` after an `if` or `while`, with the space before the
     /// `{`. An `&&` or `||` there has to be in parentheses.
-    fn let_cond(&mut self, c: &LetCond) -> Doc {
-        let head = match chain_like(&c.expr) {
-            true => text("(") + self.expr_inner(&c.expr, Ctx::default()) + ") ",
-            false => self.head(&c.expr),
+    /// Without the space, if `bare`.
+    fn let_cond(&mut self, c: &LetCond, bare: bool) -> Doc {
+        let head = match (chain_like(&c.expr), bare) {
+            (true, false) => text("(") + self.expr_inner(&c.expr, Ctx::default()) + ") ",
+            (true, true) => text("(") + self.expr_inner(&c.expr, Ctx::default()) + ")",
+            (false, false) => self.head(&c.expr),
+            (false, true) => self.bare_head(&c.expr),
         };
         text("let ") + self.pattern(&c.pat) + " = " + head
     }
@@ -2018,3 +2086,7 @@ fn where_clause(w: &Where) -> String {
         .collect();
     format!("where {}", bounds.join(", "))
 }
+
+/// Does invariant `inv` have several clauses, or one with a `where`? Then
+/// it's printed clause by clause (`Printer::clauses`).
+fn clauses(inv: &Expr) -> bool { matches!(inv.kind, ExprKind::Clauses(_) | ExprKind::Where(..)) }
