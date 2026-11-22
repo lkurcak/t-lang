@@ -580,3 +580,8 @@ fn dependencies_check_as_they_do_alone() {
     assert!(checked >= 10, "only {checked} dependencies");
     assert!(failures.is_empty(), "{}", failures.join("\n"));
 }
+
+/// Each thread here checks programs one after another, allocating all the
+/// while: with the system's allocator they wait for each other.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;

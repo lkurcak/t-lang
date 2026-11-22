@@ -452,3 +452,8 @@ fn compiled_tests_run_as_interpreted() {
     );
     assert!(same >= 8, "only {same} programs' tests ran both ways");
 }
+
+/// Each thread here checks programs one after another, allocating all the
+/// while: with the system's allocator they wait for each other.
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
