@@ -813,7 +813,13 @@ impl Checker {
     /// are in scope.
     fn type_expr_notes(&mut self, t: &TypeExpr, params: &[Ident]) {
         match &t.kind {
-            TypeExprKind::Refined(_, base, _) => self.type_expr_notes(base, params),
+            TypeExprKind::Refined(_, base, pred) => {
+                self.type_expr_notes(base, params);
+                // A field's that ends `where I: Trait` names a type.
+                if let ExprKind::Where(_, g) = &pred.kind {
+                    self.type_expr_notes(&g.subject, params);
+                }
+            }
             TypeExprKind::Proj(inner, tr, _) => {
                 self.type_expr_notes(inner, params);
                 if let Some(tr) = tr

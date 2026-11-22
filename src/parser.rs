@@ -2247,6 +2247,19 @@ impl Parser {
                 let base = self.ty()?;
                 self.expect(Tok::Pipe)?;
                 let pred = self.structs(true, Self::expr)?;
+                // `where I: Trait`, of a struct's field: said only where
+                // that holds (docs/93-invariants-where.md).
+                let pred = match self.eat(&Tok::Where) {
+                    true => {
+                        let guard = self.guard()?;
+                        Expr {
+                            span: pred.span.to(guard.span),
+                            kind: ExprKind::Where(Box::new(pred), Box::new(guard)),
+                            id: self.id(),
+                        }
+                    }
+                    false => pred,
+                };
                 let end = self.expect(Tok::RBrace)?;
                 Ok(TypeExpr {
                     kind: TypeExprKind::Refined(binder, Box::new(base), Box::new(pred)),

@@ -319,7 +319,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 ## What it doesn't do
 
 - **`count` and `enumerate` still say `with panic`.** (Until step 92, of
-  `count`, and step 93, of `enumerate`: docs/92-where-a-bound-holds.md.)
+  `count`: docs/92-where-a-bound-holds.md. `enumerate`'s index has had
+  its invariant since step 93, docs/93-invariants-where.md, and its
+  effect waits for step 94.)
   An exact iterator's
   count can't overflow, but an effect is the method's, the same for every
   iterator: it can't depend on whether `Self` is exact. Effects that do

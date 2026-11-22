@@ -31,7 +31,8 @@ this step and the next are about:
 
 - a clause of a loop's invariant, `invariant p where T: Trait`;
 - an effect, `with panic unless T: Trait`;
-- and, in step 93, an invariant of a struct.
+- and an invariant of a struct, a field's refinement
+  (docs/93-invariants-where.md).
 
 All three are checked the same way: the body is walked again *with the
 bound*, as a law's is (docs/88-iterator-laws.md).
@@ -350,7 +351,8 @@ what the rest of the signature is there.
 
 - **`enumerate` still says `with panic`.** Its index is a field of
   `Enumerate`, and that it can't overflow is an invariant of the struct,
-  where its iterator is bounded: step 93.
+  where its iterator is bounded (docs/93-invariants-where.md), which its
+  associated effect must then say: step 94.
 - **`chars` isn't bounded yet**, nor a range: `Chars`'s `next` needs an
   invariant of its own, and `Range<usize>` an impl for one type of a
   generic one (docs/88-iterator-laws.md).

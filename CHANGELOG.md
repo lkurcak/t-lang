@@ -1,5 +1,30 @@
 # Changelog
 
+## 0.106.0 (2026-11-22)
+
+Step 93: an invariant where a bound holds. See
+[docs/93-invariants-where.md](docs/93-invariants-where.md).
+
+### Added
+
+- A struct's field's refinement that holds only where a bound does:
+  `next: { n: usize | n + iter.most() <= greatest::<usize>() where I:
+  BoundedIterator }`. A value of the struct has it where its types meet
+  the bound; a body that has the struct at types that may is checked
+  again with the bound, where it must keep it. The predicate can call the
+  bound's trait's measures.
+- A struct's own bounds hold in its fields' refinements: of `struct S<I:
+  BoundedIterator>`, a field's can say `iter.most()`.
+- A field a refinement names can be lent `&mut` straight to a trait's
+  method, as to a function, and is proved again when the call returns.
+  So can a refined variable.
+
+### Changed
+
+- `core::iter::Enumerate` says that its index and what its iterator has
+  left are never more than a `usize` holds, where the iterator is a
+  `BoundedIterator`. `enumerate` still says `with panic`.
+
 ## 0.105.0 (2026-11-22)
 
 Step 92: what holds where a bound does. See

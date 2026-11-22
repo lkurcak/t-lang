@@ -387,7 +387,11 @@ pub(super) struct Translated {
 }
 
 /// The refinements of a struct's fields, by the struct's symbol
-/// (`Checker::field_refined`). They're kept by every value of it.
+/// (`Checker::field_refined`). They're kept by every value of it: but one
+/// that hangs on a bound (`guards`), only by a value at types that meet
+/// it. The walk reads them through `Walk::refined_fields`, which says
+/// which a value has where the walk is; nothing else may read `refs`
+/// to assume or to skip a proof.
 #[derive(Debug, Clone)]
 pub(super) struct RefinedFields {
     /// The struct's name.
@@ -397,6 +401,21 @@ pub(super) struct RefinedFields {
     refs: Vec<Option<Refinement>>,
     /// The fields each field's refinement names, other than itself.
     named: Vec<Vec<usize>>,
+    /// The bound each field's refinement hangs on, if it ends `where I:
+    /// Trait`, in the struct's type parameters: only a value of the
+    /// struct at types that meet it has the refinement
+    /// (docs/93-invariants-where.md).
+    guards: Vec<Option<crate::traits::Pred>>,
+}
+
+/// A bound a walk couldn't prove, which the refinement of field `field`
+/// of struct `name` hangs on, at the types the walk met the struct at
+/// (`Checker::field_asks`).
+#[derive(Debug, Clone)]
+pub(in crate::check) struct FieldAsk {
+    pub(in crate::check) pred: crate::traits::Pred,
+    pub(in crate::check) field: String,
+    pub(in crate::check) name: String,
 }
 
 impl RefinedFields {
@@ -721,16 +740,20 @@ impl Checker {
     }
 
     /// Which parameters of function `symbol` are call-scoped `&mut`s
-    /// (`call_scoped`); none, if it isn't one the checker knows.
+    /// (`call_scoped`); none, if it isn't one the checker knows. A trait's
+    /// method's are what its signature says, as every impl's method's has
+    /// the same types, lifetimes and lifetime bounds (`same_signature`):
+    /// whichever runs, the reference can't outlive the call (lemma I7 of
+    /// docs/93-invariants-where.md).
     pub(super) fn scoped_params(&self, symbol: &str) -> Vec<bool> {
         if let Some(sig) = self.refined.get(symbol) {
             return sig.scoped.clone();
         }
-        let Some(f) = self.fn_def(symbol) else {
+        let Some(scheme) = self.callee_scheme(symbol) else {
             return Vec::new();
         };
-        match &f.scheme.ty {
-            Type::Fn(sig) => call_scoped(&sig.params, &sig.ret, &f.scheme.bounds),
+        match &scheme.ty {
+            Type::Fn(sig) => call_scoped(&sig.params, &sig.ret, &scheme.bounds),
             _ => Vec::new(),
         }
     }
@@ -800,7 +823,16 @@ impl Checker {
                 Pending::Fields { s, symbol } => {
                     self.pred_owner = None;
                     self.module = s.module;
-                    self.fields_now(&s, &symbol)?;
+                    // What its type parameters implement, as it says: a
+                    // field of one has the trait's measures.
+                    let env = match self.adts.get(&symbol) {
+                        Some(d) => d.preds.clone(),
+                        None => Vec::new(),
+                    };
+                    let outer = std::mem::replace(&mut self.adts.proj.env, env);
+                    let checked = self.fields_now(&s, &symbol);
+                    self.adts.proj.env = outer;
+                    checked?;
                 }
                 Pending::Variants { e, symbol } => {
                     self.pred_owner = None;
@@ -1645,6 +1677,18 @@ impl Checker {
         Ok(())
     }
 
+    /// `field_refinements`, once every impl is collected, with the
+    /// struct's own bounds in scope (`pending_refinements`): they hold of
+    /// every type it's used at, so a field of a type parameter has its
+    /// traits' measures.
+    ///
+    /// A field's own refinement may end `where I: Trait`, of a type
+    /// parameter of the struct or an associated type of one: then it's
+    /// checked as a predicate where that holds too, and kept with the
+    /// bound (`RefinedFields::guards`). It's all the field's type says
+    /// then. Its trait is seen as far as the field is, as any name in a
+    /// field's type is: whoever can write the field must keep it where
+    /// the bound holds (lemma I3 of docs/93-invariants-where.md).
     fn fields_now(&mut self, s: &StructDecl, symbol: &str) -> Result<(), Error> {
         let ty = Type::Adt(symbol.to_string(), Vec::new(), Vec::new());
         let types: Vec<Type> = match self.adts.get(symbol).map(|d| &d.kind) {
@@ -1658,6 +1702,7 @@ impl Checker {
             names: s.fields.iter().map(|f| f.name.name.clone()).collect(),
             refs: Vec::new(),
             named: Vec::new(),
+            guards: Vec::new(),
         };
         let consts: Vec<Ident> = (s.generics.types.iter())
             .filter(|p| s.generics.is_const(p))
@@ -1705,10 +1750,27 @@ impl Checker {
                     Level::Export,
                 )),
             };
+            self.field_where = self.adts.get(symbol).map(|d| d.params.clone());
             let r = self.refinement(&f.ty, &types[i], &scope);
+            self.field_where = None;
             self.pred_again = None;
             self.pred_reach = None;
             let r = r?;
+            // The bound it hangs on, if it says one.
+            let written = self.written_out(&f.ty);
+            let guard = (written.refinements().into_iter())
+                .find(|(_, _, p)| matches!(p.kind, ExprKind::Where(..)))
+                .and_then(|(_, _, p)| self.info.guards.get(&p.id).cloned());
+            if guard.is_some() && r.as_ref().is_some_and(|r| r.parts.len() > 1) {
+                return Err(Error::ty(
+                    f.ty.span,
+                    format!(
+                        "the refinement of `{}` ends `where`, so it's all the field's type can say: not also what's in it",
+                        f.name.name
+                    ),
+                ));
+            }
+            fields.guards.push(guard);
             // A field's own value is its binder, to a refinement of it; one
             // of what's at a position in it (carried) can name the field,
             // the whole value those are in (lemma A6).
@@ -2114,6 +2176,17 @@ impl Checker {
                     std::mem::replace(&mut self.pred_reach, reach),
                 )
             });
+            // One that ends `where I: Trait` is of a struct's field, whole:
+            // what's in a value is its type's to say, for every value of
+            // it (docs/93-invariants-where.md).
+            if let ExprKind::Where(_, g) = &pred.kind
+                && (!path.is_empty() || self.field_where.is_none())
+            {
+                return Err(Error::ty(
+                    g.span,
+                    "only a struct's field's own refinement can end `where`, not one of what's in it, nor any other",
+                ));
+            }
             let got = self.pred_type(pred, &scope);
             if let Some((module, reach)) = outer {
                 self.module = module;
@@ -2121,6 +2194,10 @@ impl Checker {
             }
             self.copy_notes = notes;
             let got = got?;
+            let pred = match &pred.kind {
+                ExprKind::Where(inner, _) => &**inner,
+                _ => pred,
+            };
             if got != Sort::Bool {
                 return Err(Error::ty(
                     pred.span,
@@ -2350,7 +2427,16 @@ impl Checker {
             // One said where a bound holds, and so checked as where it
             // does: a measure of the bound's trait is one there.
             ExprKind::Where(p, g) => {
-                let pred = self.guard_pred(g)?;
+                let pred = match (self.pred_invariant, self.field_where.clone()) {
+                    (true, _) => self.guard_pred(g)?,
+                    (false, Some(params)) => self.guard_pred_in(g, &params, None)?,
+                    (false, None) => {
+                        return Err(Error::ty(
+                            g.span,
+                            "only a struct's field's refinement, or a loop's invariant, can end `where`: what a struct's values keep where a bound holds of its types",
+                        ));
+                    }
+                };
                 self.adts.proj.env.push(pred.clone());
                 let got = self.pred_type(p, scope);
                 self.adts.proj.env.pop();
@@ -3452,11 +3538,67 @@ impl Checker {
         if self.measures.contains_key(&symbol) {
             self.measure_body(&symbol, &f.body)?;
         }
+        self.field_asks.borrow_mut().clear();
         let done = self.walk_mir(f);
         self.apply(&symbol, done)?;
         self.keep_laws(&symbol, f);
         self.scenario_walks(&symbol, f);
+        self.field_scenarios(f);
         Ok(())
+    }
+
+    /// Walks the body of `f` again under each bound that a refinement of
+    /// a struct's field hangs on, of types the body has the struct at,
+    /// that its walks couldn't prove and that may hold of some copy
+    /// (`Walk::refined_fields`): there the struct's values have the
+    /// refinement, so there the body must keep it, wherever it makes or
+    /// changes one (docs/93-invariants-where.md). One bound at a time: a
+    /// copy that meets two has each refinement kept by the walk under its
+    /// own, which assumed no more than the copy has. A walk may ask after
+    /// more, so until none is left. One an `unless` of the function's
+    /// walked it under already is done.
+    fn field_scenarios(&mut self, f: &FnDecl) {
+        let mut done: Vec<crate::traits::Pred> =
+            (self.scenarios.iter().map(|s| s.guard.pred.clone())).collect();
+        loop {
+            let asks = std::mem::take(&mut *self.field_asks.borrow_mut());
+            let Some(ask) =
+                (asks.iter()).find(|a| !done.contains(&a.pred) && !self.pred_holds(&a.pred))
+            else {
+                return;
+            };
+            let ask = ask.clone();
+            *self.field_asks.borrow_mut() = asks;
+            // Each is of a type the body has, so they run out; but a body
+            // isn't walked without end on a bug.
+            if done.len() >= 32 {
+                self.proof_errors.push(Error::ty(
+                    f.name.span,
+                    format!(
+                        "`{}` has `{}` at too many types whose bounds its refinement hangs on to check each",
+                        f.name.name, ask.name
+                    ),
+                ));
+                return;
+            }
+            done.push(ask.pred.clone());
+            self.adts.proj.env.push(ask.pred.clone());
+            let walked = self.walk_mir(f);
+            self.adts.proj.env.pop();
+            let tr = super::source_name(&ask.pred.trait_name);
+            let note = format!(
+                "where `{}: {tr}`, which the refinement of field `{}` of `{}` hangs on",
+                ask.pred.ty, ask.field, ask.name
+            );
+            let mut errors = walked.failed;
+            if let Err(e) = walked.result {
+                errors.push(e);
+            }
+            for e in errors {
+                self.proof_errors
+                    .push(e.with_note(f.name.span, note.clone()));
+            }
+        }
     }
 
     /// Keeps what a walk of the body of function `symbol` found: the
@@ -5020,12 +5162,68 @@ impl Walk<'_> {
         })
     }
 
-    /// The refinements of the fields of `t`, if it's a struct that has any.
-    fn refined_fields(&self, t: &Type) -> Option<&RefinedFields> {
-        match t {
-            Type::Adt(symbol, ..) => self.cx.field_refined.get(symbol),
-            _ => None,
+    /// The refinements of the fields of `t`, if it's a struct that has
+    /// any: those every value of it has, and those that hang on a bound
+    /// (`RefinedFields::guards`) that the bounds the walk is under prove
+    /// of `t`'s types. So the walk assumes one, and proves it, only where
+    /// it knows the bound holds, which it then does of every copy of the
+    /// body (lemma B2 of docs/92-where-a-bound-holds.md).
+    ///
+    /// One whose bound isn't proved is left out, as if the field had none:
+    /// and if the bound has a type parameter or an opaque type in it, so
+    /// that it may hold of some copy, it's kept for the body to be walked
+    /// again under it (`Checker::scenario_walks`), whatever asked: there's
+    /// no telling here what's read from what's kept. Of types with none,
+    /// it's decided for good: an impl of the trait for one is in the
+    /// trait's package or the type's (`Checker::orphan`), which are here.
+    fn refined_fields(&self, t: &Type) -> Option<std::borrow::Cow<'_, RefinedFields>> {
+        use std::borrow::Cow;
+        let Type::Adt(symbol, ..) = t else {
+            return None;
+        };
+        let fields = self.cx.field_refined.get(symbol)?;
+        if fields.guards.iter().all(Option::is_none) {
+            return Some(Cow::Borrowed(fields));
         }
+        let args = self.adt_args(t);
+        let (names, types): (Vec<String>, Vec<Type>) = args.into_iter().unzip();
+        let subst = Subst::new(&names, &types);
+        let mut out = fields.clone();
+        for j in 0..out.refs.len() {
+            let Some(g) = out.guards[j].take() else {
+                continue;
+            };
+            let pred = crate::traits::Pred {
+                ty: self.cx.adts.normalise(&self.cx.solved(&subst.apply(&g.ty))),
+                trait_name: g.trait_name,
+            };
+            if self.cx.pred_holds(&pred) {
+                continue;
+            }
+            out.refs[j] = None;
+            out.named[j].clear();
+            fn open(t: &Type) -> bool {
+                matches!(
+                    t,
+                    Type::Param(..)
+                        | Type::Opaque(..)
+                        | Type::Var(_)
+                        | Type::Const(_)
+                        | Type::Inferred(..)
+                ) || t.parts().any(open)
+            }
+            if open(&pred.ty) {
+                let mut asks = self.cx.field_asks.borrow_mut();
+                if !asks.iter().any(|a| a.pred == pred) {
+                    asks.push(FieldAsk {
+                        pred,
+                        field: out.names[j].clone(),
+                        name: out.name.clone(),
+                    });
+                }
+            }
+        }
+        Some(Cow::Owned(out))
     }
 
     /// The refinements of enum `t`'s variants' fields, if it has any.
@@ -5087,7 +5285,7 @@ impl Walk<'_> {
     /// What's known of a value of struct `t` whose fields are `vals`: its
     /// refinements, which every value of it has.
     fn assume_fields(&mut self, t: &Type, vals: &[Val]) {
-        let Some(fields) = self.refined_fields(t).cloned() else {
+        let Some(fields) = self.refined_fields(t).map(std::borrow::Cow::into_owned) else {
             return;
         };
         for (j, r) in fields.refs.iter().enumerate() {
@@ -5811,7 +6009,7 @@ impl Walk<'_> {
         changed: Option<usize>,
         span: Span,
     ) -> Result<(), Error> {
-        let Some(fields) = self.refined_fields(t).cloned() else {
+        let Some(fields) = self.refined_fields(t).map(std::borrow::Cow::into_owned) else {
             return Ok(());
         };
         let which: Vec<usize> = match changed {

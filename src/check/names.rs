@@ -354,7 +354,13 @@ impl Walk<'_> {
 
     fn ty(&mut self, t: &TypeExpr) {
         match &t.kind {
-            TypeExprKind::Refined(_, base, _) => self.ty(base),
+            TypeExprKind::Refined(_, base, pred) => {
+                self.ty(base);
+                // A field's that ends `where I: Trait` names a type.
+                if let ExprKind::Where(_, g) = &pred.kind {
+                    self.ty(&g.subject);
+                }
+            }
             TypeExprKind::Named(name, args) => {
                 self.name(name, t.id);
                 args.iter().for_each(|a| self.ty(a));

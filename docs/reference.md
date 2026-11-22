@@ -706,7 +706,15 @@ does not establish that the condition is false. Every proof that fails is
 reported, not only the first: after reporting one, checking assumes it
 held. Any other error stops checking. `with panic` permits an
 unproved arithmetic operation to panic, but does not bypass a refinement
-on an argument or the proof required by indexing. The lint
+on an argument or the proof required by indexing. A struct's field's refinement can
+end `where I: Trait`, of a type parameter of the struct or an associated
+type of one: `next: { n: usize | n + iter.most() <= greatest::<usize>()
+where I: BoundedIterator }`. A value of the struct has it where its types
+meet the bound, and it's known only where the bound is; a body that has
+the struct at types that may meet it is checked again with the bound,
+where it must keep it. A struct's own bounds hold in its fields'
+refinements, which can call their traits' measures. See [an invariant
+where a bound holds](93-invariants-where.md). The lint
 `implicit_panics`, off unless `#[warn(implicit_panics)]` turns it on,
 warns of each operation whose check wasn't proved. Use `get`, which returns
 an `Option`, when an index cannot be proved valid.

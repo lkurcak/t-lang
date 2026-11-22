@@ -3029,6 +3029,16 @@
     "type": "refinement_type",
     "named": true,
     "fields": {
+      "bound": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "where_predicate",
+            "named": true
+          }
+        ]
+      },
       "name": {
         "multiple": false,
         "required": true,

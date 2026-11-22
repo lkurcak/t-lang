@@ -230,7 +230,7 @@ impl Checker {
     }
 
     /// The scheme of function `symbol`, a function's or a trait's method's.
-    fn callee_scheme(&self, symbol: &str) -> Option<&crate::check::Scheme> {
+    pub(super) fn callee_scheme(&self, symbol: &str) -> Option<&crate::check::Scheme> {
         if let Some(f) = self.fn_def(symbol) {
             return Some(&f.scheme);
         }

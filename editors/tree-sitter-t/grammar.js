@@ -567,6 +567,8 @@ module.exports = grammar({
     ),
 
     // `{ v: i64 | v > 0 }`: the values of a type a predicate holds of.
+    // A struct's field's may hold only where a bound does: `{ n: usize |
+    // n + iter.most() <= cap where I: BoundedIterator }`.
     refinement_type: $ => seq(
       '{',
       field('name', $.identifier),
@@ -574,6 +576,7 @@ module.exports = grammar({
       field('type', $._type),
       '|',
       field('predicate', $._expression),
+      optional(seq('where', field('bound', $.where_predicate))),
       '}',
     ),
 

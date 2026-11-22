@@ -1084,7 +1084,7 @@ impl Walk<'_> {
             }
         } else if let Some((q, j)) = p.field_of() {
             let qt = self.place_ty(&q);
-            if let Some(fields) = self.refined_fields(&qt).cloned()
+            if let Some(fields) = self.refined_fields(&qt).map(std::borrow::Cow::into_owned)
                 && let Some(Some(r)) = fields.refs.get(j)
                 && !fields.alone(j)
                 && let Some(vals) = self.fields_of(&q, &qt)
@@ -1202,7 +1202,7 @@ impl Walk<'_> {
         // alone, as a variant's field's are (D6 of
         // docs/67-refinement-aliases.md); or else the carried parts, of
         // what it's in.
-        if let Some(fields) = self.refined_fields(qt).cloned()
+        if let Some(fields) = self.refined_fields(qt).map(std::borrow::Cow::into_owned)
             && let Some(Some(r)) = fields.refs.get(j)
         {
             let args = self.adt_args(qt);
@@ -2732,7 +2732,10 @@ impl Walk<'_> {
             };
             let ft = self.cx.solved(ft);
             let skip = self.param_positions(g, &params);
-            let declared = match (variant, self.refined_fields(t).cloned()) {
+            let declared = match (
+                variant,
+                self.refined_fields(t).map(std::borrow::Cow::into_owned),
+            ) {
                 (None, Some(fields)) => match fields.refs.get(j).cloned().flatten() {
                     Some(r) if r.has_carried() => {
                         let args = self.adt_args(t);
