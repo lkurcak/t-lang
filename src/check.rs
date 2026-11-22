@@ -742,6 +742,16 @@ pub(crate) struct Checker {
     /// The refinements in each function's signature that has any, by
     /// symbol (see `refine`).
     refined: HashMap<String, refine::RefinedSig>,
+    /// The effects each function says it has only where a bound doesn't
+    /// hold, `panic unless T: Trait`, by symbol
+    /// (docs/92-where-a-bound-holds.md).
+    unless: HashMap<String, Vec<refine::Unless>>,
+    /// What the walks of the function being checked under each of those
+    /// bounds found (`Checker::scenario_walks`), for `body_effects`.
+    scenarios: Vec<refine::Scenario>,
+    /// The effects of the function being walked that the walk is to find
+    /// can't happen, under the bound it's walked under.
+    scenario_atoms: Vec<Type>,
     /// What each law promises at calls of the method it's of, by the
     /// symbol of the function called: the trait's method, or an impl's
     /// (docs/88-iterator-laws.md).
@@ -1176,6 +1186,9 @@ impl Checker {
             in_trait_impl: false,
             in_discard: false,
             refined: HashMap::new(),
+            unless: HashMap::new(),
+            scenarios: Vec::new(),
+            scenario_atoms: Vec::new(),
             law_posts: HashMap::new(),
             law_checks: HashMap::new(),
             measure_bounds: Default::default(),

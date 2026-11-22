@@ -1096,7 +1096,20 @@ impl<'p> Mono<'p> {
             ret: cx.ty(&f.ret),
             effects: {
                 // What's inferred, if it doesn't say (see `check/infer.rs`).
-                let effects = match (&f.effects, cx.m.info.inferred.get(&f.name.name)) {
+                // Not what it says `unless` a bound that holds of the
+                // copy's types (lemma B8 of docs/92-where-a-bound-holds.md):
+                // what else it says may still be that effect there.
+                let said = f.effects.as_ref().map(|set| {
+                    let mut set = set.clone();
+                    set.items.retain(|i| {
+                        !cx.m.info.unless.get(&i.id).cloned().is_some_and(|g| {
+                            let ty = cx.subst(&g.ty);
+                            cx.m.info.traits.implements(&ty, &g.trait_name, &[], &[]).is_ok()
+                        })
+                    });
+                    set
+                });
+                let effects = match (&said, cx.m.info.inferred.get(&f.name.name)) {
                     (None, Some(t)) => cx.subst(t),
                     (e, _) => cx.resolved_effects(e.as_ref()),
                 };

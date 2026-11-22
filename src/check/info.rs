@@ -117,6 +117,10 @@ pub struct Info {
     /// whether it's the greatest, and the type, in the terms of what the
     /// predicate is in.
     pub(crate) pred_bounds: HashMap<NodeId, (bool, Type)>,
+    /// The bound each effect a function says with `unless` hangs on, by
+    /// the effect's node, in the function's terms: a copy whose types meet
+    /// it doesn't have the effect.
+    pub(crate) unless: HashMap<NodeId, crate::traits::Pred>,
     /// The bound each clause of a loop's invariant that has a `where`
     /// hangs on, by the clause's node, in the terms of the function it's
     /// in (docs/92-where-a-bound-holds.md): the walk says the clause where

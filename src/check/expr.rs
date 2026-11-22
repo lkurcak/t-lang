@@ -1254,13 +1254,16 @@ impl Checker {
             ExprKind::Var(name, _) => format!("`{name}`"),
             _ => "this call".to_string(),
         };
-        let callee = match self.typed.vars.get(&f.id) {
-            Some(super::typed::Res::Fn(symbol, _)) => Some(symbol.clone()),
-            _ => None,
+        let (callee, targs) = match self.typed.vars.get(&f.id) {
+            Some(super::typed::Res::Fn(symbol, targs)) => (Some(symbol.clone()), targs.clone()),
+            _ => (None, Vec::new()),
         };
         let (params, ret) = match self.shallow(&ft) {
             Type::Fn(sig) => {
-                self.call_effect(e.span, Some(e.id), what, *sig.effects, callee);
+                self.call_effect(e.span, Some(e.id), what, *sig.effects, callee.clone());
+                if let Some(callee) = &callee {
+                    self.call_targs(e.id, callee, &targs);
+                }
                 (sig.params, *sig.ret)
             }
             t @ Type::Var(_) if self.int_var(&t) => {
@@ -1530,6 +1533,7 @@ impl Checker {
             (*sig.effects).clone(),
             Some(found.symbol.clone()),
         );
+        self.call_targs(e.id, &found.symbol, &found.args);
         self.resolved(name, &found, targs.is_empty());
         for (arg, param) in args.iter().zip(&params) {
             self.check(arg, param)?;

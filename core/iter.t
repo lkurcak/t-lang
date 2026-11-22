@@ -1,5 +1,6 @@
 //! Iterating.
 
+use crate::num::greatest;
 use crate::option::Option;
 
 /// What gives values one at a time, as a `for` loop takes them.
@@ -58,10 +59,22 @@ export trait Iterator {
     fn skip(self, n: usize) -> Skip<Self> where Self::Item: Discard { Skip { iter: self, n } }
 
     /// How many values there are, throwing each away. Counting past the
-    /// greatest `usize` panics.
+    /// greatest `usize` panics, which one that says how many it has at
+    /// most, a `BoundedIterator`, can't.
     #[blame_caller]
-    fn count(self) -> usize with {Self::e, panic} where Self: Discard, Self::Item: Discard {
-        self.fold(0, |n, _x| n + 1)
+    fn count(self) -> usize
+    with {Self::e, panic unless Self: BoundedIterator}
+    where
+        Self: Discard,
+        Self::Item: Discard,
+    {
+        let mut n = 0;
+        for _x in it: self
+            invariant n + it.most() <= greatest::<usize>() where Self: BoundedIterator
+        {
+            n = n + 1;
+        }
+        n
     }
 
     /// Whether `p` says `true` of any value. It stops at the first it does,

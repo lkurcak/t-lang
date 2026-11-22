@@ -332,6 +332,28 @@ pub(super) struct RefinedSig {
     pub(super) conds: Vec<Cond>,
 }
 
+/// An effect a function has only where a bound doesn't hold: `panic
+/// unless Self: BoundedIterator` (docs/92-where-a-bound-holds.md).
+#[derive(Debug, Clone)]
+pub(in crate::check) struct Unless {
+    /// `panic`, `alloc` or `global`.
+    pub(in crate::check) atom: Type,
+    /// The bound, in the terms of the function's scheme.
+    pub(in crate::check) pred: crate::traits::Pred,
+    /// As written, for messages.
+    pub(in crate::check) text: String,
+}
+
+/// What a walk of a function's body under the bound of one of its
+/// `unless`es found: the operators that can't panic there, and the
+/// effects that can't happen at its calls.
+#[derive(Clone)]
+pub(in crate::check) struct Scenario {
+    pub(in crate::check) guard: Unless,
+    pub(in crate::check) proved: HashSet<NodeId>,
+    pub(in crate::check) excused: HashMap<NodeId, Vec<Type>>,
+}
+
 /// An effect a function has only when its condition holds of what it's
 /// given: `panic if x > 3`.
 #[derive(Debug, Clone)]
@@ -658,7 +680,8 @@ impl Checker {
         let written: Vec<TypeExpr> = (f.params.iter().map(|p| &p.ty).chain([&f.ret]))
             .map(|t| self.written_out(t))
             .collect();
-        let conditional = (f.effects.iter()).any(|s| s.items.iter().any(|i| i.cond.is_some()));
+        let conditional = (f.effects.iter())
+            .any(|s| s.items.iter().any(|i| i.cond.is_some() || i.unless.is_some()));
         if written.iter().all(|t| t.refinements().is_empty())
             && f.ensures.is_empty()
             && !conditional
@@ -1270,6 +1293,10 @@ impl Checker {
             .map(|(p, _)| &p.ty);
         let result = refined(&&ret_written).then_some(&f.ret);
         let conds = effect_conds(f, kind)?;
+        let guards = self.effect_guards(f, kind)?;
+        if !guards.is_empty() {
+            self.unless.insert(self.sig_owner.0.clone(), guards);
+        }
         if param.is_none() && result.is_none() && f.ensures.is_empty() && conds.is_empty() {
             return Ok(());
         }
@@ -1806,6 +1833,18 @@ impl Checker {
         &mut self,
         g: &crate::ast::Guard,
     ) -> Result<crate::traits::Pred, Error> {
+        let (params, this) = (self.type_params.clone(), self.self_ty.clone());
+        self.guard_pred_in(g, &params, this.as_ref())
+    }
+
+    /// `guard_pred`, where type parameters `params` are in scope, and
+    /// `Self` is `this`, if it's a type.
+    fn guard_pred_in(
+        &mut self,
+        g: &crate::ast::Guard,
+        params: &crate::types::Params,
+        this: Option<&Type>,
+    ) -> Result<crate::traits::Pred, Error> {
         if !g.bound.assoc.is_empty() || g.bound.sig.is_some() || g.bound.effects.is_some() {
             return Err(Error::ty(
                 g.bound.span,
@@ -1813,8 +1852,8 @@ impl Checker {
             ));
         }
         let mut lts = super::Lifetimes::Any;
-        let t = self.resolve_with(&g.subject, &self.type_params, &mut lts)?;
-        let t = match &self.self_ty {
+        let t = self.resolve_with(&g.subject, params, &mut lts)?;
+        let t = match this {
             Some(s) => Subst::new(&["Self".to_string()], std::slice::from_ref(s)).apply(&t),
             None => t,
         };
@@ -1838,6 +1877,142 @@ impl Checker {
             ty: t,
             trait_name: tr,
         })
+    }
+
+    /// The effects `f`'s signature says it has only where a bound doesn't
+    /// hold, `panic unless T: Trait`; refused where they can't be
+    /// (docs/92-where-a-bound-holds.md): of an impl's method of a trait,
+    /// which has its trait's method's; of a method of a trait whose impls
+    /// may be written for it (`has_glue`), whose bodies nothing walks; of
+    /// an intrinsic, an `extern fn` or a const; of anything but `panic`,
+    /// `alloc` and `global`; with a condition too; or said twice. A
+    /// trait's method's bound is on `Self`, which each impl's type is.
+    fn effect_guards(&mut self, f: &FnDecl, kind: SigKind) -> Result<Vec<Unless>, Error> {
+        let Some(set) = &f.effects else {
+            return Ok(Vec::new());
+        };
+        let Some(first) = set.items.iter().find(|i| i.unless.is_some()) else {
+            return Ok(Vec::new());
+        };
+        let refuse = |what: &str| {
+            Err(Error::ty(
+                first.span,
+                format!("{what} can't say `unless`: where it has an effect is its own to say"),
+            ))
+        };
+        match kind {
+            SigKind::Impl { .. } => {
+                return Err(Error::ty(
+                    first.span,
+                    "an impl's method of a trait can't say `unless`: it has what its trait's                      method says, where that says it",
+                ));
+            }
+            SigKind::Trait(_)
+                if (self.sig_trait.as_ref()).is_some_and(|(tr, ..)| crate::traits::has_glue(tr)) =>
+            {
+                return refuse("a method of a trait that's derived or built in");
+            }
+            _ => {}
+        }
+        if f.intrinsic.is_some() {
+            return refuse("an intrinsic");
+        }
+        if f.ext.is_some() {
+            return refuse("an `extern fn`");
+        }
+        if f.konst.is_some() {
+            return refuse("a const");
+        }
+        let params = match self.scheme_of(&self.sig_owner.0) {
+            Some(scheme) => scheme.params.clone(),
+            None => crate::types::Params::default(),
+        };
+        let this = self.sig_self.clone();
+        let atom_of = |i: &Effect| match &i.kind {
+            EffectKind::Named(n) => match n.name.as_str() {
+                "panic" => Some(Type::Panic),
+                "alloc" => Some(Type::Alloc),
+                "global" => Some(Type::Global),
+                _ => None,
+            },
+            EffectKind::Proj(..) => None,
+        };
+        let mut out = Vec::new();
+        for item in &set.items {
+            let Some(g) = &item.unless else {
+                continue;
+            };
+            let Some(atom) = atom_of(item) else {
+                return Err(Error::ty(
+                    item.span,
+                    "only `panic`, `alloc` and `global` can say `unless`: `unsafe` says what the                      caller must keep, and an effect parameter or an associated effect is                      what's given",
+                ));
+            };
+            if item.cond.is_some() {
+                return Err(Error::ty(
+                    item.span,
+                    format!("`{atom}` has a condition and an `unless`: say one"),
+                ));
+            }
+            let said = (set.items.iter()).filter(|i| atom_of(i).as_ref() == Some(&atom));
+            if said.count() > 1 {
+                return Err(Error::ty(item.span, format!("`{atom}` is said twice: say it once")));
+            }
+            let pred = self.guard_pred_in(g, &params, this.as_ref())?;
+            if matches!(kind, SigKind::Trait(_)) && pred.ty != Type::Param("Self".into(), false) {
+                return Err(Error::ty(
+                    g.subject.span,
+                    "a trait's method's `unless` is of `Self`, which each impl's type is",
+                ));
+            }
+            let text = format!("{}: {}", pred.ty, super::source_name(&pred.trait_name));
+            self.info.unless.insert(item.id, pred.clone());
+            out.push(Unless { atom, pred, text });
+        }
+        Ok(out)
+    }
+
+    /// Does bound `p` hold where the body is being checked: by its
+    /// function's bounds, and those a walk is under?
+    pub(in crate::check) fn pred_holds(&self, p: &crate::traits::Pred) -> bool {
+        let (env, local) = (&self.adts.proj.env, &self.adts.proj.local);
+        self.traits.implements(&p.ty, &p.trait_name, env, local).is_ok()
+    }
+
+    /// Walks the body of `f`, function `symbol`, again under the bound of
+    /// each effect it says with `unless`, where the bound isn't known to
+    /// hold already: what `body_effects` then needs is that the effect
+    /// can't happen there (lemma B4 of docs/92-where-a-bound-holds.md).
+    /// What the walk can't prove with the bound is an error too: a clause
+    /// of an invariant said only there, say.
+    fn scenario_walks(&mut self, symbol: &str, f: &FnDecl) {
+        self.scenarios.clear();
+        for g in self.unless.get(symbol).cloned().unwrap_or_default() {
+            if self.pred_holds(&g.pred) {
+                continue;
+            }
+            self.adts.proj.env.push(g.pred.clone());
+            self.scenario_atoms = vec![g.atom.clone()];
+            let done = self.walk_mir(f);
+            self.scenario_atoms.clear();
+            self.adts.proj.env.pop();
+            let note = format!(
+                "where `{}`, as `{}` says `with {} unless {}`",
+                g.text, f.name.name, g.atom, g.text
+            );
+            let mut errors = done.failed;
+            if let Err(e) = done.result {
+                errors.push(e);
+            }
+            for e in errors {
+                self.proof_errors.push(e.with_note(f.name.span, note.clone()));
+            }
+            self.scenarios.push(Scenario {
+                guard: g,
+                proved: done.proved,
+                excused: done.cut.excused,
+            });
+        }
     }
 
     /// Does the bound that clause `id` of an invariant hangs on hold where
@@ -3267,6 +3442,7 @@ impl Checker {
         let done = self.walk_mir(f);
         self.apply(&symbol, done)?;
         self.keep_laws(&symbol, f);
+        self.scenario_walks(&symbol, f);
         Ok(())
     }
 

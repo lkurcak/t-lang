@@ -311,6 +311,7 @@ impl Checker {
             w.always = (self.solved(&fs.effects).effect_items().iter())
                 .filter(|e| matches!(e, Type::Panic | Type::Alloc | Type::Global))
                 .filter(|e| !conds.iter().any(|c| c.atom == **e))
+                .filter(|e| !self.scenario_atoms.contains(e))
                 .cloned()
                 .collect();
         }
