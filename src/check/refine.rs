@@ -2328,6 +2328,33 @@ impl Checker {
                 self.pred_in_old = false;
                 got
             }
+            // `least::<T>()`, `greatest::<T>()`: how big an integer type
+            // is, as the logic knows it (`Walk::range`).
+            ExprKind::Call(callee, args)
+                if args.is_empty()
+                    && let ExprKind::Var(name, targs) = &callee.kind
+                    && let [targ] = targs.as_slice()
+                    && scope(name).is_none()
+                    && let Some(i) = self.pred_fn(name, callee.id)
+                    && let symbol @ ("core::num::least" | "core::num::greatest") =
+                        self.fns[i].symbol.as_str() =>
+            {
+                let greatest = symbol.ends_with("greatest");
+                let mut lts = super::Lifetimes::Any;
+                let t = self.resolve_with(targ, &self.type_params, &mut lts)?;
+                let t = match &self.self_ty {
+                    Some(s) => Subst::new(&["Self".to_string()], std::slice::from_ref(s)).apply(&t),
+                    None => t,
+                };
+                if !self.int_like(&t) {
+                    return Err(Error::ty(
+                        targ.span,
+                        format!("`{t}` isn't an integer type, which `{name}` is of"),
+                    ));
+                }
+                self.info.pred_bounds.insert(e.id, (greatest, t));
+                Ok(Sort::Int)
+            }
             ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
                 match self.pred_path(e, scope, false)? {
                     Operand::Sort(sort) => Ok(sort),
@@ -5393,6 +5420,22 @@ impl Walk<'_> {
             ExprKind::Binary(op, l, r) => {
                 let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
                 self.logic_op(*op, a, b)?
+            }
+            // `least::<T>()` or `greatest::<T>()`, of the type `T` is where
+            // the predicate is said.
+            ExprKind::Call(_, args) if args.is_empty() => {
+                let (greatest, t) = (self.cx.info.pred_bounds.get(&e.id))
+                    .cloned()
+                    .ok_or(Failure::Unsupported)?;
+                let t = match env {
+                    Env::Call(_, targs) | Env::Fields(_, targs) | Env::Post(_, _, targs) => {
+                        let (names, types): (Vec<String>, Vec<Type>) = targs.iter().cloned().unzip();
+                        Subst::new(&names, &types).apply(&t)
+                    }
+                    Env::Here | Env::Closed(_) => t,
+                };
+                let (lo, hi) = self.range(&t).ok_or(Failure::Unsupported)?;
+                Val::Int(if greatest { hi } else { lo })
             }
             // `old(x)`: `x` at the call; of a closed refinement, what its
             // names were then.

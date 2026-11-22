@@ -1234,6 +1234,18 @@ impl Refined {
                 Some((_, v)) => PredValue::of(v),
                 None => unsound(&format!("a refinement naming `{name}`, which isn't there")),
             },
+            // `least::<u8>()` or `greatest::<u8>()`, of the type
+            // monomorphisation wrote.
+            ExprKind::Call(f, args)
+                if args.is_empty()
+                    && let ExprKind::Var(name, targs) = &f.kind
+                    && let [t] = targs.as_slice()
+                    && let crate::ast::TypeExprKind::Named(n, _) = &t.kind
+                    && let Some(ty) = crate::types::IntTy::named(n) =>
+            {
+                let (lo, hi) = i.range(ty);
+                PredValue::Int(if name.ends_with("least") { lo } else { hi })
+            }
             ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-go(x).int()),
             ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!go(x).boolean()),
             ExprKind::Unary(UnOp::Deref, x) => PredValue::of(&i.pred_deref(go(x).val())),

@@ -113,6 +113,10 @@ pub struct Info {
     /// symbol, for monomorphisation to write its value there for the
     /// interpreter, as it does a const parameter's.
     pub(crate) pred_consts: HashMap<NodeId, String>,
+    /// Each `least::<T>()` and `greatest::<T>()` in a predicate, by node:
+    /// whether it's the greatest, and the type, in the terms of what the
+    /// predicate is in.
+    pub(crate) pred_bounds: HashMap<NodeId, (bool, Type)>,
     /// The bound each clause of a loop's invariant that has a `where`
     /// hangs on, by the clause's node, in the terms of the function it's
     /// in (docs/92-where-a-bound-holds.md): the walk says the clause where

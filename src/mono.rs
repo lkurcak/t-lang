@@ -1406,6 +1406,17 @@ impl Cx<'_, '_, '_> {
                     e.id = id;
                 }
             }
+            // `greatest::<T>()`: of the type `T` is in the copy, written
+            // there for the interpreter.
+            if let Some((_, t)) = cx.m.info.pred_bounds.get(&e.id).cloned()
+                && let ExprKind::Call(callee, _) = &mut e.kind
+                && let ExprKind::Var(_, targs) = &mut callee.kind
+            {
+                let t = cx.subst(&t);
+                let span = targs[0].span;
+                targs[0] = cx.written(&t, span);
+                return;
+            }
             if let Some(name) = cx.m.info.consts.get(&e.id) {
                 if let Type::Nat(n) = cx.subst(&Type::Param(name.clone(), false)) {
                     e.kind = ExprKind::Int(n, Some(crate::types::IntTy::Usize));
