@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.106.0 (2026-11-22)
 
 Step 93: an invariant where a bound holds. See
 [docs/93-invariants-where.md](docs/93-invariants-where.md).
