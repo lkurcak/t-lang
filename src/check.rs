@@ -831,6 +831,14 @@ pub(crate) struct Checker {
     pred_in_old: bool,
     /// In a loop's invariant, not a refinement: what messages call it.
     pred_invariant: bool,
+    /// In a struct's field's refinement, the struct's type parameters:
+    /// where a refinement can end `where I: Trait`
+    /// (docs/93-invariants-where.md).
+    field_where: Option<crate::types::Params>,
+    /// The bounds the walk of a body couldn't prove, that refinements of
+    /// the fields of structs it's of hang on, each with which field's:
+    /// the body is walked again under each (`Checker::scenario_walks`).
+    field_asks: std::cell::RefCell<Vec<refine::FieldAsk>>,
     /// The refinements to check once every impl is collected.
     pending_refined: Vec<refine::Pending>,
     /// The function whose refinement is being checked, which uses the
@@ -1211,6 +1219,8 @@ impl Checker {
             pred_again: None,
             pred_post: None,
             pred_invariant: false,
+            field_where: None,
+            field_asks: Default::default(),
             pred_in_old: false,
             pending_refined: Vec::new(),
             pred_owner: None,

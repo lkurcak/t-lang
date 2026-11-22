@@ -1383,7 +1383,7 @@ impl Walk<'_> {
             Agg::Struct => {
                 let names = struct_fields(&self.cx.adts, ty).unwrap_or_default();
                 let spans: Vec<Span> = (0..names.len()).map(span_of).collect();
-                if let Some(fields) = self.refined_fields(ty).cloned() {
+                if let Some(fields) = self.refined_fields(ty).map(std::borrow::Cow::into_owned) {
                     for (j, r) in fields.refs.iter().enumerate() {
                         if let Some(r) = r {
                             let what = format!("field `{}` of `{}`", fields.names[j], fields.name);
