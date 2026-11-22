@@ -330,9 +330,14 @@ impl<
 }
 
 /// What `Iterator::enumerate` gives: each value of `iter`, with its index,
-/// `next` the one after the last.
+/// `next` the one after the last. Of an iterator that says how many values
+/// it has at most, the index and those are never more than a `usize`
+/// holds, so the index can't overflow (docs/93-invariants-where.md).
 #[derive(Discard where I: Discard, Send where I: Send, Sync where I: Sync)]
-export struct Enumerate<I> { iter: I, next: usize }
+export struct Enumerate<I> {
+    iter: I,
+    next: { n: usize | n + iter.most() <= greatest::<usize>() where I: BoundedIterator },
+}
 
 impl<I: Iterator> Iterator for Enumerate<I> {
     type Item = (usize, I::Item);

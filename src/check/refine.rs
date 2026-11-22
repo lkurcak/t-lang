@@ -5172,8 +5172,14 @@ impl Walk<'_> {
             out.refs[j] = None;
             out.named[j].clear();
             fn open(t: &Type) -> bool {
-                matches!(t, Type::Param(..) | Type::Opaque(..) | Type::Var(_))
-                    || t.parts().any(open)
+                matches!(
+                    t,
+                    Type::Param(..)
+                        | Type::Opaque(..)
+                        | Type::Var(_)
+                        | Type::Const(_)
+                        | Type::Inferred(..)
+                ) || t.parts().any(open)
             }
             if open(&pred.ty) {
                 let mut asks = self.cx.field_asks.borrow_mut();
