@@ -3108,7 +3108,7 @@ fn hovers_and_navigates_the_alloc_library() {
 fn hovers_list_methods() {
     let (child, mut c) = start();
     let uri = "file:///tmp/list.t";
-    let src = "use alloc::list::List;\n\nfn main() with {alloc, panic} {\n    let mut l: List<i64> = List::new();\n    l.push(1);\n    print(l.iter().count());\n}\nfn print<T: Int>(_x: T) {}\n";
+    let src = "use alloc::list::List;\n\nfn main() with alloc {\n    let mut l: List<i64> = List::new();\n    l.push(1);\n    print(l.iter().count());\n}\nfn print<T: Int>(_x: T) {}\n";
     c.send(
         json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
             "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}

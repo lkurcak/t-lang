@@ -62,7 +62,7 @@ impl BoundedIterator for Down {
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with {} {
     let mut out = os.stdout;
-    out.line(&Down { n: 7 }.filter(|n| *n > 3).count())?; // expect: 3
+    out.line(&(Down { n: 7 }).filter(|n| *n > 3).count())?; // expect: 3
     Ok(())
 }
 ```
@@ -72,7 +72,7 @@ how many values it has: it's what `filter` keeps, or a string's `chars`.
 Those know how many they have *at most*. So the bound isn't
 `ExactSizeIterator`. It's a trait under it:
 
-```rust,ignore
+```text
 export trait BoundedIterator: Iterator {
     #[measure]
     fn most(&self) -> usize;
@@ -111,7 +111,7 @@ at least one off `most` needs an invariant: that `iter.most()` is at most
 what it was. But `Filter` is an iterator of any iterator, and `most` is a
 measure only of a bounded one. So the clause says where it holds:
 
-```rust,ignore
+```text
 fn next(&mut self) -> Option<I::Item> with {I::e, px} {
     loop invariant self.iter.most() <= old(self.iter.most()) where I: BoundedIterator {
         match self.iter.next() {
@@ -227,7 +227,7 @@ have no such effect there, by its condition or its own `unless`; a
 `panic(..)` mustn't be there at all. Clauses of invariants that hang on
 the bound are said in that walk, which is what `count` needs:
 
-```rust,ignore
+```text
 fn count(self) -> usize
 with {Self::e, panic unless Self: BoundedIterator}
 where

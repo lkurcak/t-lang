@@ -143,13 +143,17 @@ export trait BoundedIterator: Iterator {
 
     /// Each value it gives takes at least one off `most`, which never
     /// grows.
-    law fn next(&mut self) -> { r: Option<Self::Item> | !r.is_some() || self.most() < old(self.most()) }
+    law fn next(
+        &mut self,
+    ) -> { r: Option<Self::Item> | !r.is_some() || self.most() < old(self.most()) }
     with Self::e
     ensures
         self.most() <= old(self.most());
 
     /// From the back too, of one that's double-ended.
-    law fn next_back(&mut self) -> { r: Option<Self::Item> | !r.is_some() || self.most() < old(self.most()) }
+    law fn next_back(
+        &mut self,
+    ) -> { r: Option<Self::Item> | !r.is_some() || self.most() < old(self.most()) }
     with Self::e
     where
         Self: DoubleEndedIterator,
@@ -320,10 +324,7 @@ impl<
     effect px,
     I: BoundedIterator,
     P: FnMut(&I::Item) -> bool with px,
-> BoundedIterator for Filter<I, P>
-where
-    I::Item: Discard,
-{
+> BoundedIterator for Filter<I, P> where I::Item: Discard {
     #[measure]
     fn most(&self) -> usize { self.iter.most() }
 }
@@ -387,10 +388,7 @@ impl<A: Iterator, B: Iterator> Iterator for Zip<A, B> where A::Item: Discard {
 
 /// As many as the shorter of `a` and `b` has yet to give, at most: `next`
 /// stops at that one's end.
-impl<A: BoundedIterator, B: BoundedIterator> BoundedIterator for Zip<A, B>
-where
-    A::Item: Discard,
-{
+impl<A: BoundedIterator, B: BoundedIterator> BoundedIterator for Zip<A, B> where A::Item: Discard {
     #[measure]
     fn most(&self) -> usize {
         if self.a.most() <= self.b.most() { self.a.most() } else { self.b.most() }

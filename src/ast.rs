@@ -2201,9 +2201,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         ExprKind::Variant(_, _, _, args, ..)
         | ExprKind::Array(args)
         | ExprKind::Clauses(args)
-        | ExprKind::Tuple(args) => {
-            args.iter().for_each(|a| go(a, bound))
-        }
+        | ExprKind::Tuple(args) => args.iter().for_each(|a| go(a, bound)),
         ExprKind::Repeat(v, n) => {
             go(v, bound);
             go(n, bound);

@@ -1104,7 +1104,10 @@ impl<'p> Mono<'p> {
                     set.items.retain(|i| {
                         !cx.m.info.unless.get(&i.id).cloned().is_some_and(|g| {
                             let ty = cx.subst(&g.ty);
-                            cx.m.info.traits.implements(&ty, &g.trait_name, &[], &[]).is_ok()
+                            cx.m.info
+                                .traits
+                                .implements(&ty, &g.trait_name, &[], &[])
+                                .is_ok()
                         })
                     });
                     set
@@ -1392,7 +1395,10 @@ impl Cx<'_, '_, '_> {
             if let ExprKind::Where(p, _) = &mut e.kind {
                 let said = (cx.m.info.guards.get(&e.id).cloned()).is_some_and(|g| {
                     let ty = cx.subst(&g.ty);
-                    cx.m.info.traits.implements(&ty, &g.trait_name, &[], &[]).is_ok()
+                    cx.m.info
+                        .traits
+                        .implements(&ty, &g.trait_name, &[], &[])
+                        .is_ok()
                 });
                 *e = match said {
                     true => (**p).clone(),

@@ -3477,9 +3477,7 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
         ExprKind::Variant(_, _, _, args, ..)
         | ExprKind::Array(args)
         | ExprKind::Clauses(args)
-        | ExprKind::Tuple(args) => {
-            args.iter_mut().collect()
-        }
+        | ExprKind::Tuple(args) => args.iter_mut().collect(),
         ExprKind::Repeat(v, n) => vec![&mut **v, &mut **n],
         ExprKind::Match(scrutinee, arms) => std::iter::once(&mut **scrutinee)
             .chain(arms.iter_mut().map(|a| &mut a.body))

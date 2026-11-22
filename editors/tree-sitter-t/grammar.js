@@ -339,6 +339,8 @@ module.exports = grammar({
       field('effect', $._effect),
       'if',
       field('condition', $._expression),
+      // Parsed, to be refused: an effect has one or the other.
+      optional(seq('unless', field('bound', $.where_predicate))),
     ),
 
     effect_set: $ => choice($._effect, seq('{', commaSep($._effect), '}')),

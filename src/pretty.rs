@@ -1173,7 +1173,9 @@ impl Printer<'_> {
     }
 
     /// `T: Trait`, after a `where` or an `unless`.
-    fn guard(&mut self, g: &Guard) -> Doc { self.ty(&g.subject) + ": " + self.bound(&g.bound) }
+    fn guard(&mut self, g: &Guard) -> Doc {
+        self.ty(&g.subject) + ": " + self.bound(&g.bound)
+    }
 
     /// Prints `e`, in parentheses if it binds less tightly than `min`, or if
     /// `ctx` needs them.
@@ -2089,4 +2091,6 @@ fn where_clause(w: &Where) -> String {
 
 /// Does invariant `inv` have several clauses, or one with a `where`? Then
 /// it's printed clause by clause (`Printer::clauses`).
-fn clauses(inv: &Expr) -> bool { matches!(inv.kind, ExprKind::Clauses(_) | ExprKind::Where(..)) }
+fn clauses(inv: &Expr) -> bool {
+    matches!(inv.kind, ExprKind::Clauses(_) | ExprKind::Where(..))
+}

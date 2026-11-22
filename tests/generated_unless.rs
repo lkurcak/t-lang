@@ -251,7 +251,11 @@ fn effects_unless_a_bound() {
                     let what = format!(
                         "{p:?}, {} {}, called {c:?}",
                         s.name,
-                        if honest { "keeping what it says" } else { "breaking it" },
+                        if honest {
+                            "keeping what it says"
+                        } else {
+                            "breaking it"
+                        },
                     );
                     let got = verdict(&src);
                     let ok = match (honest, c, &got) {

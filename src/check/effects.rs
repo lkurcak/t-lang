@@ -169,7 +169,12 @@ impl Checker {
         if !self.unless.contains_key(callee) {
             return;
         }
-        if let Some(s) = self.effect_sites.iter_mut().rev().find(|s| s.at == Some(at)) {
+        if let Some(s) = self
+            .effect_sites
+            .iter_mut()
+            .rev()
+            .find(|s| s.at == Some(at))
+        {
             s.targs = targs.to_vec();
         }
     }
@@ -217,7 +222,11 @@ impl Checker {
             }
             gone.push(g.atom.clone());
         }
-        Type::effects((effects.effect_items().iter()).filter(|e| !gone.contains(e)).cloned())
+        Type::effects(
+            (effects.effect_items().iter())
+                .filter(|e| !gone.contains(e))
+                .cloned(),
+        )
     }
 
     /// The scheme of function `symbol`, a function's or a trait's method's.
@@ -246,7 +255,10 @@ impl Checker {
         let of_impl = (self.traits.impls.iter()).find_map(|d| {
             let tr = d.trait_name.as_ref()?;
             let (name, _) = d.methods.iter().find(|(_, s)| s == symbol)?;
-            Some((crate::check::traits::trait_method_symbol(tr, name), d.self_ty.clone()))
+            Some((
+                crate::check::traits::trait_method_symbol(tr, name),
+                d.self_ty.clone(),
+            ))
         });
         if let Some((method, this)) = of_impl {
             for g in self.unless.get(&method).into_iter().flatten() {
@@ -258,7 +270,10 @@ impl Checker {
                 let local = &self.adts.proj.local;
                 let may = open
                     || self.pred_holds(&pred)
-                    || self.traits.select(&this, Some(&pred.trait_name), local).is_some();
+                    || self
+                        .traits
+                        .select(&this, Some(&pred.trait_name), local)
+                        .is_some();
                 if may {
                     let tr = crate::check::source_name(&pred.trait_name);
                     out.push((g.atom.clone(), format!("{this}: {tr}")));
@@ -824,7 +839,9 @@ impl Checker {
                 let mut effects = self.solved(&s.effects);
                 if let Some(gone) = s.at.or(s.node).and_then(|n| sc.excused.get(&n)) {
                     effects = Type::effects(
-                        (effects.effect_items().iter()).filter(|e| !gone.contains(e)).cloned(),
+                        (effects.effect_items().iter())
+                            .filter(|e| !gone.contains(e))
+                            .cloned(),
                     );
                 }
                 let effects = self.unguarded(s, effects);

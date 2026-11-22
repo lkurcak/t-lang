@@ -1046,6 +1046,16 @@
     "type": "conditional_effect",
     "named": true,
     "fields": {
+      "bound": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "where_predicate",
+            "named": true
+          }
+        ]
+      },
       "condition": {
         "multiple": false,
         "required": true,

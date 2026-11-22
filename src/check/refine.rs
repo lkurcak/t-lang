@@ -680,8 +680,11 @@ impl Checker {
         let written: Vec<TypeExpr> = (f.params.iter().map(|p| &p.ty).chain([&f.ret]))
             .map(|t| self.written_out(t))
             .collect();
-        let conditional = (f.effects.iter())
-            .any(|s| s.items.iter().any(|i| i.cond.is_some() || i.unless.is_some()));
+        let conditional = (f.effects.iter()).any(|s| {
+            s.items
+                .iter()
+                .any(|i| i.cond.is_some() || i.unless.is_some())
+        });
         if written.iter().all(|t| t.refinements().is_empty())
             && f.ensures.is_empty()
             && !conditional
@@ -1908,7 +1911,8 @@ impl Checker {
                 ));
             }
             SigKind::Trait(_)
-                if (self.sig_trait.as_ref()).is_some_and(|(tr, ..)| crate::traits::has_glue(tr)) =>
+                if (self.sig_trait.as_ref())
+                    .is_some_and(|(tr, ..)| crate::traits::has_glue(tr)) =>
             {
                 return refuse("a method of a trait that's derived or built in");
             }
@@ -1956,7 +1960,10 @@ impl Checker {
             }
             let said = (set.items.iter()).filter(|i| atom_of(i).as_ref() == Some(&atom));
             if said.count() > 1 {
-                return Err(Error::ty(item.span, format!("`{atom}` is said twice: say it once")));
+                return Err(Error::ty(
+                    item.span,
+                    format!("`{atom}` is said twice: say it once"),
+                ));
             }
             let pred = self.guard_pred_in(g, &params, this.as_ref())?;
             if matches!(kind, SigKind::Trait(_)) && pred.ty != Type::Param("Self".into(), false) {
@@ -1976,7 +1983,9 @@ impl Checker {
     /// function's bounds, and those a walk is under?
     pub(in crate::check) fn pred_holds(&self, p: &crate::traits::Pred) -> bool {
         let (env, local) = (&self.adts.proj.env, &self.adts.proj.local);
-        self.traits.implements(&p.ty, &p.trait_name, env, local).is_ok()
+        self.traits
+            .implements(&p.ty, &p.trait_name, env, local)
+            .is_ok()
     }
 
     /// Walks the body of `f`, function `symbol`, again under the bound of
@@ -2005,7 +2014,8 @@ impl Checker {
                 errors.push(e);
             }
             for e in errors {
-                self.proof_errors.push(e.with_note(f.name.span, note.clone()));
+                self.proof_errors
+                    .push(e.with_note(f.name.span, note.clone()));
             }
             self.scenarios.push(Scenario {
                 guard: g,
@@ -2020,8 +2030,11 @@ impl Checker {
     /// walk is under (`keep_laws`)?
     pub(super) fn guard_holds(&self, id: NodeId) -> bool {
         let (env, local) = (&self.adts.proj.env, &self.adts.proj.local);
-        (self.info.guards.get(&id))
-            .is_some_and(|g| self.traits.implements(&g.ty, &g.trait_name, env, local).is_ok())
+        (self.info.guards.get(&id)).is_some_and(|g| {
+            self.traits
+                .implements(&g.ty, &g.trait_name, env, local)
+                .is_ok()
+        })
     }
 
     /// Checks loop invariant `p`, in the scope of the locals at the loop:
@@ -5583,8 +5596,8 @@ impl Walk<'_> {
                     self.read_place(&Place::local(id))
                 }
                 (PredName::Local(id), _) if self.in_entry => {
-                    let i = (self.params.iter().position(|p| p == id))
-                        .ok_or(Failure::Unsupported)?;
+                    let i =
+                        (self.params.iter().position(|p| p == id)).ok_or(Failure::Unsupported)?;
                     self.entry.get(i).ok_or(Failure::Unsupported)?.clone()
                 }
                 (PredName::Local(id), _) => self.read_place(&Place::local(*id)),
@@ -5641,10 +5654,17 @@ impl Walk<'_> {
                     .ok_or(Failure::Unsupported)?;
                 let t = match env {
                     Env::Call(_, targs) | Env::Fields(_, targs) | Env::Post(_, _, targs) => {
-                        let (names, types): (Vec<String>, Vec<Type>) = targs.iter().cloned().unzip();
+                        let (names, types): (Vec<String>, Vec<Type>) =
+                            targs.iter().cloned().unzip();
                         Subst::new(&names, &types).apply(&t)
                     }
-                    Env::Here | Env::Closed(_) => t,
+                    Env::Here => t,
+                    // A closed refinement is said where it was written:
+                    // only of a type that's the same everywhere.
+                    Env::Closed(_) => match t {
+                        Type::Int(_) => t,
+                        _ => return Err(Failure::Unsupported),
+                    },
                 };
                 let (lo, hi) = self.range(&t).ok_or(Failure::Unsupported)?;
                 Val::Int(if greatest { hi } else { lo })

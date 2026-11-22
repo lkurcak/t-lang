@@ -1,13 +1,7 @@
 //! Slices: values one after another in memory, seen through a reference.
 
 use crate::cmp::{Ord, Ordering};
-use crate::iter::{
-    BoundedIterator,
-    DoubleEndedIterator,
-    ExactSizeIterator,
-    IntoIterator,
-    Iterator,
-};
+use crate::iter::{BoundedIterator, DoubleEndedIterator, ExactSizeIterator, IntoIterator, Iterator};
 use crate::mem;
 use crate::mem::Copy;
 use crate::ops::Range;
