@@ -1868,7 +1868,7 @@ impl Checker {
             return Err(Error::ty(
                 g.subject.span,
                 format!(
-                    "a bound here can only be on a type parameter, `Self`, or an associated type                      of one, not `{t}`, which either meets it or doesn't"
+                    "a bound here can only be on a type parameter, `Self`, or an associated type of one, not `{t}`, which either meets it or doesn't"
                 ),
             ));
         }
@@ -1904,7 +1904,7 @@ impl Checker {
             SigKind::Impl { .. } => {
                 return Err(Error::ty(
                     first.span,
-                    "an impl's method of a trait can't say `unless`: it has what its trait's                      method says, where that says it",
+                    "an impl's method of a trait can't say `unless`: it has what its trait's method says, where that says it",
                 ));
             }
             SigKind::Trait(_)
@@ -1945,7 +1945,7 @@ impl Checker {
             let Some(atom) = atom_of(item) else {
                 return Err(Error::ty(
                     item.span,
-                    "only `panic`, `alloc` and `global` can say `unless`: `unsafe` says what the                      caller must keep, and an effect parameter or an associated effect is                      what's given",
+                    "only `panic`, `alloc` and `global` can say `unless`: `unsafe` says what the caller must keep, and an effect parameter or an associated effect is what's given",
                 ));
             };
             if item.cond.is_some() {
@@ -2613,7 +2613,7 @@ impl Checker {
                 Some((span, name)) => Err(Error::ty(
                     span,
                     format!(
-                        "`old(..)` in an invariant is of the function's parameters, as they                          were when it was called: `{name}` isn't one"
+                        "`old(..)` in an invariant is of the function's parameters, as they were when it was called: `{name}` isn't one"
                     ),
                 )),
                 None => Ok(()),

@@ -14,10 +14,12 @@ impl<I: Iterator> Iterator for Pairs<I> where I::Item: Discard {
     }
 }
 
-impl<I: ExactSizeIterator> ExactSizeIterator for Pairs<I> where I::Item: Discard {
+impl<I: ExactSizeIterator> BoundedIterator for Pairs<I> where I::Item: Discard {
     #[measure]
-    fn len(&self) -> usize { self.iter.len() }
+    fn most(&self) -> usize { self.iter.len() }
 }
+
+impl<I: ExactSizeIterator> ExactSizeIterator for Pairs<I> where I::Item: Discard {}
 
 fn main() {}
 // error: can't prove `r.is_some() == (old(self.len()) > 0)` for the result of `next`

@@ -754,6 +754,11 @@ impl Checker {
         for t in e.iter().flat_map(|e| e.types()) {
             self.type_expr_notes(t, params);
         }
+        // And the bound of each said with `unless`.
+        for g in e.iter().flat_map(|e| &e.items).flat_map(|i| &i.unless) {
+            self.type_expr_notes(&g.subject, params);
+            self.bound_item_notes(&g.bound, params);
+        }
         self.effect_param_notes(e, params);
     }
 
@@ -945,14 +950,23 @@ fn each_annotation<'e>(e: &'e Expr, f: &mut impl FnMut(&TypeExpr), heads: &mut V
             f(&g.subject);
         }
         ExprKind::Clauses(items) => items.iter().for_each(|x| each_annotation(x, f, heads)),
-        ExprKind::Unary(_, x)
-        | ExprKind::Field(x, _)
-        | ExprKind::Loop(_, _, x)
-        | ExprKind::Unsafe(x) => each_annotation(x, f, heads),
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Unsafe(x) => {
+            each_annotation(x, f, heads)
+        }
+        // An invariant's too: a clause's bound's type, `greatest::<T>()`'s.
+        ExprKind::Loop(_, inv, x) => {
+            inv.iter().for_each(|p| each_annotation(p, f, heads));
+            each_annotation(x, f, heads);
+        }
         ExprKind::Return(x) | ExprKind::Break(_, x) => {
             x.iter().for_each(|x| each_annotation(x, f, heads))
         }
-        ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(_, l, _, r) => {
+        ExprKind::While(_, l, inv, r) => {
+            inv.iter().for_each(|p| each_annotation(p, f, heads));
+            each_annotation(l, f, heads);
+            each_annotation(r, f, heads);
+        }
+        ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) => {
             each_annotation(l, f, heads);
             each_annotation(r, f, heads);
         }

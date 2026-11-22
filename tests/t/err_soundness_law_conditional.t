@@ -18,10 +18,12 @@ impl Iterator for Both {
     }
 }
 
-impl ExactSizeIterator for Both {
+impl BoundedIterator for Both {
     #[measure]
-    fn len(&self) -> usize { self.n }
+    fn most(&self) -> usize { self.n }
 }
+
+impl ExactSizeIterator for Both {}
 
 impl DoubleEndedIterator for Both {
     // Gives one, and takes none off.
@@ -31,4 +33,5 @@ impl DoubleEndedIterator for Both {
 }
 
 fn main() {}
+// error: can't prove `!r.is_some() || self.most() < old(self.most())` for the result of `next_back`
 // error: can't prove `self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0)` for what `next_back` ensures

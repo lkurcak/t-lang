@@ -15,10 +15,12 @@ impl<T> Iterator for Once<T> {
     }
 }
 
-impl ExactSizeIterator for Once<u8> {
+impl BoundedIterator for Once<u8> {
     #[measure]
-    fn len(&self) -> usize { 1 }
+    fn most(&self) -> usize { 1 }
 }
 
+impl ExactSizeIterator for Once<u8> {}
+
 fn main() {}
-// error: can't check that `Once<u8>` keeps `ExactSizeIterator`'s law of `next`: its impl of `Iterator` is for more types than this one
+// error: can't check that `Once<u8>` keeps `BoundedIterator`'s law of `next`: its impl of `Iterator` is for more types than this one
