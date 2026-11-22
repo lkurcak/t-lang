@@ -1096,7 +1096,23 @@ impl<'p> Mono<'p> {
             ret: cx.ty(&f.ret),
             effects: {
                 // What's inferred, if it doesn't say (see `check/infer.rs`).
-                let effects = match (&f.effects, cx.m.info.inferred.get(&f.name.name)) {
+                // Not what it says `unless` a bound that holds of the
+                // copy's types (lemma B8 of docs/92-where-a-bound-holds.md):
+                // what else it says may still be that effect there.
+                let said = f.effects.as_ref().map(|set| {
+                    let mut set = set.clone();
+                    set.items.retain(|i| {
+                        !cx.m.info.unless.get(&i.id).cloned().is_some_and(|g| {
+                            let ty = cx.subst(&g.ty);
+                            cx.m.info
+                                .traits
+                                .implements(&ty, &g.trait_name, &[], &[])
+                                .is_ok()
+                        })
+                    });
+                    set
+                });
+                let effects = match (&said, cx.m.info.inferred.get(&f.name.name)) {
                     (None, Some(t)) => cx.subst(t),
                     (e, _) => cx.resolved_effects(e.as_ref()),
                 };
@@ -1361,6 +1377,38 @@ impl Cx<'_, '_, '_> {
     /// (`Mono::measure_copy`).
     fn pred(&mut self, e: &Expr) -> Box<Expr> {
         fn go(cx: &mut Cx, e: &mut Expr) {
+            // An invariant's clauses, as one predicate: those said in the
+            // copy, whose bounds hold of its types
+            // (docs/92-where-a-bound-holds.md).
+            if let ExprKind::Clauses(clauses) = &mut e.kind {
+                let mut all = std::mem::take(clauses).into_iter();
+                let mut whole = all.next().expect("an invariant has a clause");
+                for c in all {
+                    whole = Expr {
+                        span: whole.span.to(c.span),
+                        kind: ExprKind::Binary(BinOp::And, Box::new(whole), Box::new(c)),
+                        id: cx.m.id(),
+                    };
+                }
+                *e = whole;
+            }
+            if let ExprKind::Where(p, _) = &mut e.kind {
+                let said = (cx.m.info.guards.get(&e.id).cloned()).is_some_and(|g| {
+                    let ty = cx.subst(&g.ty);
+                    cx.m.info
+                        .traits
+                        .implements(&ty, &g.trait_name, &[], &[])
+                        .is_ok()
+                });
+                *e = match said {
+                    true => (**p).clone(),
+                    false => Expr {
+                        kind: ExprKind::Bool(true),
+                        span: e.span,
+                        id: e.id,
+                    },
+                };
+            }
             if let ExprKind::MethodCall(..) = &e.kind
                 && let Some((symbol, derefs, by)) = cx.m.info.measures.calls.get(&e.id).cloned()
                 && let Some(recv) = cx.m.info.measures.recv.get(&e.id).cloned()
@@ -1376,6 +1424,17 @@ impl Cx<'_, '_, '_> {
                     cx.m.measure_calls.insert(id, (copy, derefs, by));
                     e.id = id;
                 }
+            }
+            // `greatest::<T>()`: of the type `T` is in the copy, written
+            // there for the interpreter.
+            if let Some((_, t)) = cx.m.info.pred_bounds.get(&e.id).cloned()
+                && let ExprKind::Call(callee, _) = &mut e.kind
+                && let ExprKind::Var(_, targs) = &mut callee.kind
+            {
+                let t = cx.subst(&t);
+                let span = targs[0].span;
+                targs[0] = cx.written(&t, span);
+                return;
             }
             if let Some(name) = cx.m.info.consts.get(&e.id) {
                 if let Type::Nat(n) = cx.subst(&Type::Param(name.clone(), false)) {
@@ -1647,6 +1706,7 @@ impl Cx<'_, '_, '_> {
                     span,
                     id: self.m.id(),
                     cond: None,
+                    unless: None,
                 }
             })
             .collect();

@@ -587,6 +587,7 @@ impl Checker {
             (*sig.effects).clone(),
             Some(found.symbol.clone()),
         );
+        self.call_targs(e.id, &found.symbol, &found.args);
         oblige(self)?;
         Ok((*sig.ret).clone())
     }

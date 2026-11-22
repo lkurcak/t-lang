@@ -1,7 +1,7 @@
 //! Slices: values one after another in memory, seen through a reference.
 
 use crate::cmp::{Ord, Ordering};
-use crate::iter::{DoubleEndedIterator, ExactSizeIterator, IntoIterator, Iterator};
+use crate::iter::{BoundedIterator, DoubleEndedIterator, ExactSizeIterator, IntoIterator, Iterator};
 use crate::mem;
 use crate::mem::Copy;
 use crate::ops::Range;
@@ -204,10 +204,13 @@ impl<'a, T> IntoIterator for &'a mut [T] {
 export struct Iter<'a, T> { rest: &'a [T] }
 
 /// How many values it has yet to give: what's left of the slice.
-impl<'a, T> ExactSizeIterator for Iter<'a, T> {
+impl<'a, T> BoundedIterator for Iter<'a, T> {
     #[measure]
-    fn len(&self) -> usize { self.rest.len() }
+    fn most(&self) -> usize { self.rest.len() }
 }
+
+/// And no fewer.
+impl<'a, T> ExactSizeIterator for Iter<'a, T> {}
 
 /// Safe code over `cut`: each value is the head of what's left, which
 /// is one shorter after.
@@ -246,10 +249,13 @@ impl<'a, T> DoubleEndedIterator for Iter<'a, T> {
 export struct IterMut<'a, T> { rest: &'a mut [T] }
 
 /// How many values it has yet to give, as `Iter`'s.
-impl<'a, T> ExactSizeIterator for IterMut<'a, T> {
+impl<'a, T> BoundedIterator for IterMut<'a, T> {
     #[measure]
-    fn len(&self) -> usize { self.rest.len() }
+    fn most(&self) -> usize { self.rest.len() }
 }
+
+/// And no fewer.
+impl<'a, T> ExactSizeIterator for IterMut<'a, T> {}
 
 /// Safe code over `cut_mut`: it takes what's left out of the iterator,
 /// leaving an empty slice, and keeps the tail. So each value it gives is
@@ -299,10 +305,13 @@ impl<'a, T: Copy> Iter<'a, T> {
 export struct Copied<'a, T> { iter: Iter<'a, T> }
 
 /// How many values it has yet to give, as `Iter`'s.
-impl<'a, T: Copy> ExactSizeIterator for Copied<'a, T> {
+impl<'a, T: Copy> BoundedIterator for Copied<'a, T> {
     #[measure]
-    fn len(&self) -> usize { self.iter.len() }
+    fn most(&self) -> usize { self.iter.most() }
 }
+
+/// And no fewer.
+impl<'a, T: Copy> ExactSizeIterator for Copied<'a, T> {}
 
 impl<'a, T: Copy> Iterator for Copied<'a, T> {
     type Item = T;

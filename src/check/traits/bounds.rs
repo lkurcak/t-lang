@@ -505,6 +505,7 @@ fn as_effect(t: &TypeExpr) -> Option<Effect> {
         span: t.span,
         id: t.id,
         cond: None,
+        unless: None,
     })
 }
 

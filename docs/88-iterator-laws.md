@@ -144,14 +144,22 @@ impl Iterator for Stuck {
     }
 }
 
-impl ExactSizeIterator for Stuck {
+impl BoundedIterator for Stuck {
     #[measure]
-    fn len(&self) -> usize { self.n }
+    fn most(&self) -> usize { self.n }
 }
 
+impl ExactSizeIterator for Stuck {}
+
 fn main() {}
+// error: can't prove `!r.is_some() || self.most() < old(self.most())` for the result of `next`
 // error: can't prove `self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0)` for what `next` ensures
 ```
+
+(Since step 92 an exact iterator's `len` is its `most`, a measure of
+`BoundedIterator`, the trait `ExactSizeIterator` is under, which has a law
+of its own: so there are two impls here, and two laws broken.
+See docs/92-where-a-bound-holds.md.)
 
 Two impls are paired only if what they're for is the same up to the
 names of their type parameters, and the method's body is this package's,
@@ -194,7 +202,9 @@ fn main() with {} {
 ## `ExactSizeIterator`
 
 `core::iter::ExactSizeIterator`, in the prelude, has `len`, a measure,
-and these laws:
+and these laws. (Since step 92 `len` is `most` of `BoundedIterator`, the
+trait it's under, where the laws of `map`, `enumerate` and `rev` are now
+said, of `most`: docs/92-where-a-bound-holds.md.)
 
 ```text
 law fn next(&mut self) -> { r: Option<Self::Item> | r.is_some() == (old(self.len()) > 0) }
@@ -308,12 +318,15 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 
 ## What it doesn't do
 
-- **`count` and `enumerate` still say `with panic`.** An exact iterator's
+- **`count` and `enumerate` still say `with panic`.** (Until step 92, of
+  `count`, and step 93, of `enumerate`: docs/92-where-a-bound-holds.md.)
+  An exact iterator's
   count can't overflow, but an effect is the method's, the same for every
   iterator: it can't depend on whether `Self` is exact. Effects that do
   are a design of their own. Meanwhile `len()` is an exact iterator's
   count, and `for x in it: e invariant i + it.len() == n` its index.
-- **`Skip` and `Filter` have no `len`.** Their `next` loops, and an
+- **`Skip` and `Filter` have no `len`.** (Until step 92, where a clause
+  of an invariant can say where it holds.) Their `next` loops, and an
   invariant naming `len` can't be written in a body shared with iterators
   that have none. `Filter` could only ever have an upper bound.
 - **`Range` has no `len`.** Its `Iterator` impl is for every `Range<T>`

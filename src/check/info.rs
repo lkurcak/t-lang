@@ -113,6 +113,20 @@ pub struct Info {
     /// symbol, for monomorphisation to write its value there for the
     /// interpreter, as it does a const parameter's.
     pub(crate) pred_consts: HashMap<NodeId, String>,
+    /// Each `least::<T>()` and `greatest::<T>()` in a predicate, by node:
+    /// whether it's the greatest, and the type, in the terms of what the
+    /// predicate is in.
+    pub(crate) pred_bounds: HashMap<NodeId, (bool, Type)>,
+    /// The bound each effect a function says with `unless` hangs on, by
+    /// the effect's node, in the function's terms: a copy whose types meet
+    /// it doesn't have the effect.
+    pub(crate) unless: HashMap<NodeId, crate::traits::Pred>,
+    /// The bound each clause of a loop's invariant that has a `where`
+    /// hangs on, by the clause's node, in the terms of the function it's
+    /// in (docs/92-where-a-bound-holds.md): the walk says the clause where
+    /// its bounds prove it, and monomorphisation writes it, or `true`, in
+    /// each copy, for the interpreter.
+    pub(crate) guards: HashMap<NodeId, crate::traits::Pred>,
 }
 
 /// What a method call `x.m(..)` or path `T::m` names: method `symbol`.
@@ -740,6 +754,11 @@ impl Checker {
         for t in e.iter().flat_map(|e| e.types()) {
             self.type_expr_notes(t, params);
         }
+        // And the bound of each said with `unless`.
+        for g in e.iter().flat_map(|e| &e.items).flat_map(|i| &i.unless) {
+            self.type_expr_notes(&g.subject, params);
+            self.bound_item_notes(&g.bound, params);
+        }
         self.effect_param_notes(e, params);
     }
 
@@ -926,14 +945,28 @@ fn each_annotation<'e>(e: &'e Expr, f: &mut impl FnMut(&TypeExpr), heads: &mut V
             each_annotation(x, f, heads);
             f(t);
         }
-        ExprKind::Unary(_, x)
-        | ExprKind::Field(x, _)
-        | ExprKind::Loop(_, _, x)
-        | ExprKind::Unsafe(x) => each_annotation(x, f, heads),
+        ExprKind::Where(x, g) => {
+            each_annotation(x, f, heads);
+            f(&g.subject);
+        }
+        ExprKind::Clauses(items) => items.iter().for_each(|x| each_annotation(x, f, heads)),
+        ExprKind::Unary(_, x) | ExprKind::Field(x, _) | ExprKind::Unsafe(x) => {
+            each_annotation(x, f, heads)
+        }
+        // An invariant's too: a clause's bound's type, `greatest::<T>()`'s.
+        ExprKind::Loop(_, inv, x) => {
+            inv.iter().for_each(|p| each_annotation(p, f, heads));
+            each_annotation(x, f, heads);
+        }
         ExprKind::Return(x) | ExprKind::Break(_, x) => {
             x.iter().for_each(|x| each_annotation(x, f, heads))
         }
-        ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) | ExprKind::While(_, l, _, r) => {
+        ExprKind::While(_, l, inv, r) => {
+            inv.iter().for_each(|p| each_annotation(p, f, heads));
+            each_annotation(l, f, heads);
+            each_annotation(r, f, heads);
+        }
+        ExprKind::Binary(_, l, r) | ExprKind::Assign(_, l, r) => {
             each_annotation(l, f, heads);
             each_annotation(r, f, heads);
         }

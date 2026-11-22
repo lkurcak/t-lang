@@ -1,5 +1,38 @@
 # Changelog
 
+## 0.105.0 (2026-11-22)
+
+Step 92: what holds where a bound does. See
+[docs/92-where-a-bound-holds.md](docs/92-where-a-bound-holds.md).
+
+### Added
+
+- An effect a function has only where a bound doesn't hold: `with panic
+  unless T: Trait`, of `panic`, `alloc` or `global`, on a function, an
+  inherent method, or a trait's method (of `Self`). A call has it wherever
+  the bound isn't known to hold of its type arguments; the body is checked
+  again with the bound, where nothing in it may have the effect.
+- A clause of a loop's invariant said only where a bound holds:
+  `invariant p where T: Trait`. It can call the bound's trait's measures.
+- Several `invariant` clauses for one loop.
+- `old(x)` in a loop's invariant: what a parameter of the function was
+  when it was called.
+- `least::<T>()` and `greatest::<T>()` of an integer type in predicates.
+- `core::iter::BoundedIterator`, in the prelude: an iterator that says how
+  many values it has yet to give at most, its `most`, with a law of
+  `next`. Slices', arrays' and lists' iterators are, and `map`,
+  `enumerate`, `rev`, `zip`, `skip` and `filter` of ones that are.
+  `Skip` of an `ExactSizeIterator` is one.
+
+### Changed
+
+- `Iterator::count` says `with {Self::e, panic unless Self:
+  BoundedIterator}`: counting a bounded iterator can't panic.
+- `ExactSizeIterator` is under `BoundedIterator`, and its `len` is `most`,
+  with a body in the trait: an impl writes `most` in an impl of
+  `BoundedIterator`, and an empty impl of `ExactSizeIterator`.
+- `Skip`'s `next` doesn't count a `None` from its iterator as skipped.
+
 ## 0.104.0 (2026-11-21)
 
 Step 91: the order operands are worked out in. See

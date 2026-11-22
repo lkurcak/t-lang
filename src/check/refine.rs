@@ -332,6 +332,28 @@ pub(super) struct RefinedSig {
     pub(super) conds: Vec<Cond>,
 }
 
+/// An effect a function has only where a bound doesn't hold: `panic
+/// unless Self: BoundedIterator` (docs/92-where-a-bound-holds.md).
+#[derive(Debug, Clone)]
+pub(in crate::check) struct Unless {
+    /// `panic`, `alloc` or `global`.
+    pub(in crate::check) atom: Type,
+    /// The bound, in the terms of the function's scheme.
+    pub(in crate::check) pred: crate::traits::Pred,
+    /// As written, for messages.
+    pub(in crate::check) text: String,
+}
+
+/// What a walk of a function's body under the bound of one of its
+/// `unless`es found: the operators that can't panic there, and the
+/// effects that can't happen at its calls.
+#[derive(Clone)]
+pub(in crate::check) struct Scenario {
+    pub(in crate::check) guard: Unless,
+    pub(in crate::check) proved: HashSet<NodeId>,
+    pub(in crate::check) excused: HashMap<NodeId, Vec<Type>>,
+}
+
 /// An effect a function has only when its condition holds of what it's
 /// given: `panic if x > 3`.
 #[derive(Debug, Clone)]
@@ -658,7 +680,11 @@ impl Checker {
         let written: Vec<TypeExpr> = (f.params.iter().map(|p| &p.ty).chain([&f.ret]))
             .map(|t| self.written_out(t))
             .collect();
-        let conditional = (f.effects.iter()).any(|s| s.items.iter().any(|i| i.cond.is_some()));
+        let conditional = (f.effects.iter()).any(|s| {
+            s.items
+                .iter()
+                .any(|i| i.cond.is_some() || i.unless.is_some())
+        });
         if written.iter().all(|t| t.refinements().is_empty())
             && f.ensures.is_empty()
             && !conditional
@@ -1270,6 +1296,10 @@ impl Checker {
             .map(|(p, _)| &p.ty);
         let result = refined(&&ret_written).then_some(&f.ret);
         let conds = effect_conds(f, kind)?;
+        let guards = self.effect_guards(f, kind)?;
+        if !guards.is_empty() {
+            self.unless.insert(self.sig_owner.0.clone(), guards);
+        }
         if param.is_none() && result.is_none() && f.ensures.is_empty() && conds.is_empty() {
             return Ok(());
         }
@@ -1798,6 +1828,215 @@ impl Checker {
         }
     }
 
+    /// The bound `g` is, written after a `where` in an invariant or an
+    /// `unless` in an effect, in the function being checked: a trait, of a
+    /// type parameter, `Self`, or an associated type of one, which a call
+    /// may or may not meet. Of any other type it's already so or not.
+    pub(super) fn guard_pred(
+        &mut self,
+        g: &crate::ast::Guard,
+    ) -> Result<crate::traits::Pred, Error> {
+        let (params, this) = (self.type_params.clone(), self.self_ty.clone());
+        self.guard_pred_in(g, &params, this.as_ref())
+    }
+
+    /// `guard_pred`, where type parameters `params` are in scope, and
+    /// `Self` is `this`, if it's a type.
+    fn guard_pred_in(
+        &mut self,
+        g: &crate::ast::Guard,
+        params: &crate::types::Params,
+        this: Option<&Type>,
+    ) -> Result<crate::traits::Pred, Error> {
+        if !g.bound.assoc.is_empty() || g.bound.sig.is_some() || g.bound.effects.is_some() {
+            return Err(Error::ty(
+                g.bound.span,
+                "expected a trait alone here: `T: Trait`, with nothing said of what's in it",
+            ));
+        }
+        let mut lts = super::Lifetimes::Any;
+        let t = self.resolve_with(&g.subject, params, &mut lts)?;
+        let t = match this {
+            Some(s) => Subst::new(&["Self".to_string()], std::slice::from_ref(s)).apply(&t),
+            None => t,
+        };
+        fn open(t: &Type) -> bool {
+            match t {
+                Type::Param(..) => true,
+                Type::Proj(s, ..) => open(s),
+                _ => false,
+            }
+        }
+        if !open(&t) {
+            return Err(Error::ty(
+                g.subject.span,
+                format!(
+                    "a bound here can only be on a type parameter, `Self`, or an associated type of one, not `{t}`, which either meets it or doesn't"
+                ),
+            ));
+        }
+        let tr = self.trait_named(&g.bound.name)?;
+        Ok(crate::traits::Pred {
+            ty: t,
+            trait_name: tr,
+        })
+    }
+
+    /// The effects `f`'s signature says it has only where a bound doesn't
+    /// hold, `panic unless T: Trait`; refused where they can't be
+    /// (docs/92-where-a-bound-holds.md): of an impl's method of a trait,
+    /// which has its trait's method's; of a method of a trait whose impls
+    /// may be written for it (`has_glue`), whose bodies nothing walks; of
+    /// an intrinsic, an `extern fn` or a const; of anything but `panic`,
+    /// `alloc` and `global`; with a condition too; or said twice. A
+    /// trait's method's bound is on `Self`, which each impl's type is.
+    fn effect_guards(&mut self, f: &FnDecl, kind: SigKind) -> Result<Vec<Unless>, Error> {
+        let Some(set) = &f.effects else {
+            return Ok(Vec::new());
+        };
+        let Some(first) = set.items.iter().find(|i| i.unless.is_some()) else {
+            return Ok(Vec::new());
+        };
+        let refuse = |what: &str| {
+            Err(Error::ty(
+                first.span,
+                format!("{what} can't say `unless`: where it has an effect is its own to say"),
+            ))
+        };
+        match kind {
+            SigKind::Impl { .. } => {
+                return Err(Error::ty(
+                    first.span,
+                    "an impl's method of a trait can't say `unless`: it has what its trait's method says, where that says it",
+                ));
+            }
+            SigKind::Trait(_)
+                if (self.sig_trait.as_ref())
+                    .is_some_and(|(tr, ..)| crate::traits::has_glue(tr)) =>
+            {
+                return refuse("a method of a trait that's derived or built in");
+            }
+            _ => {}
+        }
+        if f.intrinsic.is_some() {
+            return refuse("an intrinsic");
+        }
+        if f.ext.is_some() {
+            return refuse("an `extern fn`");
+        }
+        if f.konst.is_some() {
+            return refuse("a const");
+        }
+        let params = match self.scheme_of(&self.sig_owner.0) {
+            Some(scheme) => scheme.params.clone(),
+            None => crate::types::Params::default(),
+        };
+        let this = self.sig_self.clone();
+        let atom_of = |i: &Effect| match &i.kind {
+            EffectKind::Named(n) => match n.name.as_str() {
+                "panic" => Some(Type::Panic),
+                "alloc" => Some(Type::Alloc),
+                "global" => Some(Type::Global),
+                _ => None,
+            },
+            EffectKind::Proj(..) => None,
+        };
+        let mut out = Vec::new();
+        for item in &set.items {
+            let Some(g) = &item.unless else {
+                continue;
+            };
+            let Some(atom) = atom_of(item) else {
+                return Err(Error::ty(
+                    item.span,
+                    "only `panic`, `alloc` and `global` can say `unless`: `unsafe` says what the caller must keep, and an effect parameter or an associated effect is what's given",
+                ));
+            };
+            if item.cond.is_some() {
+                return Err(Error::ty(
+                    item.span,
+                    format!("`{atom}` has a condition and an `unless`: say one"),
+                ));
+            }
+            let said = (set.items.iter()).filter(|i| atom_of(i).as_ref() == Some(&atom));
+            if said.count() > 1 {
+                return Err(Error::ty(
+                    item.span,
+                    format!("`{atom}` is said twice: say it once"),
+                ));
+            }
+            let pred = self.guard_pred_in(g, &params, this.as_ref())?;
+            if matches!(kind, SigKind::Trait(_)) && pred.ty != Type::Param("Self".into(), false) {
+                return Err(Error::ty(
+                    g.subject.span,
+                    "a trait's method's `unless` is of `Self`, which each impl's type is",
+                ));
+            }
+            let text = format!("{}: {}", pred.ty, super::source_name(&pred.trait_name));
+            self.info.unless.insert(item.id, pred.clone());
+            out.push(Unless { atom, pred, text });
+        }
+        Ok(out)
+    }
+
+    /// Does bound `p` hold where the body is being checked: by its
+    /// function's bounds, and those a walk is under?
+    pub(in crate::check) fn pred_holds(&self, p: &crate::traits::Pred) -> bool {
+        let (env, local) = (&self.adts.proj.env, &self.adts.proj.local);
+        self.traits
+            .implements(&p.ty, &p.trait_name, env, local)
+            .is_ok()
+    }
+
+    /// Walks the body of `f`, function `symbol`, again under the bound of
+    /// each effect it says with `unless`, where the bound isn't known to
+    /// hold already: what `body_effects` then needs is that the effect
+    /// can't happen there (lemma B4 of docs/92-where-a-bound-holds.md).
+    /// What the walk can't prove with the bound is an error too: a clause
+    /// of an invariant said only there, say.
+    fn scenario_walks(&mut self, symbol: &str, f: &FnDecl) {
+        self.scenarios.clear();
+        for g in self.unless.get(symbol).cloned().unwrap_or_default() {
+            if self.pred_holds(&g.pred) {
+                continue;
+            }
+            self.adts.proj.env.push(g.pred.clone());
+            self.scenario_atoms = vec![g.atom.clone()];
+            let done = self.walk_mir(f);
+            self.scenario_atoms.clear();
+            self.adts.proj.env.pop();
+            let note = format!(
+                "where `{}`, as `{}` says `with {} unless {}`",
+                g.text, f.name.name, g.atom, g.text
+            );
+            let mut errors = done.failed;
+            if let Err(e) = done.result {
+                errors.push(e);
+            }
+            for e in errors {
+                self.proof_errors
+                    .push(e.with_note(f.name.span, note.clone()));
+            }
+            self.scenarios.push(Scenario {
+                guard: g,
+                proved: done.proved,
+                excused: done.cut.excused,
+            });
+        }
+    }
+
+    /// Does the bound that clause `id` of an invariant hangs on hold where
+    /// the body is being walked: by its function's bounds, and those the
+    /// walk is under (`keep_laws`)?
+    pub(super) fn guard_holds(&self, id: NodeId) -> bool {
+        let (env, local) = (&self.adts.proj.env, &self.adts.proj.local);
+        (self.info.guards.get(&id)).is_some_and(|g| {
+            self.traits
+                .implements(&g.ty, &g.trait_name, env, local)
+                .is_ok()
+        })
+    }
+
     /// Checks loop invariant `p`, in the scope of the locals at the loop:
     /// a predicate, as a refinement's, but of `mut` variables too, as it's
     /// of their values each time the loop is about to go round, where the
@@ -2101,6 +2340,23 @@ impl Checker {
         match &e.kind {
             ExprKind::Int(..) => Ok(Sort::Int),
             ExprKind::Bool(_) => Ok(Sort::Bool),
+            // An invariant's clauses, each a `bool`.
+            ExprKind::Clauses(clauses) => {
+                for c in clauses {
+                    want(self, c, Sort::Bool)?;
+                }
+                Ok(Sort::Bool)
+            }
+            // One said where a bound holds, and so checked as where it
+            // does: a measure of the bound's trait is one there.
+            ExprKind::Where(p, g) => {
+                let pred = self.guard_pred(g)?;
+                self.adts.proj.env.push(pred.clone());
+                let got = self.pred_type(p, scope);
+                self.adts.proj.env.pop();
+                self.info.guards.insert(e.id, pred);
+                got
+            }
             ExprKind::Var(name, targs) if targs.is_empty() => {
                 match self.pred_name(e, name, scope) {
                     Some(Named::Value(t, what, def)) => {
@@ -2260,6 +2516,33 @@ impl Checker {
                 self.pred_in_old = false;
                 got
             }
+            // `least::<T>()`, `greatest::<T>()`: how big an integer type
+            // is, as the logic knows it (`Walk::range`).
+            ExprKind::Call(callee, args)
+                if args.is_empty()
+                    && let ExprKind::Var(name, targs) = &callee.kind
+                    && let [targ] = targs.as_slice()
+                    && scope(name).is_none()
+                    && let Some(i) = self.pred_fn(name, callee.id)
+                    && let symbol @ ("core::num::least" | "core::num::greatest") =
+                        self.fns[i].symbol.as_str() =>
+            {
+                let greatest = symbol.ends_with("greatest");
+                let mut lts = super::Lifetimes::Any;
+                let t = self.resolve_with(targ, &self.type_params, &mut lts)?;
+                let t = match &self.self_ty {
+                    Some(s) => Subst::new(&["Self".to_string()], std::slice::from_ref(s)).apply(&t),
+                    None => t,
+                };
+                if !self.int_like(&t) {
+                    return Err(Error::ty(
+                        targ.span,
+                        format!("`{t}` isn't an integer type, which `{name}` is of"),
+                    ));
+                }
+                self.info.pred_bounds.insert(e.id, (greatest, t));
+                Ok(Sort::Int)
+            }
             ExprKind::Field(..) | ExprKind::Unary(UnOp::Deref, _) => {
                 match self.pred_path(e, scope, false)? {
                     Operand::Sort(sort) => Ok(sort),
@@ -2322,6 +2605,33 @@ impl Checker {
     /// Fails unless `old(..)`, `e`, can be where it is: in a
     /// postcondition, and not in another.
     fn enter_old(&self, e: &Expr) -> Result<(), Error> {
+        if self.pred_in_old {
+            return Err(Error::ty(e.span, "`old(..)` inside `old(..)`"));
+        }
+        // In a loop's invariant, it's what a parameter of the function
+        // was when it was called (docs/92-where-a-bound-holds.md).
+        if self.pred_invariant {
+            let params = (self.current).map_or(&[][..], |id| self.fns[id.0].params.as_slice());
+            let mut stray = None;
+            each_expr(e, &mut |x| {
+                if let ExprKind::Var(name, _) = &x.kind
+                    && name != "old"
+                    && !params.contains(name)
+                    && stray.is_none()
+                {
+                    stray = Some((x.span, name.clone()));
+                }
+            });
+            return match stray {
+                Some((span, name)) => Err(Error::ty(
+                    span,
+                    format!(
+                        "`old(..)` in an invariant is of the function's parameters, as they were when it was called: `{name}` isn't one"
+                    ),
+                )),
+                None => Ok(()),
+            };
+        }
         if self.pred_post.is_none() {
             return Err(Error::ty(
                 e.span,
@@ -2709,8 +3019,12 @@ impl Checker {
                     false => &muts[..],
                 };
                 let through_mut = counted.iter().any(|m| *m);
+                // A trait's measure is seen wherever the trait is, which
+                // `trait_measure` found in scope: also one it has a body
+                // for.
                 let fn_def = self.fn_def(&symbol);
                 if let Some(f) = fn_def
+                    && measure.of_trait.is_none()
                     && !self.modules.visible(f.module, f.level, self.module)
                 {
                     return Err(Error::ty(
@@ -3141,6 +3455,7 @@ impl Checker {
         let done = self.walk_mir(f);
         self.apply(&symbol, done)?;
         self.keep_laws(&symbol, f);
+        self.scenario_walks(&symbol, f);
         Ok(())
     }
 
@@ -3270,6 +3585,7 @@ impl Checker {
             proving_fields: false,
             reproving: Vec::new(),
             closures: 0,
+            in_entry: false,
             size: None,
             bounds: HashMap::new(),
             consts: HashMap::new(),
@@ -3872,6 +4188,9 @@ struct Walk<'c> {
     reproving: Vec<Place>,
     /// How many closures deep this is.
     closures: usize,
+    /// In `old(..)` of a loop's invariant: a parameter's name is what it
+    /// was at the call (`entry`).
+    in_entry: bool,
     /// The variable for the greatest `isize`, once there's one: how big
     /// it is depends on the machine. The greatest `usize` is twice it, plus
     /// one, and the least `isize` minus it, minus one.
@@ -5276,6 +5595,11 @@ impl Walk<'_> {
                     let id = *self.params.get(*i).ok_or(Failure::Unsupported)?;
                     self.read_place(&Place::local(id))
                 }
+                (PredName::Local(id), _) if self.in_entry => {
+                    let i =
+                        (self.params.iter().position(|p| p == id)).ok_or(Failure::Unsupported)?;
+                    self.entry.get(i).ok_or(Failure::Unsupported)?.clone()
+                }
                 (PredName::Local(id), _) => self.read_place(&Place::local(*id)),
                 (PredName::Field(j), Env::Fields(vals, _)) => {
                     vals.get(*j).ok_or(Failure::Unsupported)?.clone()
@@ -5322,11 +5646,43 @@ impl Walk<'_> {
                 let (a, b) = (self.term(l, binder, env)?, self.term(r, binder, env)?);
                 self.logic_op(*op, a, b)?
             }
+            // `least::<T>()` or `greatest::<T>()`, of the type `T` is where
+            // the predicate is said.
+            ExprKind::Call(_, args) if args.is_empty() => {
+                let (greatest, t) = (self.cx.info.pred_bounds.get(&e.id))
+                    .cloned()
+                    .ok_or(Failure::Unsupported)?;
+                let t = match env {
+                    Env::Call(_, targs) | Env::Fields(_, targs) | Env::Post(_, _, targs) => {
+                        let (names, types): (Vec<String>, Vec<Type>) =
+                            targs.iter().cloned().unzip();
+                        Subst::new(&names, &types).apply(&t)
+                    }
+                    Env::Here => t,
+                    // A closed refinement is said where it was written:
+                    // only of a type that's the same everywhere.
+                    Env::Closed(_) => match t {
+                        Type::Int(_) => t,
+                        _ => return Err(Failure::Unsupported),
+                    },
+                };
+                let (lo, hi) = self.range(&t).ok_or(Failure::Unsupported)?;
+                Val::Int(if greatest { hi } else { lo })
+            }
             // `old(x)`: `x` at the call; of a closed refinement, what its
             // names were then.
             ExprKind::Call(_, args) if args.len() == 1 => match env {
                 Env::Post(old, _, targs) => self.term(&args[0], binder, Env::Call(old, targs))?,
                 Env::Closed(_) => self.term(&args[0], binder, env)?,
+                // In a loop's invariant: what the function's parameters
+                // were at the call. Not a closure's, which has no entry
+                // of its own here.
+                Env::Here if self.closures == 0 && !self.in_entry => {
+                    self.in_entry = true;
+                    let v = self.term(&args[0], binder, env);
+                    self.in_entry = false;
+                    v?
+                }
                 _ => return Err(Failure::Unsupported),
             },
             // A field of what's named, through the `*`s the checker found:
@@ -5788,20 +6144,20 @@ impl Walk<'_> {
         &mut self,
         changed: &[Invalidation],
         frames: &[(Place, Vec<String>)],
-        inv: Option<&Expr>,
+        inv: Vec<Expr>,
         span: Span,
     ) -> Result<(), Error> {
-        let inv = inv.map(|p| Refinement::whole(p.clone()));
-        if let Some(r) = &inv {
+        let inv: Vec<Refinement> = inv.into_iter().map(Refinement::whole).collect();
+        for r in &inv {
             let span = r.parts[0].pred.span;
             let what = "the loop's invariant, as the loop starts".to_string();
             self.need(r, &Val::Other, Env::Here, span, what)?;
         }
         self.forget(changed, frames, span);
-        if let Some(r) = &inv
-            && let Some(f) = self.pred(r, &Val::Other, Env::Here)
-        {
-            self.fact(f);
+        for r in &inv {
+            if let Some(f) = self.pred(r, &Val::Other, Env::Here) {
+                self.fact(f);
+            }
         }
         Ok(())
     }

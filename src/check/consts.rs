@@ -190,24 +190,31 @@ impl Checker {
         )
     }
 
-    /// The const that `name`, a path or not, written at node `id` in a
-    /// predicate, names, if it names one: its symbol, its type, and where
-    /// it's declared.
-    pub(super) fn pred_const(&self, name: &str, id: NodeId) -> Option<(String, Type, Span)> {
+    /// The function, or const, that `name`, a path or not, written at node
+    /// `id` in a predicate, names, if it names one: where it is among
+    /// `fns`.
+    pub(super) fn pred_fn(&self, name: &str, id: NodeId) -> Option<usize> {
         // One an alias was given for a const parameter, written out
         // (`Checker::written_out`): what it named where it was written.
         let fixed = match self.pred_fixed.get(&id) {
             Some(super::written::Fixed::Item(symbol)) => self.fn_position(symbol),
             _ => None,
         };
-        let i = match (fixed, name.contains("::")) {
-            (Some(i), _) => i,
+        match (fixed, name.contains("::")) {
+            (Some(i), _) => Some(i),
             (None, true) => match self.modules.paths.get(self.copied.get(&id).unwrap_or(&id)) {
-                Some(super::modules::Item::Fn(i)) => *i,
-                _ => return None,
+                Some(super::modules::Item::Fn(i)) => Some(*i),
+                _ => None,
             },
-            (None, false) => self.modules.fn_named(self.module, name)?,
-        };
+            (None, false) => self.modules.fn_named(self.module, name),
+        }
+    }
+
+    /// The const that `name`, a path or not, written at node `id` in a
+    /// predicate, names, if it names one: its symbol, its type, and where
+    /// it's declared.
+    pub(super) fn pred_const(&self, name: &str, id: NodeId) -> Option<(String, Type, Span)> {
+        let i = self.pred_fn(name, id)?;
         if !self.modules.consts.contains(&i) {
             return None;
         }

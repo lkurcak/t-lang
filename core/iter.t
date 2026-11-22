@@ -1,5 +1,6 @@
 //! Iterating.
 
+use crate::num::greatest;
 use crate::option::Option;
 
 /// What gives values one at a time, as a `for` loop takes them.
@@ -58,10 +59,22 @@ export trait Iterator {
     fn skip(self, n: usize) -> Skip<Self> where Self::Item: Discard { Skip { iter: self, n } }
 
     /// How many values there are, throwing each away. Counting past the
-    /// greatest `usize` panics.
+    /// greatest `usize` panics, which one that says how many it has at
+    /// most, a `BoundedIterator`, can't.
     #[blame_caller]
-    fn count(self) -> usize with {Self::e, panic} where Self: Discard, Self::Item: Discard {
-        self.fold(0, |n, _x| n + 1)
+    fn count(self) -> usize
+    with {Self::e, panic unless Self: BoundedIterator}
+    where
+        Self: Discard,
+        Self::Item: Discard,
+    {
+        let mut n = 0;
+        for _x in it: self
+            invariant n + it.most() <= greatest::<usize>() where Self: BoundedIterator
+        {
+            n = n + 1;
+        }
+        n
     }
 
     /// Whether `p` says `true` of any value. It stops at the first it does,
@@ -113,20 +126,65 @@ export trait DoubleEndedIterator: Iterator {
     fn next_back(&mut self) -> Option<Self::Item> with Self::e;
 }
 
-/// An iterator that knows how many values it has yet to give, its `len`:
-/// each value `next` gives takes one off, and it gives `None` only when
-/// there are none, so code generic in it can count what it's been
-/// through. So can code given one of a double-ended one, from either end.
-/// That's a *law* of `next` and `next_back`, which every type implementing
-/// both keeps: each impl of it is checked to, against the body of its
-/// `next` (docs/88-iterator-laws.md).
+/// An iterator that knows how many values it has yet to give at most, its
+/// `most`: each value `next` gives takes at least one off, and it never
+/// grows. So a count of what it gives can't pass the greatest `usize`,
+/// and `count` of one can't panic. That's a *law* of `next`, and of
+/// `next_back` of a double-ended one, which every type implementing both
+/// keeps: each impl is checked to, against the body of its `next`
+/// (docs/88-iterator-laws.md, docs/92-where-a-bound-holds.md).
+///
+/// `most` is a measure, so refinements can say it: `for x in it: e
+/// invariant n + it.most() <= cap` bounds what's been counted.
+export trait BoundedIterator: Iterator {
+    /// How many values it has yet to give, at most.
+    #[measure]
+    fn most(&self) -> usize;
+
+    /// Each value it gives takes at least one off `most`, which never
+    /// grows.
+    law fn next(
+        &mut self,
+    ) -> { r: Option<Self::Item> | !r.is_some() || self.most() < old(self.most()) }
+    with Self::e
+    ensures
+        self.most() <= old(self.most());
+
+    /// From the back too, of one that's double-ended.
+    law fn next_back(
+        &mut self,
+    ) -> { r: Option<Self::Item> | !r.is_some() || self.most() < old(self.most()) }
+    with Self::e
+    where
+        Self: DoubleEndedIterator,
+    ensures
+        self.most() <= old(self.most());
+
+    /// `f` of each: as many.
+    law fn map<U, effect fx, F: FnMut(Self::Item) -> U with fx>(
+        self,
+        f: F,
+    ) -> { m: Map<Self, F> | m.most() == self.most() };
+
+    /// Each with its index: as many.
+    law fn enumerate(self) -> { e: Enumerate<Self> | e.most() == self.most() };
+
+    /// Back to front: as many.
+    law fn rev(self) -> { r: Rev<Self> | r.most() == self.most() } where Self: DoubleEndedIterator;
+}
+
+/// An iterator that knows exactly how many values it has yet to give, its
+/// `len`, which is its `most`: each value `next` gives takes one off, and
+/// it gives `None` only when there are none, so code generic in it can
+/// count what it's been through. So can code given one of a double-ended
+/// one, from either end. That's a law too (docs/88-iterator-laws.md).
 ///
 /// `len` is a measure, so refinements can say it: `for x in it: s.iter()
 /// invariant n + it.len() == s.len()` counts what it's been through.
-export trait ExactSizeIterator: Iterator {
-    /// How many values it has yet to give.
+export trait ExactSizeIterator: BoundedIterator {
+    /// How many values it has yet to give: its `most`, exactly.
     #[measure]
-    fn len(&self) -> usize;
+    fn len(&self) -> usize { self.most() }
 
     /// Each value it gives takes one off `len`, and it gives `None` only at
     /// `0`, where `len` stays.
@@ -142,18 +200,6 @@ export trait ExactSizeIterator: Iterator {
         Self: DoubleEndedIterator,
     ensures
         self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0);
-
-    /// `f` of each: as many.
-    law fn map<U, effect fx, F: FnMut(Self::Item) -> U with fx>(
-        self,
-        f: F,
-    ) -> { m: Map<Self, F> | m.len() == self.len() };
-
-    /// Each with its index: as many.
-    law fn enumerate(self) -> { e: Enumerate<Self> | e.len() == self.len() };
-
-    /// Back to front: as many.
-    law fn rev(self) -> { r: Rev<Self> | r.len() == self.len() } where Self: DoubleEndedIterator;
 }
 
 /// What a `for` loop can go through: `for x in c` takes the values of
@@ -222,16 +268,24 @@ impl<
     }
 }
 
-/// As many as `iter` has yet to give: `f` of each.
+/// As many as `iter` has yet to give, at most: `f` of each.
+impl<
+    U,
+    effect fx,
+    I: BoundedIterator,
+    F: FnMut(I::Item) -> U with fx,
+> BoundedIterator for Map<I, F> {
+    #[measure]
+    fn most(&self) -> usize { self.iter.most() }
+}
+
+/// And no fewer, of one that has no fewer.
 impl<
     U,
     effect fx,
     I: ExactSizeIterator,
     F: FnMut(I::Item) -> U with fx,
-> ExactSizeIterator for Map<I, F> {
-    #[measure]
-    fn len(&self) -> usize { self.iter.len() }
-}
+> ExactSizeIterator for Map<I, F> {}
 
 /// What `Iterator::filter` gives: the values of `iter` that `p` says `true`
 /// of.
@@ -252,7 +306,7 @@ where
 
     #[blame_caller]
     fn next(&mut self) -> Option<I::Item> with {I::e, px} {
-        loop {
+        loop invariant self.iter.most() <= old(self.iter.most()) where I: BoundedIterator {
             match self.iter.next() {
                 Some(x) => {
                     if (self.p)(&x) {
@@ -263,6 +317,16 @@ where
             }
         }
     }
+}
+
+/// At most as many as `iter` has yet to give: those `p` keeps.
+impl<
+    effect px,
+    I: BoundedIterator,
+    P: FnMut(&I::Item) -> bool with px,
+> BoundedIterator for Filter<I, P> where I::Item: Discard {
+    #[measure]
+    fn most(&self) -> usize { self.iter.most() }
 }
 
 /// What `Iterator::enumerate` gives: each value of `iter`, with its index,
@@ -287,11 +351,14 @@ impl<I: Iterator> Iterator for Enumerate<I> {
     }
 }
 
-/// As many as `iter` has yet to give, each with its index.
-impl<I: ExactSizeIterator> ExactSizeIterator for Enumerate<I> {
+/// As many as `iter` has yet to give, at most, each with its index.
+impl<I: BoundedIterator> BoundedIterator for Enumerate<I> {
     #[measure]
-    fn len(&self) -> usize { self.iter.len() }
+    fn most(&self) -> usize { self.iter.most() }
 }
+
+/// And no fewer, of one that has no fewer.
+impl<I: ExactSizeIterator> ExactSizeIterator for Enumerate<I> {}
 
 /// What `Iterator::zip` gives: a value of `a` and one of `b`, in pairs.
 #[derive(
@@ -319,17 +386,20 @@ impl<A: Iterator, B: Iterator> Iterator for Zip<A, B> where A::Item: Discard {
     }
 }
 
-/// As many as the shorter of `a` and `b` has yet to give: `next` stops at
-/// that one's end.
+/// As many as the shorter of `a` and `b` has yet to give, at most: `next`
+/// stops at that one's end.
+impl<A: BoundedIterator, B: BoundedIterator> BoundedIterator for Zip<A, B> where A::Item: Discard {
+    #[measure]
+    fn most(&self) -> usize {
+        if self.a.most() <= self.b.most() { self.a.most() } else { self.b.most() }
+    }
+}
+
+/// And no fewer, of two that have no fewer.
 impl<A: ExactSizeIterator, B: ExactSizeIterator> ExactSizeIterator for Zip<A, B>
 where
     A::Item: Discard,
-{
-    #[measure]
-    fn len(&self) -> usize {
-        if self.a.len() <= self.b.len() { self.a.len() } else { self.b.len() }
-    }
-}
+{}
 
 /// What `Iterator::skip` gives: the values of `iter` after the first `n`
 /// left to skip.
@@ -342,15 +412,30 @@ impl<I: Iterator> Iterator for Skip<I> where I::Item: Discard {
 
     #[blame_caller]
     fn next(&mut self) -> Option<I::Item> with I::e {
-        while self.n > 0 {
-            self.n = self.n - 1;
+        while self.n > 0
+            invariant self.most() <= old(self.most()) where I: BoundedIterator
+            invariant self.len() == old(self.len()) where I: ExactSizeIterator
+        {
             if self.iter.next().is_none() {
                 return None;
             }
+            self.n = self.n - 1;
         }
         self.iter.next()
     }
 }
+
+/// As many as `iter` has yet to give, at most, less the `n` left to skip:
+/// none, if that's more.
+impl<I: BoundedIterator> BoundedIterator for Skip<I> where I::Item: Discard {
+    #[measure]
+    fn most(&self) -> usize {
+        if self.iter.most() >= self.n { self.iter.most() - self.n } else { 0 }
+    }
+}
+
+/// And no fewer, of one that has no fewer.
+impl<I: ExactSizeIterator> ExactSizeIterator for Skip<I> where I::Item: Discard {}
 
 /// What `Iterator::rev` gives: the values of `iter`, back to front.
 #[derive(Discard where I: Discard, Send where I: Send, Sync where I: Sync)]
@@ -369,9 +454,12 @@ impl<I: DoubleEndedIterator> DoubleEndedIterator for Rev<I> {
     fn next_back(&mut self) -> Option<I::Item> with I::e { self.iter.next() }
 }
 
-/// As many as `iter` has yet to give, from the other end: which it takes
-/// one off of each, as its `next_back` does, being double-ended.
-impl<I: DoubleEndedIterator + ExactSizeIterator> ExactSizeIterator for Rev<I> {
+/// As many as `iter` has yet to give, at most, from the other end: which
+/// it takes one off of each, as its `next_back` does, being double-ended.
+impl<I: DoubleEndedIterator + BoundedIterator> BoundedIterator for Rev<I> {
     #[measure]
-    fn len(&self) -> usize { self.iter.len() }
+    fn most(&self) -> usize { self.iter.most() }
 }
+
+/// And no fewer, of one that has no fewer.
+impl<I: DoubleEndedIterator + ExactSizeIterator> ExactSizeIterator for Rev<I> {}

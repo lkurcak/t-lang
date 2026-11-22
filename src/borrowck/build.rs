@@ -460,6 +460,9 @@ impl<'a> Builder<'a> {
             | ExprKind::Index(..) => {
                 unreachable!("rewritten when paths are resolved")
             }
+            ExprKind::Where(..) | ExprKind::Clauses(_) => {
+                unreachable!("only a loop's invariant is one, which isn't run")
+            }
             // A string literal's region is a new variable, constrained by
             // nothing but its uses: its bytes are there as long as the
             // program runs, so it may be as long as any of them needs.

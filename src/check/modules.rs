@@ -1800,6 +1800,10 @@ impl Rewrite<'_> {
             if let Some(c) = &mut item.cond {
                 self.pred(c)?;
             }
+            if let Some(g) = &mut item.unless {
+                self.ty(&mut g.subject)?;
+                self.bound(&mut g.bound)?;
+            }
         }
         self.interface = None;
         self.expr(&mut f.body)?;
@@ -1923,12 +1927,17 @@ impl Rewrite<'_> {
         if let ExprKind::IfLet(c, ..) | ExprKind::WhileLet(_, c, ..) = &mut e.kind {
             self.pattern(&mut c.pat)?;
         }
-        // A loop's invariant names what any expression can. Not as a
-        // refinement's predicate does: `old(x)` means nothing in it. A
+        // The bound a clause of an invariant hangs on.
+        if let ExprKind::Where(_, g) = &mut e.kind {
+            self.ty(&mut g.subject)?;
+            self.bound(&mut g.bound)?;
+        }
+        // A loop's invariant names what any expression can, and
+        // `old(x)`, as a predicate does: what a parameter was at the call. A
         // `while let`'s goes onto the `loop` it's rewritten as, and is seen
         // there; a `for`'s is seen with its other parts, below.
         if let ExprKind::While(_, _, Some(inv), _) | ExprKind::Loop(_, Some(inv), _) = &mut e.kind {
-            self.expr(inv)?;
+            self.pred(inv)?;
         }
         match &mut e.kind {
             ExprKind::IfLet(..) => {
@@ -1959,7 +1968,7 @@ impl Rewrite<'_> {
                 self.pattern(&mut f.pat)?;
                 self.expr(&mut f.iter)?;
                 if let Some(inv) = &mut f.invariant {
-                    self.expr(inv)?;
+                    self.pred(inv)?;
                 }
                 self.expr(&mut f.body)?;
                 no_break_value(&f.body, "`for`", f.label.as_ref().map(|l| &l.name.name), 0)?;
@@ -3425,6 +3434,7 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             .collect(),
         ExprKind::Unary(_, x)
         | ExprKind::As(x, _)
+        | ExprKind::Where(x, _)
         | ExprKind::Field(x, _)
         | ExprKind::Loop(_, _, x)
         | ExprKind::Unsafe(x) => vec![&mut **x],
@@ -3464,9 +3474,10 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             .chain(tail.as_deref_mut())
             .collect(),
         ExprKind::StructLit(_, _, inits) => inits.iter_mut().map(|i| &mut i.value).collect(),
-        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) | ExprKind::Tuple(args) => {
-            args.iter_mut().collect()
-        }
+        ExprKind::Variant(_, _, _, args, ..)
+        | ExprKind::Array(args)
+        | ExprKind::Clauses(args)
+        | ExprKind::Tuple(args) => args.iter_mut().collect(),
         ExprKind::Repeat(v, n) => vec![&mut **v, &mut **n],
         ExprKind::Match(scrutinee, arms) => std::iter::once(&mut **scrutinee)
             .chain(arms.iter_mut().map(|a| &mut a.body))

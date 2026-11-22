@@ -297,6 +297,11 @@ impl Walk<'_> {
             self.ty(&p.ty);
         }
         self.ty(&f.ret);
+        for item in f.effects.iter().flat_map(|s| &s.items) {
+            if let Some(g) = &item.unless {
+                self.ty(&g.subject);
+            }
+        }
         self.expr(&f.body);
         self.leave();
         self.current.pop();
@@ -383,7 +388,17 @@ impl Walk<'_> {
     }
 
     fn expr(&mut self, e: &Expr) {
+        // A loop's invariant, which isn't among its children, names types
+        // too: a clause's bound's, `greatest::<T>()`'s.
+        let invariant = match &e.kind {
+            ExprKind::While(_, _, inv, _) | ExprKind::WhileLet(_, _, inv, _) => inv.as_deref(),
+            ExprKind::Loop(_, inv, _) => inv.as_deref(),
+            ExprKind::For(f) => f.invariant.as_deref(),
+            _ => None,
+        };
+        invariant.into_iter().for_each(|p| self.expr(p));
         match &e.kind {
+            ExprKind::Where(_, g) => self.ty(&g.subject),
             ExprKind::Var(_, targs) | ExprKind::MethodCall(_, _, targs, _) => {
                 targs.iter().for_each(|t| self.ty(t))
             }

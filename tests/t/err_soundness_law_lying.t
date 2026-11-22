@@ -14,10 +14,13 @@ impl Iterator for Stuck {
     }
 }
 
-impl ExactSizeIterator for Stuck {
+impl BoundedIterator for Stuck {
     #[measure]
-    fn len(&self) -> usize { self.n }
+    fn most(&self) -> usize { self.n }
 }
 
+impl ExactSizeIterator for Stuck {}
+
 fn main() {}
+// error: can't prove `!r.is_some() || self.most() < old(self.most())` for the result of `next`
 // error: can't prove `self.len() + 1 == old(self.len()) || (self.len() == 0 && old(self.len()) == 0)` for what `next` ensures

@@ -47,6 +47,7 @@ use super::infer::has_placeholder;
 use super::scope::FnId;
 use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Lint, Span, Warning};
+use crate::traits::Pred;
 use crate::types::{Type, effects_text};
 use std::collections::HashMap;
 
@@ -70,6 +71,10 @@ pub(super) struct Site {
     /// find some of its effects can't happen there, which are taken out
     /// (docs/90-conditional-effects.md).
     pub at: Option<NodeId>,
+    /// Its callee's type arguments, if it's a call of a function by name
+    /// that says an effect with `unless`: whether its bound holds of them
+    /// decides if the call has it (`Checker::unguarded`).
+    pub targs: Vec<Type>,
     /// The function's own effects it may have only where their conditions
     /// hold, as the walk found: which it doesn't need its function to have
     /// always, though they're of use (lemma C2 of
@@ -153,8 +158,129 @@ impl Checker {
             unsafe_block: None,
             callee,
             at,
+            targs: Vec::new(),
             covered: Vec::new(),
         });
+    }
+
+    /// Says what the type arguments of the call at node `at` are, of a
+    /// callee that says an effect with `unless`.
+    pub(super) fn call_targs(&mut self, at: NodeId, callee: &str, targs: &[Type]) {
+        if !self.unless.contains_key(callee) {
+            return;
+        }
+        if let Some(s) = self
+            .effect_sites
+            .iter_mut()
+            .rev()
+            .find(|s| s.at == Some(at))
+        {
+            s.targs = targs.to_vec();
+        }
+    }
+
+    /// `effects`, those of site `s`, without what its callee says it has
+    /// `unless` a bound that holds of the call's type arguments, where the
+    /// body is being checked (lemma B5 of docs/92-where-a-bound-holds.md).
+    /// Only what the `unless` put there: an effect parameter or an
+    /// associated effect of the callee's that's the same effect at the
+    /// call keeps it.
+    pub(super) fn unguarded(&self, s: &Site, effects: Type) -> Type {
+        let Some(callee) = &s.callee else {
+            return effects;
+        };
+        let (Some(guards), Some(scheme)) = (self.unless.get(callee), self.callee_scheme(callee))
+        else {
+            return effects;
+        };
+        let Type::Fn(sig) = &scheme.ty else {
+            return effects;
+        };
+        let names = scheme.params.as_slice();
+        if names.len() != s.targs.len() {
+            return effects;
+        }
+        let subst = crate::types::Subst::new(names, &s.targs);
+        let mut gone = Vec::new();
+        for g in guards {
+            let ty = self.solved(&subst.apply(&g.pred.ty));
+            if crate::check::unify::has_vars(&ty) {
+                continue;
+            }
+            let pred = Pred {
+                ty,
+                trait_name: g.pred.trait_name.clone(),
+            };
+            if !self.pred_holds(&pred) {
+                continue;
+            }
+            let rest = (sig.effects.effect_items().iter())
+                .filter(|e| **e != g.atom)
+                .map(|e| self.adts.normalise(&self.solved(&subst.apply(e))));
+            if Type::effects(rest).effect_items().contains(&g.atom) {
+                continue;
+            }
+            gone.push(g.atom.clone());
+        }
+        Type::effects(
+            (effects.effect_items().iter())
+                .filter(|e| !gone.contains(e))
+                .cloned(),
+        )
+    }
+
+    /// The scheme of function `symbol`, a function's or a trait's method's.
+    fn callee_scheme(&self, symbol: &str) -> Option<&crate::check::Scheme> {
+        if let Some(f) = self.fn_def(symbol) {
+            return Some(&f.scheme);
+        }
+        (self.traits.traits.values().flat_map(|t| &t.methods))
+            .find(|m| m.symbol == symbol)
+            .map(|m| &m.scheme)
+    }
+
+    /// The effects the function being checked, `symbol`, may not have
+    /// though its signature has them, each with why: one it says `unless`
+    /// a bound that holds here; and, of an impl's method of a trait, one
+    /// its trait's method says `unless` a bound that the impl's type may
+    /// meet, as a call through the trait there has none (lemma B6 of
+    /// docs/92-where-a-bound-holds.md).
+    pub(super) fn barred(&self, symbol: &str) -> Vec<(Type, String)> {
+        let mut out = Vec::new();
+        for g in self.unless.get(symbol).into_iter().flatten() {
+            if self.pred_holds(&g.pred) {
+                out.push((g.atom.clone(), g.text.clone()));
+            }
+        }
+        let of_impl = (self.traits.impls.iter()).find_map(|d| {
+            let tr = d.trait_name.as_ref()?;
+            let (name, _) = d.methods.iter().find(|(_, s)| s == symbol)?;
+            Some((
+                crate::check::traits::trait_method_symbol(tr, name),
+                d.self_ty.clone(),
+            ))
+        });
+        if let Some((method, this)) = of_impl {
+            for g in self.unless.get(&method).into_iter().flatten() {
+                let pred = Pred {
+                    ty: this.clone(),
+                    trait_name: g.pred.trait_name.clone(),
+                };
+                let open = matches!(this, Type::Param(..) | Type::Proj(..) | Type::Opaque(..));
+                let local = &self.adts.proj.local;
+                let may = open
+                    || self.pred_holds(&pred)
+                    || self
+                        .traits
+                        .select(&this, Some(&pred.trait_name), local)
+                        .is_some();
+                if may {
+                    let tr = crate::check::source_name(&pred.trait_name);
+                    out.push((g.atom.clone(), format!("{this}: {tr}")));
+                }
+            }
+        }
+        out
     }
 
     /// Records that operator `e`, described as `what`, may panic, unless
@@ -168,6 +294,7 @@ impl Checker {
             unsafe_block: None,
             callee: None,
             at: None,
+            targs: Vec::new(),
             covered: Vec::new(),
         });
     }
@@ -556,9 +683,13 @@ impl Checker {
                     .collect()
             })
             .unwrap_or_default();
+        // Nor what it says `unless` a bound that holds here, or that its
+        // trait's method does, of an impl's type that may meet it.
+        let barred = self.barred(&symbol);
         let always = Type::effects(
             (declared.effect_items().iter())
                 .filter(|e| !conds.iter().any(|(a, _)| a == *e))
+                .filter(|e| !barred.iter().any(|(a, _)| a == *e))
                 .cloned(),
         );
         let declared = &always;
@@ -568,6 +699,7 @@ impl Checker {
             if s.unsafe_block.is_some() {
                 effects = without_unsafe(&effects);
             }
+            effects = self.unguarded(s, effects);
             used.extend(s.covered.iter().cloned());
             let here = Type::effects(declared.effect_items().iter().chain(&s.covered).cloned());
             let declared = &here;
@@ -602,6 +734,21 @@ impl Checker {
             if *first == Type::Unsafe && main {
                 let message = format!("{} is unsafe, but it isn't in an `unsafe` block", s.what);
                 return Err(Error::ty(s.span, message));
+            }
+            // One it says it has unless a bound holds, which does here.
+            if let Some((_, bound)) = barred.iter().find(|(a, _)| a == first) {
+                let atom = effects_text(&Type::effects([first.clone()]));
+                let message = format!(
+                    "{} where `{bound}`, but `{}` says `with {atom} unless {bound}`",
+                    says(&s.what, &Type::effects([first.clone()])),
+                    f.name.name,
+                );
+                let err = Error::ty(s.span, message);
+                return Err(if *first == Type::Panic {
+                    self.explain_proof(err)
+                } else {
+                    err
+                });
             }
             // One it says it has when a condition holds, which may not here.
             if let Some((_, cond)) = conds.iter().find(|(a, _)| a == first) {
@@ -675,6 +822,52 @@ impl Checker {
             } else {
                 err
             });
+        }
+        // Under the bound of each effect it says with `unless`, nothing in
+        // it has the effect: what the walk under the bound left, of what
+        // the walk without it did (lemma B4 of
+        // docs/92-where-a-bound-holds.md). A closure's effects are what
+        // they are without the bound, and a function's whose effects are
+        // still being inferred aren't known: either has it, for this.
+        for sc in std::mem::take(&mut self.scenarios) {
+            self.adts.proj.env.push(sc.guard.pred.clone());
+            let mut left = None;
+            for s in &sites {
+                if s.node.is_some_and(|n| sc.proved.contains(&n)) {
+                    continue;
+                }
+                let mut effects = self.solved(&s.effects);
+                if let Some(gone) = s.at.or(s.node).and_then(|n| sc.excused.get(&n)) {
+                    effects = Type::effects(
+                        (effects.effect_items().iter())
+                            .filter(|e| !gone.contains(e))
+                            .cloned(),
+                    );
+                }
+                let effects = self.unguarded(s, effects);
+                if effects.effect_items().contains(&sc.guard.atom) || has_placeholder(&effects) {
+                    left = Some(s);
+                    break;
+                }
+            }
+            self.adts.proj.env.pop();
+            if let Some(s) = left {
+                let atom = Type::effects([sc.guard.atom.clone()]);
+                let message = format!(
+                    "{} where `{}`, but `{}` says `with {} unless {}`",
+                    says(&s.what, &atom),
+                    sc.guard.text,
+                    f.name.name,
+                    effects_text(&atom),
+                    sc.guard.text,
+                );
+                let err = Error::ty(s.span, message);
+                return Err(if sc.guard.atom == Type::Panic {
+                    self.explain_proof(err)
+                } else {
+                    err
+                });
+            }
         }
         // Each effect it says that nothing in it has. One that's an
         // associated effect with none, as `Self::e` may be, says nothing.
@@ -802,6 +995,7 @@ impl Checker {
             if s.unsafe_block.is_some() {
                 s.effects = without_unsafe(&s.effects);
             }
+            s.effects = self.unguarded(&s, s.effects.clone());
             kept.push(s);
         }
         self.infer_sites.insert(id.0, kept);

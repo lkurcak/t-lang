@@ -184,6 +184,9 @@ struct Frame<'p> {
     body: &'p crate::mir::Body,
     f: Option<&'p str>,
     slots: Vec<Option<Ptr>>,
+    /// What each `old(..)` in its loops' invariants was when it was
+    /// called, by node (`Interp::entry_olds`).
+    olds: HashMap<NodeId, PredValue>,
 }
 
 /// Where a function or closure being run is: the `unsafe` blocks of its
@@ -1234,6 +1237,18 @@ impl Refined {
                 Some((_, v)) => PredValue::of(v),
                 None => unsound(&format!("a refinement naming `{name}`, which isn't there")),
             },
+            // `least::<u8>()` or `greatest::<u8>()`, of the type
+            // monomorphisation wrote.
+            ExprKind::Call(f, args)
+                if args.is_empty()
+                    && let ExprKind::Var(name, targs) = &f.kind
+                    && let [t] = targs.as_slice()
+                    && let crate::ast::TypeExprKind::Named(n, _) = &t.kind
+                    && let Some(ty) = crate::types::IntTy::named(n) =>
+            {
+                let (lo, hi) = i.range(ty);
+                PredValue::Int(if name.ends_with("least") { lo } else { hi })
+            }
             ExprKind::Unary(UnOp::Neg, x) => PredValue::Int(-go(x).int()),
             ExprKind::Unary(UnOp::Not, x) => PredValue::Bool(!go(x).boolean()),
             ExprKind::Unary(UnOp::Deref, x) => PredValue::of(&i.pred_deref(go(x).val())),
@@ -2059,6 +2074,7 @@ impl<'p> Interp<'p, '_> {
             body,
             f,
             slots: vec![None; body.locals.len()],
+            olds: HashMap::new(),
         };
         // A function's parameters come after its closure, if it's a
         // closure's.
@@ -2070,6 +2086,7 @@ impl<'p> Interp<'p, '_> {
             }
             fr.slots[i + 1] = Some(p);
         }
+        fr.olds = self.entry_olds(&fr);
         self.sites.push(Site {
             unsafe_blocks: &body.unsafe_blocks,
             span,
@@ -2549,6 +2566,48 @@ impl<'p> Interp<'p, '_> {
         self.refined.insert((p.slot, p.generation), refined);
     }
 
+    /// What each `old(..)` in the invariants of the loops of `fr`'s body
+    /// is, now that it's called: of its parameters, as they are.
+    fn entry_olds(&self, fr: &Frame) -> HashMap<NodeId, PredValue> {
+        fn olds<'e>(e: &'e Expr, out: &mut Vec<(&'e Expr, &'e Expr)>) {
+            match &e.kind {
+                ExprKind::Call(f, args)
+                    if args.len() == 1
+                        && matches!(&f.kind, ExprKind::Var(n, t) if n == "old" && t.is_empty()) =>
+                {
+                    out.push((e, &args[0]))
+                }
+                _ => e.children().into_iter().for_each(|c| olds(c, out)),
+            }
+        }
+        let mut found = Vec::new();
+        for s in fr.body.blocks.iter().flat_map(|b| &b.stmts) {
+            if let crate::mir::StmtKind::Holds(r) = s.kind {
+                for (_, pred) in &fr.body.refinements[r].parts {
+                    olds(pred, &mut found);
+                }
+            }
+        }
+        if found.is_empty() {
+            return HashMap::new();
+        }
+        let env: Vec<(String, Value)> = (1..=fr.body.params)
+            .filter_map(|l| {
+                let name = fr.body.locals[l].name.clone()?;
+                let p = fr.slots[l].as_ref()?;
+                Some((name, self.memory.get(p).clone()))
+            })
+            .collect();
+        let at_entry = Refined {
+            parts: Vec::new(),
+            env,
+            measured: HashMap::new(),
+        };
+        (found.into_iter())
+            .map(|(old, x)| (old.id, at_entry.eval(self, x, "", &Value::Unit)))
+            .collect()
+    }
+
     /// Stops the program, as the checker is wrong, unless loop invariant
     /// `r` holds of the variables it names, now, at the loop's head.
     fn holds(&mut self, fr: &Frame, r: &crate::mir::Refinement) {
@@ -2561,7 +2620,8 @@ impl<'p> Interp<'p, '_> {
         let parts: Vec<(String, &Expr)> = (r.parts.iter())
             .map(|(binder, pred)| (binder.clone(), pred))
             .collect();
-        let refined = self.refined_at(&parts, env, false);
+        let mut refined = self.refined_at(&parts, env, false);
+        (refined.measured).extend(fr.olds.iter().map(|(id, v)| (*id, v.clone())));
         for part in &refined.parts {
             if let PredValue::Bool(false) =
                 refined.eval(self, &part.pred, &part.binder, &Value::Unit)

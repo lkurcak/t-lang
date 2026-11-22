@@ -1259,6 +1259,18 @@ pub struct EffectSet {
     pub with: bool,
 }
 
+/// `T: Trait`, a bound that what's before it hangs on: after `where` in a
+/// loop's invariant, which is said only where it holds, or after `unless`
+/// in an effect, which is had only where it doesn't
+/// (docs/92-where-a-bound-holds.md).
+#[derive(Debug, Clone)]
+pub struct Guard {
+    pub subject: TypeExpr,
+    pub bound: BoundItem,
+    /// From the type to the end of the bound.
+    pub span: Span,
+}
+
 /// One effect: `panic`, `alloc`, an effect parameter `e`, or an associated
 /// effect `I::e`, `<I as Iterator>::e`.
 #[derive(Debug, Clone)]
@@ -1267,6 +1279,9 @@ pub struct Effect {
     /// The whole of it, its condition included.
     pub span: Span,
     pub id: NodeId,
+    /// `unless T: Trait` after it: it's had only where the bound doesn't
+    /// hold, or `None` (see docs/92-where-a-bound-holds.md).
+    pub unless: Option<Box<Guard>>,
     /// `if x > 3` after it: when a call has it, a predicate of the
     /// function's parameters as they're given, or `None` if it may have it
     /// whenever (see docs/90-conditional-effects.md).
@@ -1522,6 +1537,15 @@ fn nested<'a, T>(e: &'a Expr, item: fn(&'a Stmt) -> Option<&'a T>, out: &mut Vec
 }
 
 impl Expr {
+    /// The clauses of this, a loop's invariant: each as written, with its
+    /// `where` if it has one (`ExprKind::Where`).
+    pub fn clauses(&self) -> Vec<&Expr> {
+        match &self.kind {
+            ExprKind::Clauses(clauses) => clauses.iter().collect(),
+            _ => vec![self],
+        }
+    }
+
     /// The expressions directly inside this one, in order. Not the bodies
     /// of the functions declared in it, which are separate functions.
     pub fn children(&self) -> Vec<&Expr> {
@@ -1537,6 +1561,7 @@ impl Expr {
             ExprKind::Format(pieces) => pieces.iter().flat_map(FmtPiece::exprs).collect(),
             ExprKind::Unary(_, x)
             | ExprKind::As(x, _)
+            | ExprKind::Where(x, _)
             | ExprKind::Field(x, _)
             | ExprKind::Loop(_, _, x)
             | ExprKind::Unsafe(x) => vec![x],
@@ -1564,6 +1589,7 @@ impl Expr {
             ExprKind::StructLit(_, _, inits) => inits.iter().map(|i| &i.value).collect(),
             ExprKind::Variant(_, _, _, args, ..)
             | ExprKind::Array(args)
+            | ExprKind::Clauses(args)
             | ExprKind::Tuple(args) => args.iter().collect(),
             ExprKind::Repeat(v, n) => vec![v, n],
             ExprKind::Match(scrutinee, arms) => std::iter::once(&**scrutinee)
@@ -1888,6 +1914,14 @@ pub enum ExprKind {
     Unary(UnOp, Box<Expr>),
     /// `x as u8`: the same integer, as another integer type.
     As(Box<Expr>, Box<TypeExpr>),
+    /// `p where T: Trait`, a clause of a loop's invariant that's said only
+    /// where the bound holds (docs/92-where-a-bound-holds.md): a predicate,
+    /// never run. Only an invariant has one, as a whole clause.
+    Where(Box<Expr>, Box<Guard>),
+    /// The clauses of a loop's invariant that has several, `invariant p
+    /// invariant q`, each as written: all of them hold. Only an invariant
+    /// is one, and no clause is.
+    Clauses(Vec<Expr>),
     Binary(BinOp, Box<Expr>, Box<Expr>),
     Call(Box<Expr>, Vec<Expr>),
     /// `x.m(a, b)`, or `x.m::<i64>(a, b)` with type arguments: a call of
@@ -2095,6 +2129,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
         }
         ExprKind::Unary(_, x)
         | ExprKind::As(x, _)
+        | ExprKind::Where(x, _)
         | ExprKind::Field(x, _)
         | ExprKind::Unsafe(x) => go(x, bound),
         // An invariant reads what it names, each time round (in checking
@@ -2163,9 +2198,10 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             bound.truncate(scope);
         }
         ExprKind::StructLit(_, _, inits) => inits.iter().for_each(|i| go(&i.value, bound)),
-        ExprKind::Variant(_, _, _, args, ..) | ExprKind::Array(args) | ExprKind::Tuple(args) => {
-            args.iter().for_each(|a| go(a, bound))
-        }
+        ExprKind::Variant(_, _, _, args, ..)
+        | ExprKind::Array(args)
+        | ExprKind::Clauses(args)
+        | ExprKind::Tuple(args) => args.iter().for_each(|a| go(a, bound)),
         ExprKind::Repeat(v, n) => {
             go(v, bound);
             go(n, bound);

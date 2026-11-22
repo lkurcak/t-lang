@@ -233,10 +233,13 @@ export struct IntoIter<T> {
 }
 
 /// How many values it has yet to give: those in slots `next..len`.
-impl<T> ExactSizeIterator for IntoIter<T> {
+impl<T> BoundedIterator for IntoIter<T> {
     #[measure]
-    fn len(&self) -> usize { self.len - self.next }
+    fn most(&self) -> usize { self.len - self.next }
 }
+
+/// And no fewer.
+impl<T> ExactSizeIterator for IntoIter<T> {}
 
 /// Gives the next value, until there are none: then `None`, and from then
 /// on, as `ExactSizeIterator`'s law says.
