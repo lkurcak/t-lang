@@ -2417,6 +2417,33 @@ impl Checker {
     /// Fails unless `old(..)`, `e`, can be where it is: in a
     /// postcondition, and not in another.
     fn enter_old(&self, e: &Expr) -> Result<(), Error> {
+        if self.pred_in_old {
+            return Err(Error::ty(e.span, "`old(..)` inside `old(..)`"));
+        }
+        // In a loop's invariant, it's what a parameter of the function
+        // was when it was called (docs/92-where-a-bound-holds.md).
+        if self.pred_invariant {
+            let params = (self.current).map_or(&[][..], |id| self.fns[id.0].params.as_slice());
+            let mut stray = None;
+            each_expr(e, &mut |x| {
+                if let ExprKind::Var(name, _) = &x.kind
+                    && name != "old"
+                    && !params.contains(name)
+                    && stray.is_none()
+                {
+                    stray = Some((x.span, name.clone()));
+                }
+            });
+            return match stray {
+                Some((span, name)) => Err(Error::ty(
+                    span,
+                    format!(
+                        "`old(..)` in an invariant is of the function's parameters, as they                          were when it was called: `{name}` isn't one"
+                    ),
+                )),
+                None => Ok(()),
+            };
+        }
         if self.pred_post.is_none() {
             return Err(Error::ty(
                 e.span,
@@ -3369,6 +3396,7 @@ impl Checker {
             proving_fields: false,
             reproving: Vec::new(),
             closures: 0,
+            in_entry: false,
             size: None,
             bounds: HashMap::new(),
             consts: HashMap::new(),
@@ -3971,6 +3999,9 @@ struct Walk<'c> {
     reproving: Vec<Place>,
     /// How many closures deep this is.
     closures: usize,
+    /// In `old(..)` of a loop's invariant: a parameter's name is what it
+    /// was at the call (`entry`).
+    in_entry: bool,
     /// The variable for the greatest `isize`, once there's one: how big
     /// it is depends on the machine. The greatest `usize` is twice it, plus
     /// one, and the least `isize` minus it, minus one.
@@ -5375,6 +5406,11 @@ impl Walk<'_> {
                     let id = *self.params.get(*i).ok_or(Failure::Unsupported)?;
                     self.read_place(&Place::local(id))
                 }
+                (PredName::Local(id), _) if self.in_entry => {
+                    let i = (self.params.iter().position(|p| p == id))
+                        .ok_or(Failure::Unsupported)?;
+                    self.entry.get(i).ok_or(Failure::Unsupported)?.clone()
+                }
                 (PredName::Local(id), _) => self.read_place(&Place::local(*id)),
                 (PredName::Field(j), Env::Fields(vals, _)) => {
                     vals.get(*j).ok_or(Failure::Unsupported)?.clone()
@@ -5442,6 +5478,15 @@ impl Walk<'_> {
             ExprKind::Call(_, args) if args.len() == 1 => match env {
                 Env::Post(old, _, targs) => self.term(&args[0], binder, Env::Call(old, targs))?,
                 Env::Closed(_) => self.term(&args[0], binder, env)?,
+                // In a loop's invariant: what the function's parameters
+                // were at the call. Not a closure's, which has no entry
+                // of its own here.
+                Env::Here if self.closures == 0 && !self.in_entry => {
+                    self.in_entry = true;
+                    let v = self.term(&args[0], binder, env);
+                    self.in_entry = false;
+                    v?
+                }
                 _ => return Err(Failure::Unsupported),
             },
             // A field of what's named, through the `*`s the checker found:

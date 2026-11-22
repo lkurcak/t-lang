@@ -289,7 +289,7 @@ where
 
     #[blame_caller]
     fn next(&mut self) -> Option<I::Item> with {I::e, px} {
-        loop {
+        loop invariant self.iter.most() <= old(self.iter.most()) where I: BoundedIterator {
             match self.iter.next() {
                 Some(x) => {
                     if (self.p)(&x) {
@@ -300,6 +300,19 @@ where
             }
         }
     }
+}
+
+/// At most as many as `iter` has yet to give: those `p` keeps.
+impl<
+    effect px,
+    I: BoundedIterator,
+    P: FnMut(&I::Item) -> bool with px,
+> BoundedIterator for Filter<I, P>
+where
+    I::Item: Discard,
+{
+    #[measure]
+    fn most(&self) -> usize { self.iter.most() }
 }
 
 /// What `Iterator::enumerate` gives: each value of `iter`, with its index,
@@ -388,15 +401,30 @@ impl<I: Iterator> Iterator for Skip<I> where I::Item: Discard {
 
     #[blame_caller]
     fn next(&mut self) -> Option<I::Item> with I::e {
-        while self.n > 0 {
-            self.n = self.n - 1;
+        while self.n > 0
+            invariant self.most() <= old(self.most()) where I: BoundedIterator
+            invariant self.len() == old(self.len()) where I: ExactSizeIterator
+        {
             if self.iter.next().is_none() {
                 return None;
             }
+            self.n = self.n - 1;
         }
         self.iter.next()
     }
 }
+
+/// As many as `iter` has yet to give, at most, less the `n` left to skip:
+/// none, if that's more.
+impl<I: BoundedIterator> BoundedIterator for Skip<I> where I::Item: Discard {
+    #[measure]
+    fn most(&self) -> usize {
+        if self.iter.most() >= self.n { self.iter.most() - self.n } else { 0 }
+    }
+}
+
+/// And no fewer, of one that has no fewer.
+impl<I: ExactSizeIterator> ExactSizeIterator for Skip<I> where I::Item: Discard {}
 
 /// What `Iterator::rev` gives: the values of `iter`, back to front.
 #[derive(Discard where I: Discard, Send where I: Send, Sync where I: Sync)]

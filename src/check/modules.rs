@@ -1932,12 +1932,12 @@ impl Rewrite<'_> {
             self.ty(&mut g.subject)?;
             self.bound(&mut g.bound)?;
         }
-        // A loop's invariant names what any expression can. Not as a
-        // refinement's predicate does: `old(x)` means nothing in it. A
+        // A loop's invariant names what any expression can, and
+        // `old(x)`, as a predicate does: what a parameter was at the call. A
         // `while let`'s goes onto the `loop` it's rewritten as, and is seen
         // there; a `for`'s is seen with its other parts, below.
         if let ExprKind::While(_, _, Some(inv), _) | ExprKind::Loop(_, Some(inv), _) = &mut e.kind {
-            self.expr(inv)?;
+            self.pred(inv)?;
         }
         match &mut e.kind {
             ExprKind::IfLet(..) => {
@@ -1968,7 +1968,7 @@ impl Rewrite<'_> {
                 self.pattern(&mut f.pat)?;
                 self.expr(&mut f.iter)?;
                 if let Some(inv) = &mut f.invariant {
-                    self.expr(inv)?;
+                    self.pred(inv)?;
                 }
                 self.expr(&mut f.body)?;
                 no_break_value(&f.body, "`for`", f.label.as_ref().map(|l| &l.name.name), 0)?;
