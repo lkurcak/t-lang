@@ -271,29 +271,29 @@ pub fn check_typed(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Re
 /// their `typed`), for checking a program to go on from.
 ///
 /// From the one behind the lock if no other thread holds it, as a process
-/// that checks on one thread always finds it. Else from a copy this thread
-/// keeps from then on, so threads checking many programs at once, as the
-/// compiler's tests do, wait for each other once each and not at every
-/// program. Nothing writes to the one behind the lock, so a copy of it
-/// never falls behind.
-fn start(checker: &'static std::sync::Mutex<Checker>, full: bool) -> Checker {
-    thread_local! {
-        static COPIES: [std::cell::OnceCell<Checker>; 2] =
-            const { [std::cell::OnceCell::new(), std::cell::OnceCell::new()] };
+/// that checks on one thread always finds it. Else from one of the copies
+/// of it kept here, taken out for as long as copying it takes and made if
+/// there's none left: so threads checking many programs at once, as the
+/// compiler's tests do, copy at once, each from its own, and as many are
+/// made as ever copy at once. Kept here and not by each thread, as a
+/// program may be checked on a thread started for it alone. Nothing writes
+/// to the one behind the lock, so a copy of it never falls behind.
+fn start(checker: &std::sync::Mutex<Checker>, full: bool) -> Checker {
+    static COPIES: [std::sync::Mutex<Vec<Checker>>; 2] = [
+        std::sync::Mutex::new(Vec::new()),
+        std::sync::Mutex::new(Vec::new()),
+    ];
+    match checker.try_lock() {
+        Ok(cx) => return cx.clone(),
+        Err(std::sync::TryLockError::WouldBlock) => {}
+        Err(std::sync::TryLockError::Poisoned(_)) => panic!("never poisoned"),
     }
-    COPIES.with(|copies| {
-        let copy = &copies[usize::from(full)];
-        if let Some(cx) = copy.get() {
-            return cx.clone();
-        }
-        match checker.try_lock() {
-            Ok(cx) => cx.clone(),
-            Err(std::sync::TryLockError::WouldBlock) => copy
-                .get_or_init(|| checker.lock().expect("never poisoned").clone())
-                .clone(),
-            Err(std::sync::TryLockError::Poisoned(_)) => panic!("never poisoned"),
-        }
-    })
+    let copies = &COPIES[usize::from(full)];
+    let kept = copies.lock().expect("never poisoned").pop();
+    let copy = kept.unwrap_or_else(|| checker.lock().expect("never poisoned").clone());
+    let cx = copy.clone();
+    copies.lock().expect("never poisoned").push(copy);
+    cx
 }
 
 /// `check`, or (not `full`) `check_typed`.
