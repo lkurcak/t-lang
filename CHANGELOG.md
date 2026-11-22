@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.105.0 (2026-11-22)
 
 Step 92: what holds where a bound does. See
 [docs/92-where-a-bound-holds.md](docs/92-where-a-bound-holds.md).

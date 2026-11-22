@@ -106,7 +106,7 @@ fn flip::<i64, bool>(p: Pair::<i64, bool>) -> Pair::<bool, i64> {
     }
 }
 
-fn map::<{}, i64, i64, {closure#201550}>(o: Option::<i64>, f: {closure#201550}) -> Option::<i64> {
+fn map::<{}, i64, i64, {closure#201547}>(o: Option::<i64>, f: {closure#201547}) -> Option::<i64> {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
     let _2: {closure}; // f
@@ -154,7 +154,7 @@ fn map::<{}, i64, i64, {closure#201550}>(o: Option::<i64>, f: {closure#201550}) 
     }
 }
 
-fn map::<{}, i64, i64, {closure#201709}>(o: Option::<i64>, f: {closure#201709}) -> Option::<i64> {
+fn map::<{}, i64, i64, {closure#201706}>(o: Option::<i64>, f: {closure#201706}) -> Option::<i64> {
     let _0: Option<i64>;
     let _1: Option<i64>; // o
     let _2: {closure}; // f
@@ -202,7 +202,7 @@ fn map::<{}, i64, i64, {closure#201709}>(o: Option::<i64>, f: {closure#201709}) 
     }
 }
 
-fn map::<{}, i64, bool, {closure#201794}>(o: Option::<i64>, f: {closure#201794}) -> Option::<bool> {
+fn map::<{}, i64, bool, {closure#201791}>(o: Option::<i64>, f: {closure#201791}) -> Option::<bool> {
     let _0: Option<bool>;
     let _1: Option<i64>; // o
     let _2: {closure}; // f
@@ -763,7 +763,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         _46 = Option::<i64>::Some(move _47);
         _49 = &_42;
         _48 = {closure#21331}(move _49);
-        _45 = map::<{}, i64, i64, {closure#201550}>(move _46, move _48);
+        _45 = map::<{}, i64, i64, {closure#201547}>(move _46, move _48);
         _44 = move _45;
         dead _49;
         dead _48;
@@ -822,7 +822,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         dead _61;
         _67 = move _60;
         _68 = {closure#21361}();
-        _66 = map::<{}, i64, i64, {closure#201709}>(move _67, move _68);
+        _66 = map::<{}, i64, i64, {closure#201706}>(move _67, move _68);
         _69 = -1_i64;
         _65 = unwrap_or::<i64>(move _66, move _69);
         _70 = &mut _2;
@@ -877,7 +877,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         _80 = 3_i64;
         _79 = Option::<i64>::Some(move _80);
         _81 = {closure#21382}();
-        _78 = map::<{}, i64, bool, {closure#201794}>(move _79, move _81);
+        _78 = map::<{}, i64, bool, {closure#201791}>(move _79, move _81);
         _82 = false;
         _77 = unwrap_or::<bool>(move _78, move _82);
         _83 = &mut _2;
@@ -977,7 +977,7 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
         dead _88;
         dead _87;
         _100 = {closure#21406}();
-        _101 = {fn}::<{closure#201923}>;
+        _101 = {fn}::<{closure#201920}>;
         _102 = 1_i64;
         _103 = 10_i64;
         _99 = repeat::<i64>(move _101, move _102, move _103);
@@ -1330,7 +1330,7 @@ fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::from_residua
     }
 }
 
-glue {fn}::<{closure#201923}> {
+glue {fn}::<{closure#201920}> {
     let _0: i64;
     let mut _1: i64;
     let _2: {closure};
