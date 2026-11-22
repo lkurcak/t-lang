@@ -1671,7 +1671,7 @@
       }
     },
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": false,
       "types": [
         {
@@ -1744,6 +1744,10 @@
         },
         {
           "type": "effect",
+          "named": true
+        },
+        {
+          "type": "guarded_effect",
           "named": true
         },
         {
@@ -2012,6 +2016,40 @@
     }
   },
   {
+    "type": "guarded_effect",
+    "named": true,
+    "fields": {
+      "bound": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "where_predicate",
+            "named": true
+          }
+        ]
+      },
+      "effect": {
+        "multiple": false,
+        "required": true,
+        "types": [
+          {
+            "type": "effect",
+            "named": true
+          },
+          {
+            "type": "projection_type",
+            "named": true
+          },
+          {
+            "type": "qualified_type",
+            "named": true
+          }
+        ]
+      }
+    }
+  },
+  {
     "type": "if_expression",
     "named": true,
     "fields": {
@@ -2217,6 +2255,16 @@
     "type": "invariant_clause",
     "named": true,
     "fields": {
+      "bound": {
+        "multiple": false,
+        "required": false,
+        "types": [
+          {
+            "type": "where_predicate",
+            "named": true
+          }
+        ]
+      },
       "predicate": {
         "multiple": false,
         "required": true,
@@ -2438,7 +2486,7 @@
       }
     },
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": false,
       "types": [
         {
@@ -4186,7 +4234,7 @@
       }
     },
     "children": {
-      "multiple": false,
+      "multiple": true,
       "required": false,
       "types": [
         {
@@ -4582,6 +4630,10 @@
   {
     "type": "type_parameter",
     "named": true
+  },
+  {
+    "type": "unless",
+    "named": false
   },
   {
     "type": "unsafe",

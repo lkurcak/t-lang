@@ -447,6 +447,17 @@ Omitting `with {}` on this private function would infer `panic`.
 Keeping it asks the checker to prove the addition safe for every `i64`,
 which it cannot do. A refinement or a guard can supply the missing bound.
 
+An effect of a function's own signature can say when it applies. `with
+panic if x > limit` is a condition on the arguments: a call has the
+effect only where the condition isn't ruled out. `with panic unless T:
+Trait` hangs on a bound: a call has the effect only where the bound isn't
+known to hold of its type arguments, and the body is checked a second
+time with the bound, where nothing in it may have the effect.
+`Iterator::count` says `with {Self::e, panic unless Self:
+BoundedIterator}`, so counting a slice's iterator, or a `filter` of one,
+can't panic. See [conditional effects](90-conditional-effects.md) and
+[where a bound holds](92-where-a-bound-holds.md).
+
 `panic` covers invalid arithmetic, explicit panics, and operations such as
 `unwrap` that may panic. `alloc` covers allocation and aborting on out of
 memory; it does not require `panic` as well. `with {}` also excludes
@@ -674,7 +685,13 @@ iterator over a slice, array or list says what it has left, `it.len()`,
 which each value it gives takes one off, and a range's `next` moves
 `it.start()` by one, so `for x in it: l.iter() invariant n + it.len() <=
 l.len()` proves a count `n` doesn't overflow. `swap` exchanges what's
-known of its two places. See [loop frames](52-loop-frames.md),
+known of its two places. A loop can have several `invariant` clauses,
+and one may end `where T: Trait`: it's said, assumed and proved, only
+where the bound holds, and can call the trait's measures. `old(x)` in an
+invariant is what a parameter of the function was when it was called.
+`least::<T>()` and `greatest::<T>()` of an integer type can be written in
+any predicate. See [loop frames](52-loop-frames.md),
+[where a bound holds](92-where-a-bound-holds.md),
 [loop invariants](54-loop-invariants.md) and [counting](84-counting.md). Diagnostics explain the required condition, relevant known
 facts, and mutations that caused facts to be forgotten.
 

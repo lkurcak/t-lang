@@ -323,7 +323,15 @@ module.exports = grammar({
       choice($._function_effect, seq('{', commaSep($._function_effect), '}')),
     ),
 
-    _function_effect: $ => choice($._effect, $.conditional_effect),
+    _function_effect: $ => choice($._effect, $.conditional_effect, $.guarded_effect),
+
+    // `panic unless T: Bounded`: an effect a call has only where the bound
+    // isn't known to hold of its type arguments.
+    guarded_effect: $ => seq(
+      field('effect', $._effect),
+      'unless',
+      field('bound', $.where_predicate),
+    ),
 
     // `panic if x > 3`: an effect a call has only when its condition holds
     // of the arguments.
@@ -989,15 +997,18 @@ module.exports = grammar({
       optional(seq(field('label', $.lifetime), ':')),
       'while',
       field('condition', choice($._expression, $.let_condition)),
-      optional($.invariant_clause),
+      repeat($.invariant_clause),
       field('body', $.block),
     ),
 
     // `invariant lo <= hi`, between a loop's head and its body: what holds
     // each time round.
+    // A clause may be said only where a bound holds: `invariant n +
+    // it.most() <= cap where I: BoundedIterator`. A loop may have several.
     invariant_clause: $ => seq(
       'invariant',
       field('predicate', $._expression),
+      optional(seq('where', field('bound', $.where_predicate))),
     ),
 
     // `for x in 0..n { .. }`, maybe with a label, and maybe naming the
@@ -1009,7 +1020,7 @@ module.exports = grammar({
       'in',
       optional(seq(field('iterator', $.identifier), ':')),
       field('value', $._expression),
-      optional($.invariant_clause),
+      repeat($.invariant_clause),
       field('body', $.block),
     ),
 
@@ -1024,7 +1035,7 @@ module.exports = grammar({
     loop_expression: $ => seq(
       optional(seq(field('label', $.lifetime), ':')),
       'loop',
-      optional($.invariant_clause),
+      repeat($.invariant_clause),
       field('body', $.block),
     ),
 

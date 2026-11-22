@@ -314,6 +314,10 @@ impl Checker {
                 .filter(|e| !self.scenario_atoms.contains(e))
                 .cloned()
                 .collect();
+            // Nor one it may not have here, though its signature has it
+            // (`Checker::barred`): the walk must find it can't happen.
+            let barred = self.barred(&symbol);
+            w.always.retain(|e| !barred.iter().any(|(a, _)| a == e));
         }
         // Its own effects' conditions, of what it's given: what a caller
         // asks of its arguments (lemma C6 of docs/90-conditional-effects.md).

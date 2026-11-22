@@ -236,7 +236,7 @@ impl Checker {
     /// its trait's method says `unless` a bound that the impl's type may
     /// meet, as a call through the trait there has none (lemma B6 of
     /// docs/92-where-a-bound-holds.md).
-    fn barred(&self, symbol: &str) -> Vec<(Type, String)> {
+    pub(super) fn barred(&self, symbol: &str) -> Vec<(Type, String)> {
         let mut out = Vec::new();
         for g in self.unless.get(symbol).into_iter().flatten() {
             if self.pred_holds(&g.pred) {

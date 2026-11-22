@@ -91,7 +91,7 @@
 ; Keywords
 
 "fn" @keyword.function
-["trait" "sealed" "impl" "for" "mod" "use" "where" "ensures" "invariant" "law" "with" "effect" "unsized" "const" "static" "extern" "unsafe"] @keyword
+["trait" "sealed" "impl" "for" "mod" "use" "where" "ensures" "invariant" "unless" "law" "with" "effect" "unsized" "const" "static" "extern" "unsafe"] @keyword
 (effect) @type.builtin
 (visibility_modifier) @keyword.storage.modifier
 "let" @keyword
