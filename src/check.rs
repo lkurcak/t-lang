@@ -267,6 +267,35 @@ pub fn check_typed(prog: &mut Program, warnings: &mut Vec<Warning>) -> (Info, Re
     check_with(prog, warnings, false)
 }
 
+/// A copy of what checking the libraries left (`checker`, their `full` or
+/// their `typed`), for checking a program to go on from.
+///
+/// From the one behind the lock if no other thread holds it, as a process
+/// that checks on one thread always finds it. Else from a copy this thread
+/// keeps from then on, so threads checking many programs at once, as the
+/// compiler's tests do, wait for each other once each and not at every
+/// program. Nothing writes to the one behind the lock, so a copy of it
+/// never falls behind.
+fn start(checker: &'static std::sync::Mutex<Checker>, full: bool) -> Checker {
+    thread_local! {
+        static COPIES: [std::cell::OnceCell<Checker>; 2] =
+            const { [std::cell::OnceCell::new(), std::cell::OnceCell::new()] };
+    }
+    COPIES.with(|copies| {
+        let copy = &copies[usize::from(full)];
+        if let Some(cx) = copy.get() {
+            return cx.clone();
+        }
+        match checker.try_lock() {
+            Ok(cx) => cx.clone(),
+            Err(std::sync::TryLockError::WouldBlock) => copy
+                .get_or_init(|| checker.lock().expect("never poisoned").clone())
+                .clone(),
+            Err(std::sync::TryLockError::Poisoned(_)) => panic!("never poisoned"),
+        }
+    })
+}
+
 /// `check`, or (not `full`) `check_typed`.
 fn check_with(
     prog: &mut Program,
@@ -278,7 +307,7 @@ fn check_with(
         true => libraries.full(),
         false => libraries.typed(),
     };
-    let mut cx = checker.lock().expect("never poisoned").clone();
+    let mut cx = start(checker, full);
     let packages = match prog.packages.is_empty() {
         // A program put together by hand, not by `load`.
         true => vec![(ROOT, libraries.prog.counts())],
