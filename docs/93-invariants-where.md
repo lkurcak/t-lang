@@ -35,7 +35,8 @@ impl<I: Iterator> Counted<I> {
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with {} {
     let mut out = os.stdout;
-    let mut c = Counted::new([5u8, 6, 7].iter());
+    let a = [5u8, 6, 7];
+    let mut c = Counted::new(a.iter());
     let _first = c.step();
     if let Some((i, x)) = c.step() {
         out.line(&f"{i} {x}")?; // expect: 1 6

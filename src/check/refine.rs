@@ -387,7 +387,11 @@ pub(super) struct Translated {
 }
 
 /// The refinements of a struct's fields, by the struct's symbol
-/// (`Checker::field_refined`). They're kept by every value of it.
+/// (`Checker::field_refined`). They're kept by every value of it: but one
+/// that hangs on a bound (`guards`), only by a value at types that meet
+/// it. The walk reads them through `Walk::refined_fields`, which says
+/// which a value has where the walk is; nothing else may read `refs`
+/// to assume or to skip a proof.
 #[derive(Debug, Clone)]
 pub(super) struct RefinedFields {
     /// The struct's name.
@@ -736,12 +740,15 @@ impl Checker {
     }
 
     /// Which parameters of function `symbol` are call-scoped `&mut`s
-    /// (`call_scoped`); none, if it isn't one the checker knows.
+    /// (`call_scoped`); none, if it isn't one the checker knows. A trait's
+    /// method's are what its signature says, as every impl's method's has
+    /// the same types, lifetimes and lifetime bounds (`same_signature`):
+    /// whichever runs, the reference can't outlive the call (lemma I7 of
+    /// docs/93-invariants-where.md).
     pub(super) fn scoped_params(&self, symbol: &str) -> Vec<bool> {
         if let Some(sig) = self.refined.get(symbol) {
             return sig.scoped.clone();
         }
-        // A trait's method's too, which every impl's has the signature of.
         let Some(scheme) = self.callee_scheme(symbol) else {
             return Vec::new();
         };
@@ -1670,6 +1677,18 @@ impl Checker {
         Ok(())
     }
 
+    /// `field_refinements`, once every impl is collected, with the
+    /// struct's own bounds in scope (`pending_refinements`): they hold of
+    /// every type it's used at, so a field of a type parameter has its
+    /// traits' measures.
+    ///
+    /// A field's own refinement may end `where I: Trait`, of a type
+    /// parameter of the struct or an associated type of one: then it's
+    /// checked as a predicate where that holds too, and kept with the
+    /// bound (`RefinedFields::guards`). It's all the field's type says
+    /// then. Its trait is seen as far as the field is, as any name in a
+    /// field's type is: whoever can write the field must keep it where
+    /// the bound holds (lemma I3 of docs/93-invariants-where.md).
     fn fields_now(&mut self, s: &StructDecl, symbol: &str) -> Result<(), Error> {
         let ty = Type::Adt(symbol.to_string(), Vec::new(), Vec::new());
         let types: Vec<Type> = match self.adts.get(symbol).map(|d| &d.kind) {
@@ -3550,6 +3569,18 @@ impl Checker {
             };
             let ask = ask.clone();
             *self.field_asks.borrow_mut() = asks;
+            // Each is of a type the body has, so they run out; but a body
+            // isn't walked without end on a bug.
+            if done.len() >= 32 {
+                self.proof_errors.push(Error::ty(
+                    f.name.span,
+                    format!(
+                        "`{}` has `{}` at too many types whose bounds its refinement hangs on to check each",
+                        f.name.name, ask.name
+                    ),
+                ));
+                return;
+            }
             done.push(ask.pred.clone());
             self.adts.proj.env.push(ask.pred.clone());
             let walked = self.walk_mir(f);

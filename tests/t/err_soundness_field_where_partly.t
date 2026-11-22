@@ -35,9 +35,7 @@ struct Counted<I> {
 fn late<J: Iterator>(iter: core::iter::Skip<J>) -> Counted<core::iter::Skip<J>>
 where
     J::Item: Discard,
-{
-    Counted { iter, next: greatest::<usize>() }
-}
+{ Counted { iter, next: greatest::<usize>() } }
 
 fn main() {}
 // error: where `Skip<J>: BoundedIterator`, which the refinement of field `next` of `Counted` hangs on
