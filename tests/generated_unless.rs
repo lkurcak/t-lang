@@ -477,3 +477,160 @@ fn overrides_by_header() {
         failures.join("\n\n")
     );
 }
+
+/// A way a site in `h`'s body may panic without saying `panic`: through an
+/// associated effect that a bound says is within `{panic}`. `params` and
+/// `args` are `h`'s own, beside `T`'s or `Self`'s; `values`, what a call
+/// gives them; `own`, the associated effect `h` may say for itself.
+struct Route {
+    name: &'static str,
+    params: &'static str,
+    args: &'static str,
+    values: &'static str,
+    body: &'static str,
+    own: Option<&'static str>,
+}
+
+const ROUTES: [Route; 5] = [
+    Route {
+        name: "a parameter's associated effect, bounded",
+        params: "I: Iterator<Item = u64, e = {panic}> + Discard",
+        args: "mut it: I",
+        values: "Down { n: 0 }",
+        body: "let _v = it.next(); it.discard(); 1",
+        own: Some("I::e"),
+    },
+    Route {
+        name: "one bounded by another's",
+        params: "J: Iterator<Item = u64, e = {panic}> + Discard, \
+                 I: Iterator<Item = u64, e = J::e> + Discard",
+        args: "j: J, mut it: I",
+        values: "Down { n: 0 }, Down { n: 0 }",
+        body: "j.discard(); let _v = it.next(); it.discard(); 1",
+        own: Some("I::e"),
+    },
+    Route {
+        name: "an opaque type's, bounded",
+        params: "",
+        args: "",
+        values: "",
+        body: "let mut it = down(); let _v = it.next(); it.discard(); 1",
+        own: None,
+    },
+    Route {
+        name: "an opaque type's, bounded by a parameter's",
+        params: "J: Iterator<Item = u64, e = {panic}> + Discard",
+        args: "j: J",
+        values: "Down { n: 0 }",
+        body: "let mut it = wrap(j); let _v = it.next(); it.discard(); 1",
+        own: Some("J::e"),
+    },
+    Route {
+        name: "a type's own",
+        params: "",
+        args: "",
+        values: "",
+        body: "let mut it = Down { n: 0 }; let _v = it.next(); it.discard(); 1",
+        own: None,
+    },
+];
+
+/// What every route's program has: an iterator whose `next` panics, and
+/// opaque ones of it.
+const ROUTE_ITEMS: &str = r#"#[derive(Discard)]
+struct Down { n: u64 }
+
+impl Iterator for Down {
+    type Item = u64;
+    effect e = panic;
+
+    fn next(&mut self) -> Option<u64> with panic { panic("down") }
+}
+
+fn down() -> impl Iterator<Item = u64, e = {panic}> + Discard { Down { n: 0 } }
+
+fn wrap<J: Iterator<Item = u64, e = {panic}> + Discard>(j: J) -> impl Iterator<Item = u64, e = J::e> + Discard { j }
+"#;
+
+/// `h` taking the route `r`, saying `with says`, provided as `p` says, and
+/// a `main` calling it of `Lo`, which meets the bound, saying `main_says`.
+fn routed(r: &Route, p: Provider, says: &str, main_says: &str) -> String {
+    let comma = |s: &str| match s {
+        "" => String::new(),
+        s => format!(", {s}"),
+    };
+    let (params, args) = (comma(r.params), comma(r.args));
+    let own = match r.params {
+        "" => String::new(),
+        ps => format!("<{ps}>"),
+    };
+    match p {
+        Provider::Free => format!(
+            "fn h<T: Val{params}>(x: &T{args}) -> u8 with {says} {{ {} }}\n\n\
+             fn main() with {main_says} {{\n    let _v = h(&Lo {{ n: 0 }}{});\n}}",
+            r.body,
+            comma(r.values),
+        ),
+        Provider::Inherent => format!(
+            "#[derive(Discard where T: Discard)]\nstruct W<T> {{ x: T }}\n\nimpl<T: Val> W<T> {{\n    \
+             fn h{own}(&self{args}) -> u8 with {says} {{ {} }}\n}}\n\n\
+             fn main() with {main_says} {{\n    let w = W {{ x: Lo {{ n: 0 }} }};\n    \
+             let _v = w.h({});\n}}",
+            r.body, r.values,
+        ),
+        _ => format!(
+            "trait H: Val {{\n    fn h{own}(&self{args}) -> u8 with {} {{ {} }}\n}}\n\n\
+             impl H for Lo {{}}\n\n\
+             fn main() with {main_says} {{\n    let _v = (Lo {{ n: 0 }}).h({});\n}}",
+            says.replace("T: Low", "Self: Low"),
+            r.body,
+            r.values,
+        ),
+    }
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn sites_through_associated_effects() {
+    let mut failures = Vec::new();
+    let mut count = 0;
+    for r in &ROUTES {
+        for p in [Provider::Free, Provider::Inherent, Provider::Default] {
+            // Breaking what `h` says, under the bound; keeping it by saying
+            // `panic` always; and by saying the associated effect itself,
+            // which `h` has whatever the bound, where it can be said.
+            let mut cases = vec![
+                (false, "panic unless T: Low".to_string(), "{}"),
+                (true, "panic".to_string(), "panic"),
+            ];
+            if let Some(own) = r.own {
+                cases.push((true, format!("{{{own}, panic unless T: Low}}"), "panic"));
+            }
+            for (honest, says, main_says) in cases {
+                count += 1;
+                let src = format!(
+                    "{PRELUDE}\n{ROUTE_ITEMS}\n{}\n",
+                    routed(r, p, &says, main_says)
+                );
+                let got = verdict(&src);
+                // Accepted, the call panics: as `main` says it may.
+                let ok = match (honest, &got) {
+                    (false, Err(m)) => !m.starts_with("accepted"),
+                    (true, Err(m)) => m.starts_with("accepted, but it failed"),
+                    _ => false,
+                };
+                if !ok {
+                    let what = format!("{}, {p:?}, saying `with {says}`", r.name);
+                    failures.push(format!("{what}: {got:?}\n{src}"));
+                }
+            }
+        }
+    }
+    assert!(count >= 39, "only {count} programs");
+    assert!(
+        failures.is_empty(),
+        "{} of {count} failed:\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}

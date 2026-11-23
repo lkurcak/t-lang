@@ -837,6 +837,11 @@ impl Checker {
         // docs/92-where-a-bound-holds.md). A closure's effects are what
         // they are without the bound, and a function's whose effects are
         // still being inferred aren't known: either has it, for this.
+        //
+        // "Has it" is what the walk without the bound asks, `missing_effects`,
+        // against what the function says but the effect: an associated
+        // effect a bound says is within `{panic}`, or an opaque type's, has
+        // it, though it isn't written `panic` (a hole until 0.106.2).
         for sc in std::mem::take(&mut self.scenarios) {
             self.adts.proj.env.push(sc.guard.pred.clone());
             let mut left = None;
@@ -845,6 +850,9 @@ impl Checker {
                     continue;
                 }
                 let mut effects = self.solved(&s.effects);
+                if s.unsafe_block.is_some() {
+                    effects = without_unsafe(&effects);
+                }
                 if let Some(gone) = s.at.or(s.node).and_then(|n| sc.excused.get(&n)) {
                     effects = Type::effects(
                         (effects.effect_items().iter())
@@ -853,7 +861,13 @@ impl Checker {
                     );
                 }
                 let effects = self.unguarded(s, effects);
-                if effects.effect_items().contains(&sc.guard.atom) || has_placeholder(&effects) {
+                let here = Type::effects(
+                    (declared.effect_items().iter().chain(&s.covered))
+                        .filter(|e| **e != sc.guard.atom)
+                        .cloned(),
+                );
+                let missing = self.missing_effects(&effects, &here, &self.effect_bounds);
+                if !missing.is_empty() || has_placeholder(&effects) {
                     left = Some(s);
                     break;
                 }
