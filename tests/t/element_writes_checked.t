@@ -9,7 +9,7 @@ fn small(r: &mut { t: usize | t < 5 }) { *r = 4 }
 
 fn apply<T, F: FnMut(&mut T) + Discard>(r: &mut T, mut f: F) { f(r) }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let mut l: List<{ t: usize | t < 5 }> = List::new();
     l.push(1);

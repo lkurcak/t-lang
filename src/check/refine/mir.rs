@@ -308,7 +308,13 @@ impl Checker {
             && let Some(Type::Fn(fs)) = self.scheme_of(&symbol).map(|s| &s.ty)
         {
             let conds = sig.as_ref().map_or(&[][..], |s| &s.conds);
-            w.always = (self.solved(&fs.effects).effect_items().iter())
+            // With what each associated effect it says may be, where its
+            // binding hangs on a bound (lemma A4 of
+            // docs/96-associated-effects-unless.md).
+            let upper = (self.adts.proj)
+                .guarded_set(&self.solved(&fs.effects), &[])
+                .upper;
+            w.always = (upper.iter())
                 .filter(|e| matches!(e, Type::Panic | Type::Alloc | Type::Global))
                 .filter(|e| !conds.iter().any(|c| c.atom == **e))
                 .filter(|e| !self.scenario_atoms.contains(e))

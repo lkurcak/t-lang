@@ -395,6 +395,36 @@ pub struct MethodDef {
     pub effects_at: Option<(Span, Vec<String>)>,
 }
 
+/// How many projections deep `Projections::guarded_set` takes a set apart.
+const GUARDED_DEPTH: usize = 8;
+
+/// A set of effects as each copy where it's said has it
+/// (`Projections::guarded_set`).
+#[derive(Debug, Clone, Default)]
+pub struct GuardedSet {
+    /// What it may have at some copy: each of its items, and what each
+    /// projection in it that hangs on a bound may be.
+    pub upper: Vec<Type>,
+    /// The atoms it has at every copy.
+    pub always: Vec<Type>,
+    /// Each atom it has only where some of these bounds don't hold: a copy
+    /// whose types meet all of them hasn't.
+    pub guarded: Vec<(Type, Vec<Pred>)>,
+}
+
+/// An atom of an impl's associated effect that it has only where a bound
+/// doesn't hold: `panic unless I: BoundedIterator` in `effect e = {I::e,
+/// panic unless I: BoundedIterator}` (docs/96-associated-effects-unless.md).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AssocUnless {
+    /// The associated effect's name.
+    pub name: String,
+    /// `panic`, `alloc` or `global`.
+    pub atom: Type,
+    /// The bound, on the impl's parameters.
+    pub pred: Pred,
+}
+
 /// An impl, of a trait or inherent.
 #[derive(Debug, Clone)]
 pub struct ImplDef {
@@ -416,8 +446,14 @@ pub struct ImplDef {
     /// {})` (see `Scheme::effect_bounds`).
     pub effect_bounds: Vec<(Type, Type)>,
     /// What it says each of the trait's associated types is, by name, as
-    /// written, mentioning `params` and `lifetimes`.
+    /// written, mentioning `params` and `lifetimes`. An associated effect
+    /// with an atom it has `unless` a bound holds has that atom here, as
+    /// it does where the bound doesn't: `assoc_unless` says which.
     pub assoc: Vec<(String, Type)>,
+    /// The atoms of its associated effects it has only where a bound
+    /// doesn't hold, `effect e = {I::e, panic unless I: BoundedIterator}`
+    /// (docs/96-associated-effects-unless.md): `project` decides each.
+    pub assoc_unless: Vec<AssocUnless>,
     /// The methods it defines, by name, with their symbols.
     pub methods: Vec<(String, String)>,
     /// Made by a `#[derive(..)]`, rather than written?
@@ -443,10 +479,21 @@ impl ImplDef {
     /// every type arguments that meet them, coherence makes it the one impl
     /// of the trait for its type, so `normalise` after monomorphisation
     /// gives the same type.
+    ///
+    /// Not an associated effect with an atom it has `unless` a bound holds:
+    /// that's its binding only where the bound is decided, which `project`
+    /// does. Inside the impl the bound may hold of some copies and not
+    /// others, so there `<Self as Tr>::e` stays itself (lemma A3 of
+    /// docs/96-associated-effects-unless.md): were it its binding with
+    /// every atom, `with Self::e` would let a body panic in a copy whose
+    /// `Self::e` has no `panic`.
     pub fn local_eqs(&self) -> Vec<(Type, Type)> {
         let mut eqs = self.eqs.clone();
         if let Some(tr) = &self.trait_name {
             for (name, rhs) in &self.assoc {
+                if self.assoc_unless.iter().any(|g| g.name == *name) {
+                    continue;
+                }
                 let lhs = Type::Proj(Box::new(self.self_ty.clone()), tr.clone(), name.clone());
                 eqs.push((lhs, rhs.clone()));
             }
@@ -1417,6 +1464,111 @@ impl Projections {
         normalise(&self.impls, &self.anon(), &self.local, t)
     }
 
+    /// What projection `t` is at most, by the binding of the impl that's
+    /// for its type, with every atom it has `unless` a bound holds
+    /// (`traits::upper`), and the rest worked out: for a projection that
+    /// stays itself where such a bound isn't decided, in a set that must
+    /// be within another (lemma A2 of docs/96-associated-effects-unless.md).
+    pub fn upper(&self, t: &Type) -> Option<Type> {
+        let Type::Proj(s, tr, name) = t else {
+            return None;
+        };
+        let u = upper(&self.impls, &self.anon(), &self.local, s, tr, name)?;
+        Some(self.normalise(&u))
+    }
+
+    /// Effects `set`, normalised, as each copy where it's said has it: its
+    /// items, with each projection in it that stays itself because an atom
+    /// of its binding hangs on a bound that isn't decided (`guarded`) taken
+    /// apart into that binding; and each atom with the bounds it hangs on,
+    /// those `own` says the set has `unless` one holds among them, a
+    /// function's own `unless` (docs/96-associated-effects-unless.md).
+    ///
+    /// Of each copy, an atom is in the set unless every bound it hangs on
+    /// holds there: it's there by each place it's from, a projection's
+    /// binding or the set itself, unless that place's bound holds (lemma
+    /// A4). So a body that has only `upper` where some bound doesn't hold,
+    /// and no atom where all of its do, has only what the set is at every
+    /// copy.
+    pub fn guarded_set(&self, set: &Type, own: &[(Type, Pred)]) -> GuardedSet {
+        let mut out = GuardedSet::default();
+        let mut sources: Vec<(Type, Option<Pred>)> = Vec::new();
+        let set = self.normalise(set);
+        self.guarded_items(set.effect_items(), own, &mut out.upper, &mut sources, 0);
+        for (atom, _) in &sources {
+            if out.always.contains(atom) || out.guarded.iter().any(|(a, _)| a == atom) {
+                continue;
+            }
+            let mut preds = Vec::new();
+            let mut always = false;
+            for (_, p) in sources.iter().filter(|(a, _)| a == atom) {
+                match p {
+                    None => always = true,
+                    Some(p) if !preds.contains(p) => preds.push(p.clone()),
+                    Some(_) => {}
+                }
+            }
+            match always {
+                true => out.always.push(atom.clone()),
+                false => out.guarded.push((atom.clone(), preds)),
+            }
+        }
+        out
+    }
+
+    /// `guarded_set`'s walk of `items`, `depth` projections down.
+    fn guarded_items(
+        &self,
+        items: &[Type],
+        own: &[(Type, Pred)],
+        upper: &mut Vec<Type>,
+        sources: &mut Vec<(Type, Option<Pred>)>,
+        depth: usize,
+    ) {
+        for e in items {
+            if !upper.contains(e) {
+                upper.push(e.clone());
+            }
+            match e {
+                Type::Panic | Type::Alloc | Type::Global | Type::Unsafe => {
+                    let p = own.iter().find(|(a, _)| a == e).map(|(_, p)| p.clone());
+                    sources.push((e.clone(), p));
+                }
+                // How deep a set can be taken apart is a precision limit:
+                // past it, a projection is only itself, which as what a
+                // function says allows less, and as what's said of a site,
+                // nothing is taken from it.
+                Type::Proj(base, tr, name) if depth < GUARDED_DEPTH => {
+                    let found = guarded(&self.impls, &self.anon(), &self.local, base, tr, name);
+                    let Some((binding, open)) = found else {
+                        continue;
+                    };
+                    // The binding's own atoms, before the rest is worked
+                    // out: an associated effect in it that's `panic` has
+                    // that always, whatever the binding's `panic` hangs on.
+                    for x in binding.effect_items() {
+                        match open.iter().find(|(a, _)| a == x) {
+                            Some((_, p)) => {
+                                if !upper.contains(x) {
+                                    upper.push(x.clone());
+                                }
+                                sources.push((x.clone(), Some(p.clone())));
+                            }
+                            None => self.guarded_items(
+                                Type::effects([self.normalise(x)]).effect_items(),
+                                &[],
+                                upper,
+                                sources,
+                                depth + 1,
+                            ),
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
     /// `t`, with every opaque type in it replaced by the type it stands
     /// for, as far down as that goes, and then normalised: for
     /// monomorphisation, once every function's body is checked. It ends,
@@ -1464,6 +1616,39 @@ pub fn project(
     tr: &str,
     name: &str,
 ) -> Option<Type> {
+    projected(impls, anon, local, s, tr, name, true)
+}
+
+/// What `<s as tr>::name` is at most, by the impl of `impls` that's for
+/// `s`, if one is: its binding with every atom it has `unless` a bound
+/// holds, decided or not. That's more than the projection is only where
+/// such a bound holds; so it's what the projection may be replaced by in
+/// a set within another, never in the bigger one (lemma A2 of
+/// docs/96-associated-effects-unless.md).
+pub fn upper(
+    impls: &Impls,
+    anon: &Anon,
+    local: &[(Type, Type)],
+    s: &Type,
+    tr: &str,
+    name: &str,
+) -> Option<Type> {
+    projected(impls, anon, local, s, tr, name, false)
+}
+
+/// What `<s as tr>::name` is by the impl of `impls` that's for `s`, if one
+/// is, with every atom of it that it has `unless` a bound holds, and those
+/// atoms, each with its bound, at `s`: what `project`, `upper` and
+/// `guarded` decide of.
+#[allow(clippy::type_complexity)]
+fn binding(
+    impls: &Impls,
+    anon: &Anon,
+    local: &[(Type, Type)],
+    s: &Type,
+    tr: &str,
+    name: &str,
+) -> Option<(Type, Vec<(Type, Pred)>)> {
     if let Type::Var(_) = s {
         return None;
     }
@@ -1479,24 +1664,25 @@ pub fn project(
             .iter()
             .find(|(lhs, _)| sub.apply(lhs).erased() == proj)
         {
-            return Some(sub.apply(rhs));
+            return Some((sub.apply(rhs), Vec::new()));
         }
     }
     // What a call of a function, a closure, or a reference to one takes
     // and gives: its signature, with the closure's regions where its
     // lifetimes are.
     if name == SIG {
-        return match s {
+        let sig = match s {
             Type::Fn(_) => Some(s.clone()),
             Type::Adt(symbol, ..) => Some(anon.closures.get(symbol)?.sig_at(s)),
             Type::Ref(_, _, inner) => match &**inner {
                 Type::Param(_, _) | Type::Var(_) | Type::Proj(..) => {
                     Some(Type::Proj(inner.clone(), FN_ONCE.into(), SIG.into()))
                 }
-                inner => project(impls, anon, local, inner, tr, name),
+                inner => return binding(impls, anon, local, inner, tr, name),
             },
             _ => None,
         };
+        return sig.map(|t| (t, Vec::new()));
     }
     // A type parameter, a projection or an opaque type: if a bound says it
     // implements `tr`, the projection is rigid (lemma R2); or else it's a
@@ -1532,7 +1718,107 @@ pub fn project(
         .map(|l| regions.get(l).cloned().unwrap_or(Region::Erased))
         .collect();
     let s = Subst::new(&d.params, &args).with_regions(&d.lifetimes, &regions);
-    Some(s.apply(rhs))
+    let guards = (d.assoc_unless.iter())
+        .filter(|g| g.name == name)
+        .map(|g| {
+            // Of an associated type, `I::Item`, what it is there.
+            let pred = Pred {
+                ty: normalise(impls, anon, local, &s.apply(&g.pred.ty)),
+                trait_name: g.pred.trait_name.clone(),
+            };
+            (g.atom.clone(), pred)
+        })
+        .collect();
+    Some((s.apply(rhs), guards))
+}
+
+/// `project`, or `upper` if not `exact`.
+fn projected(
+    impls: &Impls,
+    anon: &Anon,
+    local: &[(Type, Type)],
+    s: &Type,
+    tr: &str,
+    name: &str,
+    exact: bool,
+) -> Option<Type> {
+    let (bound, guards) = binding(impls, anon, local, s, tr, name)?;
+    if !exact {
+        return Some(bound);
+    }
+    // Each atom it has `unless` a bound holds, where that's decided: out
+    // where it holds, in where it can't. Where it may or may not, of some
+    // copies, the projection stays itself (lemma A1 of
+    // docs/96-associated-effects-unless.md).
+    let mut out = bound;
+    for (atom, pred) in guards {
+        if decided(impls, anon, local, &pred.ty, &pred.trait_name)? {
+            out = without(&out, &atom);
+        }
+    }
+    Some(out)
+}
+
+/// What `<s as tr>::name` is where it stays itself because an atom of its
+/// impl's binding hangs on a bound that isn't decided there: the binding,
+/// without each atom whose bound holds, and the atoms whose bounds may or
+/// may not, each with its bound. Of every copy, it's the binding with
+/// those of the atoms whose bounds don't hold there (lemma A2 of
+/// docs/96-associated-effects-unless.md). `None` if it isn't such a one.
+#[allow(clippy::type_complexity)]
+pub fn guarded(
+    impls: &Impls,
+    anon: &Anon,
+    local: &[(Type, Type)],
+    s: &Type,
+    tr: &str,
+    name: &str,
+) -> Option<(Type, Vec<(Type, Pred)>)> {
+    let (bound, guards) = binding(impls, anon, local, s, tr, name)?;
+    let mut out = bound;
+    let mut open = Vec::new();
+    for (atom, pred) in guards {
+        match decided(impls, anon, local, &pred.ty, &pred.trait_name) {
+            Some(true) => out = without(&out, &atom),
+            Some(false) => {}
+            None => open.push((atom, pred)),
+        }
+    }
+    match open.is_empty() {
+        true => None,
+        false => Some((out, open)),
+    }
+}
+
+/// Effects `set` without `atom`.
+fn without(set: &Type, atom: &Type) -> Type {
+    Type::effects(set.effect_items().iter().filter(|e| *e != atom).cloned())
+}
+
+/// Whether `ty: tr` holds of every copy where it's asked (`true`), or of
+/// none (`false`), if that's decided there: proved from the bounds in scope
+/// (lemma B2 of docs/92-where-a-bound-holds.md); or refuted, no impl that
+/// could prove it of any instance of `ty` being there to find (lemma N1 of
+/// docs/73-for-over-collections.md), which of a type with no parameter in
+/// it is that none does. `None` where some copies may meet it and others
+/// not, or it's of a type not worked out yet.
+fn decided(
+    impls: &Impls,
+    anon: &Anon,
+    local: &[(Type, Type)],
+    ty: &Type,
+    tr: &str,
+) -> Option<bool> {
+    if has_var(ty) {
+        return None;
+    }
+    if implements_at(impls, anon, local, ty, tr, 0).is_ok() {
+        return Some(true);
+    }
+    if refuted(impls, anon.sealed, &Knowable::Closed, ty, tr, 0) {
+        return Some(false);
+    }
+    None
 }
 
 /// The region `t` has where `pat`, which `t` matches, has each of

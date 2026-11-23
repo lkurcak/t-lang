@@ -41,6 +41,15 @@
 //! conditional effects only where a proof says the condition held at the
 //! call (`Site::covered`); every other site is checked against the
 //! effects the function has always.
+//!
+//! Since step 96 an impl's associated effect may have an atom only where a
+//! bound doesn't hold (docs/96-associated-effects-unless.md). Invariant:
+//! where the bound isn't decided, the projection stays itself, and is
+//! replaced by its binding with every atom (`Checker::effect_bound`,
+//! `Projections::upper`) only in the smaller of two sets, never the bigger;
+//! a function that says one is checked as `Projections::guarded_set` takes
+//! it apart: allowing every atom, and again under the bounds of each atom
+//! together, allowing none of it (`Checker::scenario_guards`).
 
 use super::Checker;
 use super::infer::has_placeholder;
@@ -603,8 +612,18 @@ impl Checker {
         let message = match &d.why {
             Why::Closure(what) => format!("{what} {does}, but this closure can't"),
             Why::Bound { who, sig } => {
+                // Of an associated effect that's only itself there, what it
+                // has isn't known, not that it's none.
+                let rigid = match sig {
+                    Type::Fn(f) => (f.effects.effect_items().iter())
+                        .any(|e| matches!(e, Type::Proj(..) | Type::Param(..))),
+                    _ => false,
+                };
                 let sig = shown(sig);
-                let cant = cant(&missing);
+                let cant = match rigid {
+                    true => format!("may have no `{}`", effects_text(&missing)),
+                    false => cant(&missing),
+                };
                 format!(
                     "{subject} {does}, but `{who}` needs calls of it to fit `{sig}`, which {cant}"
                 )
@@ -691,6 +710,13 @@ impl Checker {
                     .collect()
             })
             .unwrap_or_default();
+        // What it says, with each associated effect in it whose binding
+        // hangs on a bound here taken as what it may be: the walks under
+        // the bounds see to it that no copy has more than it says there
+        // (lemma A4 of docs/96-associated-effects-unless.md).
+        let upper = self.solved(declared);
+        let upper = Type::effects(self.adts.proj.guarded_set(&upper, &[]).upper);
+        let declared = &upper;
         // Nor what it says `unless` a bound that holds here, or that its
         // trait's method does, of an impl's type that may meet it.
         let barred = self.barred(&symbol);
@@ -730,6 +756,7 @@ impl Checker {
             let missing = self.missing_effects(&effects, declared, &self.effect_bounds);
             used.extend(effects.effect_items().iter().cloned());
             used.extend(self.within_bounds(&effects, &self.effect_bounds));
+            used.extend(self.adts.proj.guarded_set(&effects, &[]).upper);
             let Some(first) = missing.first() else {
                 continue;
             };
@@ -843,7 +870,8 @@ impl Checker {
         // effect a bound says is within `{panic}`, or an opaque type's, has
         // it, though it isn't written `panic` (a hole until 0.106.2).
         for sc in std::mem::take(&mut self.scenarios) {
-            self.adts.proj.env.push(sc.guard.pred.clone());
+            let n = self.adts.proj.env.len();
+            self.adts.proj.env.extend(sc.guard.preds.iter().cloned());
             let mut left = None;
             for s in &sites {
                 if s.node.is_some_and(|n| sc.proved.contains(&n)) {
@@ -872,16 +900,15 @@ impl Checker {
                     break;
                 }
             }
-            self.adts.proj.env.pop();
+            self.adts.proj.env.truncate(n);
             if let Some(s) = left {
                 let atom = Type::effects([sc.guard.atom.clone()]);
                 let message = format!(
-                    "{} where `{}`, but `{}` says `with {} unless {}`",
+                    "{} where `{}`, but `{}` says {}",
                     says(&s.what, &atom),
                     sc.guard.text,
                     f.name.name,
-                    effects_text(&atom),
-                    sc.guard.text,
+                    sc.guard.said,
                 );
                 let err = Error::ty(s.span, message);
                 return Err(if sc.guard.atom == Type::Panic {
@@ -916,9 +943,15 @@ impl Checker {
             .iter()
             .map(|i| self.written_effect(i))
             .collect();
+        // An associated effect whose binding hangs on a bound here is used
+        // by a site that has what it may be (lemma A4 of
+        // docs/96-associated-effects-unless.md).
         let unused: Vec<bool> = resolved
             .iter()
-            .map(|r| !r.is_no_effects() && !r.effect_items().iter().any(|e| used.contains(e)))
+            .map(|r| {
+                let upper = self.adts.proj.guarded_set(r, &[]).upper;
+                !r.is_no_effects() && !upper.iter().any(|e| used.contains(e))
+            })
             .collect();
         for (k, item) in written.items.iter().enumerate() {
             if !unused[k] {
@@ -1059,8 +1092,12 @@ impl Checker {
         if let Some((_, r)) = bounds.iter().find(|(l, _)| self.solved(l) == *item) {
             return Some(self.solved(r));
         }
+        // A projection on a type whose impl is found, that stays itself as
+        // an atom of its binding hangs on a bound not decided here: that
+        // binding, with every such atom (lemma A2 of
+        // docs/96-associated-effects-unless.md).
         let Type::Opaque(s, _, args) = &**base else {
-            return None;
+            return self.adts.proj.upper(item).map(|u| self.solved(&u));
         };
         let def = self.traits.opaques.get(s)?;
         let (_, r) = (def.effect_bounds.iter())
@@ -1184,7 +1221,7 @@ pub(crate) fn written_at(f: &FnDecl) -> (Span, Vec<String>) {
 }
 
 /// `panic`, or `{alloc, panic}`, of effects as written.
-pub(super) fn set_text(items: &[String]) -> String {
+pub(in crate::check) fn set_text(items: &[String]) -> String {
     match items {
         [one] => one.clone(),
         _ => format!("{{{}}}", items.join(", ")),

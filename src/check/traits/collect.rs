@@ -11,6 +11,10 @@ use crate::traits::{AssocDecl, ImplDef, LawDef, MethodDef, Pred, TraitDef};
 use crate::traits::{COPY, DISCARD, FN_ONCE, SEND, SIGNED, SYNC, UNSIGNED};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 
+/// An impl's associated types and effects, by name, and the atoms of its
+/// associated effects that hang on bounds.
+type AssocDefs = (Vec<(String, Type)>, Vec<crate::traits::AssocUnless>);
+
 impl Checker {
     /// Pass 0: the names of the traits, so that anything can mention any
     /// of them.
@@ -751,7 +755,7 @@ impl Checker {
                     ));
                 }
             }
-            let assoc = self.assoc_defs(
+            let (assoc, assoc_unless) = self.assoc_defs(
                 d,
                 trait_name.as_deref(),
                 &self_ty,
@@ -773,6 +777,7 @@ impl Checker {
                 eqs,
                 effect_bounds,
                 assoc,
+                assoc_unless,
                 methods,
                 derived: false,
             });
@@ -964,7 +969,8 @@ impl Checker {
         preds: &[Pred],
         eqs: &[(Type, Type)],
         header: Span,
-    ) -> Result<Vec<(String, Type)>, Error> {
+    ) -> Result<AssocDefs, Error> {
+        let mut unless = Vec::new();
         let Some(tr) = tr else {
             if let Some(e) = d.effects.first() {
                 return Err(Error::ty(
@@ -977,7 +983,7 @@ impl Checker {
                     a.name.span,
                     "only an impl of a trait can have associated types",
                 )),
-                None => Ok(Vec::new()),
+                None => Ok((Vec::new(), unless)),
             };
         };
         let decls = self.traits.traits[tr].assoc.clone();
@@ -1052,8 +1058,10 @@ impl Checker {
             });
             self.adts.proj.local = eqs.to_vec();
             let resolved = self.resolve_effects_with(&e.effects, &with_self, &mut lts);
+            let guards = self.binding_guards(n, &e.effects, &with_self, self_ty);
             self.adts.proj.env.clear();
             self.adts.proj.local.clear();
+            unless.extend(guards?);
             let t =
                 Subst::new(&["Self".to_string()], std::slice::from_ref(self_ty)).apply(&resolved?);
             decided_effects(&t, self_ty, eqs, e.effects.span)?;
@@ -1083,6 +1091,56 @@ impl Checker {
                     names.join(", ")
                 ),
             ));
+        }
+        Ok((out, unless))
+    }
+
+    /// The atoms associated effect `name` of an impl says, in `set`, that
+    /// it has `unless` a bound holds, with the bound on the impl's type
+    /// parameters `params` (and `Self`, its type `self_ty`): `panic`,
+    /// `alloc` or `global`, each said once, of a type parameter or an
+    /// associated type of one, as a function's `unless` is
+    /// (docs/96-associated-effects-unless.md).
+    fn binding_guards(
+        &mut self,
+        name: &str,
+        set: &EffectSet,
+        params: &crate::types::Params,
+        self_ty: &Type,
+    ) -> Result<Vec<crate::traits::AssocUnless>, Error> {
+        let atom_of = |i: &Effect| match &i.kind {
+            EffectKind::Named(n) => match n.name.as_str() {
+                "panic" => Some(Type::Panic),
+                "alloc" => Some(Type::Alloc),
+                "global" => Some(Type::Global),
+                _ => None,
+            },
+            EffectKind::Proj(..) => None,
+        };
+        let mut out = Vec::new();
+        for item in &set.items {
+            let Some(g) = &item.unless else {
+                continue;
+            };
+            let Some(atom) = atom_of(item) else {
+                return Err(Error::ty(
+                    item.span,
+                    "only `panic`, `alloc` and `global` can say `unless`: `unsafe` says what the caller must keep, and an effect parameter or an associated effect is what's given",
+                ));
+            };
+            let said = (set.items.iter()).filter(|i| atom_of(i).as_ref() == Some(&atom));
+            if said.count() > 1 {
+                return Err(Error::ty(
+                    item.span,
+                    format!("`{atom}` is said twice: say it once"),
+                ));
+            }
+            let pred = self.guard_pred_in(g, params, Some(self_ty))?;
+            out.push(crate::traits::AssocUnless {
+                name: name.to_string(),
+                atom,
+                pred,
+            });
         }
         Ok(out)
     }

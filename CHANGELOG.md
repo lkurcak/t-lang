@@ -1,5 +1,36 @@
 # Changelog
 
+## 0.107.0 (2026-11-23)
+
+Step 96: associated effects that hang on a bound. See
+[docs/96-associated-effects-unless.md](docs/96-associated-effects-unless.md).
+
+### Added
+
+- An impl's associated effect can have an effect only where a bound of
+  its type parameters doesn't hold: `effect e = {I::e, panic unless I:
+  BoundedIterator}`. Of types where the bound is decided, the associated
+  effect is worked out with or without it; in code generic in a type
+  that may or may not meet it, it stays itself, at most its binding with
+  every effect.
+- An impl's method of a trait can say `unless`, and has at most what its
+  trait's method has there, as each copy has it.
+- A function that says such an associated effect, `with Self::e` in the
+  impl or `with <Enumerate<I> as Iterator>::e`, is checked again under
+  the bounds it hangs on, where it may not have the effect.
+- A function's `with` can name an associated effect of any type, `<Down
+  as Iterator>::e`, and of a trait from another module, as a bound's
+  could.
+
+### Changed
+
+- `core::iter::Enumerate`'s `next` can't panic of a bounded iterator:
+  `enumerate` of a slice's, an array's or a list's iterator, a `map` or a
+  `filter` of one, has no `panic`.
+- A message for a closure given where calls of it must fit an associated
+  effect that's only itself says the effect may be missing, not that it
+  can't happen.
+
 ## 0.106.2 (2026-11-23)
 
 Step 95: an effect under a bound, asked as everywhere else. See

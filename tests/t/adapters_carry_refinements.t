@@ -3,7 +3,7 @@
 // iterator's values, through the adapter's associated `Item` (docs/63).
 use alloc::list::List;
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let a: [u8; 8] = [10, 11, 12, 13, 14, 15, 16, 17];
     let mut l: List<{ t: usize | t < 8 }> = List::new();

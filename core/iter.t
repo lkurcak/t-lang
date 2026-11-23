@@ -44,7 +44,8 @@ export trait Iterator {
     }
 
     /// Each value with its index, counting from 0: `(0, a)`, `(1, b)`, ..
-    /// Counting past the greatest `usize` panics.
+    /// Counting past the greatest `usize` panics, which one that says how
+    /// many it has at most, a `BoundedIterator`, can't.
     fn enumerate(self) -> Enumerate<Self> { Enumerate { iter: self, next: 0 } }
 
     /// A value of each, in pairs, `(a, x)`, `(b, y)`, .., until either runs
@@ -339,12 +340,14 @@ export struct Enumerate<I> {
     next: { n: usize | n + iter.most() <= greatest::<usize>() where I: BoundedIterator },
 }
 
+/// Counting past the greatest `usize` panics, which it can't of a bounded
+/// iterator: `next` says so.
 impl<I: Iterator> Iterator for Enumerate<I> {
     type Item = (usize, I::Item);
-    effect e = {I::e, panic};
+    effect e = {I::e, panic unless I: BoundedIterator};
 
     #[blame_caller]
-    fn next(&mut self) -> Option<(usize, I::Item)> with {I::e, panic} {
+    fn next(&mut self) -> Option<(usize, I::Item)> with {I::e, panic unless I: BoundedIterator} {
         match self.iter.next() {
             Some(x) => {
                 let i = self.next;

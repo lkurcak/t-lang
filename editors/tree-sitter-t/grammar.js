@@ -306,13 +306,21 @@ module.exports = grammar({
       ';',
     ),
 
-    // `effect e;` in a trait, or `effect e = {I::e, f};` in an impl.
+    // `effect e;` in a trait, or `effect e = {I::e, f};` in an impl, where
+    // an effect may hang on a bound: `{I::e, panic unless I: Bounded}`.
     associated_effect: $ => seq(
       'effect',
       field('name', $.identifier),
-      optional(seq('=', field('effects', $.effect_set))),
+      optional(seq('=', field('effects', $.binding_effects))),
       ';',
     ),
+
+    binding_effects: $ => choice(
+      $._binding_effect,
+      seq('{', commaSep($._binding_effect), '}'),
+    ),
+
+    _binding_effect: $ => choice($._effect, $.guarded_effect),
 
     // `with panic` or `with {alloc, e}`: what a call may do.
     effects: $ => seq('with', $.effect_set),

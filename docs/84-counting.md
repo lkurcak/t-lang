@@ -257,7 +257,9 @@ back (docs/85-values-in-predicates.md).
   say `with panic`. (Step 88: `len` is `ExactSizeIterator`'s, with laws
   of `next` and `next_back`, and `map`, `rev`, `enumerate` and `zip` of
   exact iterators have one, docs/88-iterator-laws.md; `count` and
-  `enumerate` still say `with panic`, and `skip` and `filter` have none.)
+  `enumerate` still say `with panic`, and `skip` and `filter` have none.
+  Neither panics of a bounded iterator since steps 92 and 96,
+  docs/92-where-a-bound-holds.md, docs/96-associated-effects-unless.md.)
 - The iterators of a `str` (`chars`, `split`, `lines`) say nothing of what
   they have left.
 - `mem::replace` still gives back a `T` it says nothing of. It's

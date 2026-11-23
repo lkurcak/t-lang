@@ -344,12 +344,32 @@ pub(in crate::check) struct Unless {
     pub(in crate::check) text: String,
 }
 
+/// An effect a function has only where some bounds don't all hold: by an
+/// `unless` it says, `panic unless T: Small` (docs/92-where-a-bound-holds.md),
+/// or by an associated effect it says, whose binding hangs on bounds where
+/// it's said, `with Self::e` of `effect e = {I::e, panic unless I:
+/// BoundedIterator}` (docs/96-associated-effects-unless.md); its body is
+/// walked again under them all.
+#[derive(Debug, Clone)]
+pub(in crate::check) struct ScenarioGuard {
+    /// `panic`, `alloc` or `global`.
+    pub(in crate::check) atom: Type,
+    /// The bounds, in the terms of the function's scheme.
+    pub(in crate::check) preds: Vec<crate::traits::Pred>,
+    /// The bounds, for messages: `I: BoundedIterator`.
+    pub(in crate::check) text: String,
+    /// What the function says that makes it so, for messages, quoted:
+    /// "`with panic unless T: Small`", or "`with Self::e`, which has no
+    /// `panic` there".
+    pub(in crate::check) said: String,
+}
+
 /// What a walk of a function's body under the bound of one of its
 /// `unless`es found: the operators that can't panic there, and the
 /// effects that can't happen at its calls.
 #[derive(Clone)]
 pub(in crate::check) struct Scenario {
-    pub(in crate::check) guard: Unless,
+    pub(in crate::check) guard: ScenarioGuard,
     pub(in crate::check) proved: HashSet<NodeId>,
     pub(in crate::check) excused: HashMap<NodeId, Vec<Type>>,
 }
@@ -1904,7 +1924,7 @@ impl Checker {
 
     /// `guard_pred`, where type parameters `params` are in scope, and
     /// `Self` is `this`, if it's a type.
-    fn guard_pred_in(
+    pub(in crate::check) fn guard_pred_in(
         &mut self,
         g: &crate::ast::Guard,
         params: &crate::types::Params,
@@ -1930,10 +1950,17 @@ impl Checker {
             }
         }
         if !open(&t) {
+            fn has_param(t: &Type) -> bool {
+                matches!(t, Type::Param(..)) || t.parts().any(has_param)
+            }
+            let why = match has_param(&t) {
+                false => "which either meets it or doesn't",
+                true => "which is only partly one",
+            };
             return Err(Error::ty(
                 g.subject.span,
                 format!(
-                    "a bound here can only be on a type parameter, `Self`, or an associated type of one, not `{t}`, which either meets it or doesn't"
+                    "a bound here can only be on a type parameter, `Self`, or an associated type of one, not `{t}`, {why}"
                 ),
             ));
         }
@@ -1946,8 +1973,7 @@ impl Checker {
 
     /// The effects `f`'s signature says it has only where a bound doesn't
     /// hold, `panic unless T: Trait`; refused where they can't be
-    /// (docs/92-where-a-bound-holds.md): of an impl's method of a trait,
-    /// which has its trait's method's; of a method of a trait whose impls
+    /// (docs/92-where-a-bound-holds.md): of a method of a trait whose impls
     /// may be written for it (`has_glue`), whose bodies nothing walks; of
     /// an intrinsic, an `extern fn` or a const; of anything but `panic`,
     /// `alloc` and `global`; with a condition too; or said twice. A
@@ -1965,13 +1991,11 @@ impl Checker {
                 format!("{what} can't say `unless`: where it has an effect is its own to say"),
             ))
         };
+        // An impl's method of a trait may, as its trait's method has an
+        // effect there that the impl's associated effect has `unless` a
+        // bound holds: `same_signature` checks it says no more (lemma A5
+        // of docs/96-associated-effects-unless.md).
         match kind {
-            SigKind::Impl { .. } => {
-                return Err(Error::ty(
-                    first.span,
-                    "an impl's method of a trait can't say `unless`: it has what its trait's method says, where that says it",
-                ));
-            }
             SigKind::Trait(_)
                 if (self.sig_trait.as_ref())
                     .is_some_and(|(tr, ..)| crate::traits::has_glue(tr)) =>
@@ -2058,19 +2082,14 @@ impl Checker {
     /// of an invariant said only there, say.
     fn scenario_walks(&mut self, symbol: &str, f: &FnDecl) {
         self.scenarios.clear();
-        for g in self.unless.get(symbol).cloned().unwrap_or_default() {
-            if self.pred_holds(&g.pred) {
-                continue;
-            }
-            self.adts.proj.env.push(g.pred.clone());
+        for g in self.scenario_guards(symbol, f) {
+            let n = self.adts.proj.env.len();
+            self.adts.proj.env.extend(g.preds.iter().cloned());
             self.scenario_atoms = vec![g.atom.clone()];
             let done = self.walk_mir(f);
             self.scenario_atoms.clear();
-            self.adts.proj.env.pop();
-            let note = format!(
-                "where `{}`, as `{}` says `with {} unless {}`",
-                g.text, f.name.name, g.atom, g.text
-            );
+            self.adts.proj.env.truncate(n);
+            let note = format!("where `{}`, as `{}` says {}", g.text, f.name.name, g.said);
             let mut errors = done.failed;
             if let Err(e) = done.result {
                 errors.push(e);
@@ -2085,6 +2104,50 @@ impl Checker {
                 excused: done.cut.excused,
             });
         }
+    }
+
+    /// The effects function `symbol`, `f`, has only where some bounds
+    /// don't all hold, that aren't known to here: each it says `unless` a
+    /// bound, and each of an associated effect it says whose binding hangs
+    /// on a bound here, with every bound it hangs on (lemma A4 of
+    /// docs/96-associated-effects-unless.md). One it says `unless` a bound
+    /// that holds here it doesn't have at all (`Checker::barred`).
+    pub(in crate::check) fn scenario_guards(&self, symbol: &str, f: &FnDecl) -> Vec<ScenarioGuard> {
+        let own = self.unless.get(symbol).cloned().unwrap_or_default();
+        let declared = match self.scheme_of(symbol).map(|s| &s.ty) {
+            Some(Type::Fn(fs)) => self.solved(&fs.effects),
+            _ => Type::no_effects(),
+        };
+        let pairs: Vec<(Type, crate::traits::Pred)> = (own.iter())
+            .map(|u| (u.atom.clone(), u.pred.clone()))
+            .collect();
+        let set = self.adts.proj.guarded_set(&declared, &pairs);
+        let mut out = Vec::new();
+        for (atom, preds) in set.guarded {
+            if preds.iter().all(|p| self.pred_holds(p)) {
+                continue;
+            }
+            let text = (preds.iter())
+                .map(|p| format!("{}: {}", p.ty, super::source_name(&p.trait_name)))
+                .collect::<Vec<_>>()
+                .join("` and `");
+            let said = match own.iter().find(|u| u.atom == atom) {
+                Some(u) if preds.len() == 1 && preds[0] == u.pred => {
+                    format!("`with {} unless {}`", u.atom, u.text)
+                }
+                _ => format!(
+                    "`with {}`, which has no `{atom}` there",
+                    super::effects::set_text(&super::effects::written_at(f).1)
+                ),
+            };
+            out.push(ScenarioGuard {
+                atom,
+                preds,
+                text,
+                said,
+            });
+        }
+        out
     }
 
     /// Does the bound that clause `id` of an invariant hangs on hold where
@@ -3558,8 +3621,11 @@ impl Checker {
     /// more, so until none is left. One an `unless` of the function's
     /// walked it under already is done.
     fn field_scenarios(&mut self, f: &FnDecl) {
-        let mut done: Vec<crate::traits::Pred> =
-            (self.scenarios.iter().map(|s| s.guard.pred.clone())).collect();
+        // A walk under several bounds at once assumed more than one of them.
+        let mut done: Vec<crate::traits::Pred> = (self.scenarios.iter())
+            .filter(|s| s.guard.preds.len() == 1)
+            .map(|s| s.guard.preds[0].clone())
+            .collect();
         loop {
             let asks = std::mem::take(&mut *self.field_asks.borrow_mut());
             let Some(ask) =
