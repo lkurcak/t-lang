@@ -325,7 +325,13 @@ what the rest of the signature is there.
   operator is proved, each call's `a` is ruled out by the callee's
   condition or by the callee's own `unless`, whose bound follows from
   `B` and `g`'s bounds, and nothing else is left. A closure's effects and
-  an effect parameter's are counted as they are without `B`.
+  an effect parameter's are counted as they are without `B`. "Has `a`"
+  is what the walk without `B` asks: a site has `a` if its effects aren't
+  within what `g` says but `a`, with each associated effect that a bound,
+  or an opaque type's, says is within a set taken as that set. So a call
+  of `it.next()`, of `I::e` where `I: Iterator<e = {panic}>`, has `panic`
+  unless `g` says `I::e` itself. Until 0.106.2 only `a` written out was
+  looked for, and such a call panicked in a copy that said it couldn't.
 - **Lemma B5 (calls).** A call of `h` at type arguments `σ` has every
   effect of `h`'s but each `a unless B` whose `B[σ]` is proved where the
   call is, and whose `a` isn't among what the rest of `h`'s effects are
@@ -360,7 +366,7 @@ what the rest of the signature is there.
 - **`enumerate` still says `with panic`.** Its index is a field of
   `Enumerate`, and that it can't overflow is an invariant of the struct,
   where its iterator is bounded (docs/93-invariants-where.md), which its
-  associated effect must then say: step 94.
+  associated effect must then say: step 96.
 - **`chars` isn't bounded yet**, nor a range: `Chars`'s `next` needs an
   invariant of its own, and `Range<usize>` an impl for one type of a
   generic one (docs/88-iterator-laws.md).

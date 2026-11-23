@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.106.2 (2026-11-23)
+
+Step 95: an effect under a bound, asked as everywhere else. See
+[docs/92-where-a-bound-holds.md](docs/92-where-a-bound-holds.md#why-its-sound).
+
+### Fixed
+
+- A function that says `with panic unless T: Small` is checked again
+  with `T: Small`, where nothing in it may panic. That walk looked only
+  for `panic` written out, so a call whose associated effect a bound says
+  is within `{panic}`, `it.next()` of an `I: Iterator<e = {panic}>` or of
+  an opaque iterator, got past it, and panicked in a copy whose `T` is
+  `Small`, which says it can't. Now it asks what the walk without the
+  bound asks, with such an associated effect taken as its bound (a hole
+  since 0.105.0).
+
 ## 0.106.1 (2026-11-23)
 
 Step 94: retrospective 18's fixes. See
