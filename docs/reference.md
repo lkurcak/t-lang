@@ -458,6 +458,18 @@ BoundedIterator}`, so counting a slice's iterator, or a `filter` of one,
 can't panic. See [conditional effects](90-conditional-effects.md) and
 [where a bound holds](92-where-a-bound-holds.md).
 
+An impl's associated effect can hang on a bound of the impl's type
+parameters too: `Enumerate`'s is `effect e = {I::e, panic unless I:
+BoundedIterator}`, so `enumerate` of a bounded iterator can't panic.
+Where the bound is decided, the projection is worked out with or without
+the effect; where it isn't, in code generic in an `I` that may or may not
+be bounded, `<Enumerate<I> as Iterator>::e` stays itself: within a set it
+is at most its binding with every effect, and a set must be within it as
+written. The impl's own method says `with Self::e`, or spells it out with
+`unless`. A function that says such a projection is checked as if it said
+the binding. See [associated effects that hang on a
+bound](96-associated-effects-unless.md).
+
 `panic` covers invalid arithmetic, explicit panics, and operations such as
 `unwrap` that may panic. `alloc` covers allocation and aborting on out of
 memory; it does not require `panic` as well. `with {}` also excludes

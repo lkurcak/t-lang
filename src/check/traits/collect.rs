@@ -11,6 +11,10 @@ use crate::traits::{AssocDecl, ImplDef, LawDef, MethodDef, Pred, TraitDef};
 use crate::traits::{COPY, DISCARD, FN_ONCE, SEND, SIGNED, SYNC, UNSIGNED};
 use crate::types::{AdtKind, Bound, Region, Scheme, Subst, Type};
 
+/// An impl's associated types and effects, by name, and the atoms of its
+/// associated effects that hang on bounds.
+type AssocDefs = (Vec<(String, Type)>, Vec<crate::traits::AssocUnless>);
+
 impl Checker {
     /// Pass 0: the names of the traits, so that anything can mention any
     /// of them.
@@ -965,7 +969,7 @@ impl Checker {
         preds: &[Pred],
         eqs: &[(Type, Type)],
         header: Span,
-    ) -> Result<(Vec<(String, Type)>, Vec<crate::traits::AssocUnless>), Error> {
+    ) -> Result<AssocDefs, Error> {
         let mut unless = Vec::new();
         let Some(tr) = tr else {
             if let Some(e) = d.effects.first() {

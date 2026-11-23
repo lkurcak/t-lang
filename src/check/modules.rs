@@ -1394,7 +1394,11 @@ impl Rewrite<'_> {
             for e in &mut d.effects {
                 self.effect_traits(&mut e.effects)?;
             }
-            for item in d.effects.iter_mut().flat_map(|e| e.effects.items.iter_mut()) {
+            for item in d
+                .effects
+                .iter_mut()
+                .flat_map(|e| e.effects.items.iter_mut())
+            {
                 if let Some(g) = &mut item.unless {
                     self.ty(&mut g.subject)?;
                     self.bound(&mut g.bound)?;

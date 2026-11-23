@@ -59,15 +59,25 @@ fn low() -> u8 with {} { (W { x: Lo { n: 7 } }).go() + 0 * (V { x: Lo { n: 1 } }
 /// Generic in one that's `Low`: none either.
 fn lows<T: Low>(w: &W<T>) -> u8 with {} { w.go() }
 
+/// Of two, each of which may or may not be `Low`: it may panic unless both
+/// are, as it says by their associated effects, and is checked again where
+/// both are, at once: each `+ 1` can't overflow there by one of the laws.
+fn both<T: Val, U: Val>(w: &W<T>, v: &W<U>) -> u8 with {<W<T> as Go>::e, <W<U> as Go>::e} {
+    let a = w.x.value() + 1;
+    let b = v.x.value() + 1;
+    a / 2 + b / 2
+}
+
 /// Generic in any: it may, which it says by the associated effect itself.
 fn any<T: Val>(w: &W<T>) -> u8 with <W<T> as Go>::e { w.go() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    out.line(&low())?;                        // expect: 8
-    out.line(&lows(&W { x: Lo { n: 9 } }))?;  // expect: 10
-    out.line(&any(&W { x: Lo { n: 1 } }))?;   // expect: 2
-    out.line(&any(&W { x: Any { n: 2 } }))?;  // expect: 3
-    out.line(&(V { x: Any { n: 3 } }).go())?; // expect: 4
+    out.line(&low())?;                                               // expect: 8
+    out.line(&lows(&W { x: Lo { n: 9 } }))?;                         // expect: 10
+    out.line(&any(&W { x: Lo { n: 1 } }))?;                          // expect: 2
+    out.line(&both(&W { x: Lo { n: 1 } }, &W { x: Any { n: 5 } }))?; // expect: 4
+    out.line(&any(&W { x: Any { n: 2 } }))?;                         // expect: 3
+    out.line(&(V { x: Any { n: 3 } }).go())?;                        // expect: 4
     Ok(())
 }

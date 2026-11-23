@@ -164,8 +164,8 @@ a trait for a type is in the package of one or the other
 `core::iter::Enumerate` now says the same as `Counted`. Its `next` still
 says `with panic`: that it can't, of a bounded iterator, is what its
 *associated effect* would have to say, `effect e = {I::e, panic unless I:
-BoundedIterator}`, and an associated effect is part of a type. That's the
-next step.
+BoundedIterator}`, and an associated effect is part of a type. That's
+step 96 (docs/96-associated-effects-unless.md), since which it does.
 
 ## Why it's sound
 
@@ -212,7 +212,7 @@ program that runs.
 
 ## What it doesn't do
 
-- **`enumerate` still says `with panic`**, as above: step 94.
+- **`enumerate` still says `with panic`**, as above: until step 96.
 - **One bound, and the whole refinement hangs on it.** A field can't have
   one part that always holds and one that doesn't, nor a refinement of
   what's in it beside.

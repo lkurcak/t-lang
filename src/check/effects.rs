@@ -41,6 +41,15 @@
 //! conditional effects only where a proof says the condition held at the
 //! call (`Site::covered`); every other site is checked against the
 //! effects the function has always.
+//!
+//! Since step 96 an impl's associated effect may have an atom only where a
+//! bound doesn't hold (docs/96-associated-effects-unless.md). Invariant:
+//! where the bound isn't decided, the projection stays itself, and is
+//! replaced by its binding with every atom (`Checker::effect_bound`,
+//! `Projections::upper`) only in the smaller of two sets, never the bigger;
+//! a function that says one is checked as `Projections::guarded_set` takes
+//! it apart: allowing every atom, and again under the bounds of each atom
+//! together, allowing none of it (`Checker::scenario_guards`).
 
 use super::Checker;
 use super::infer::has_placeholder;

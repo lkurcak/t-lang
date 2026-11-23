@@ -187,21 +187,21 @@ fn low() -> u8 with {} { (W { x: Lo { n: 7 } }).go() }
 
 fn any<T: Val>(w: &W<T>) -> u8 with <W<T> as Go>::e { w.go() }
 
-fn count_all<I: Iterator<Item = u64> + Discard>(it: I) -> usize
+fn last_index<I: Iterator<Item = u64> + Discard>(it: I) -> usize
 with {I::e, panic unless I: BoundedIterator}
 {
     let mut n = 0;
     for (i, _x) in it.enumerate() {
-        n = i + 1;
+        n = i;
     }
     n
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    out.line(&low())?;                                // expect: 8
-    out.line(&any(&W { x: Any { n: 2 } }))?;          // expect: 3
-    out.line(&count_all([1u64, 2, 3].iter().copied()))?; // expect: 3
+    out.line(&low())?;                                    // expect: 8
+    out.line(&any(&W { x: Any { n: 2 } }))?;              // expect: 3
+    out.line(&last_index([1u64, 2, 3].iter().copied()))?; // expect: 2
     Ok(())
 }
 ```
@@ -292,7 +292,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
 
 ## Exercises
 
-1. In `count_all` above, say `with {I::e, panic}` instead. Which walk no
+1. In `last_index` above, say `with {I::e, panic}` instead. Which walk no
    longer happens, and what does a caller of a slice's iterator lose?
 2. Write `fn pairs<I: Iterator>(it: I) -> usize` that counts
    `it.enumerate().enumerate()`, saying `panic unless I: BoundedIterator`.

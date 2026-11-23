@@ -306,10 +306,22 @@ enum Given {
     Never,
 }
 
+/// How the impl's method says its effects.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Spelling {
+    /// `with Self::e`.
+    SelfE,
+    /// `with panic unless T: Low`.
+    Spelled,
+    /// `with panic`, which is more than the trait's method has where `T`
+    /// is `Low`: always refused.
+    Plain,
+}
+
 /// A program with `Go`'s impl for header `h`, whose method says its
 /// effects as `spelled` says and adds `add` to the value, called of a type
 /// that's `Low` as `g` says, by a `main` that says `panic` where it isn't.
-fn headed(h: &Header, g: Given, spelled: bool, add: u8) -> String {
+fn headed(h: &Header, g: Given, spelled: Spelling, add: u8) -> String {
     let arg = match g {
         Given::Instance => "Lo { n: 0 }",
         Given::Blanket => "Bx { n: 254, u: A { n: 0 } }",
@@ -320,8 +332,9 @@ fn headed(h: &Header, g: Given, spelled: bool, add: u8) -> String {
         _ => "{}",
     };
     let with = match spelled {
-        true => "panic unless T: Low",
-        false => "Self::e",
+        Spelling::SelfE => "Self::e",
+        Spelling::Spelled => "panic unless T: Low",
+        Spelling::Plain => "panic",
     };
     format!(
         "trait Val {{\n    fn value(&self) -> u8;\n}}\n\n\
@@ -355,30 +368,29 @@ fn guarded_impls_by_header() {
     let mut count = 0;
     for h in &HEADERS {
         for g in [Given::Instance, Given::Blanket, Given::Never] {
-            for spelled in [false, true] {
+            for spelled in [Spelling::SelfE, Spelling::Spelled, Spelling::Plain] {
                 for add in [1u8, 2] {
                     count += 1;
                     let src = headed(h, g, spelled, add);
                     let got = verdict(&src);
-                    let ok = match (add, &got) {
+                    let ok = match (spelled, add, &got) {
+                        // More than the trait's method has where `T: Low`.
+                        (Spelling::Plain, _, Err(m)) => m.contains("can't there"),
                         // Two more overflows where `T: Low`: refused.
-                        (2, Err(m)) => !m.starts_with("accepted"),
-                        (1, r) => r.is_ok(),
+                        (_, 2, Err(m)) => !m.starts_with("accepted"),
+                        (Spelling::SelfE | Spelling::Spelled, 1, r) => r.is_ok(),
                         _ => false,
                     };
                     if !ok {
-                        let what = format!(
-                            "{}, `Low` given {g:?}, {}, adding {add}",
-                            h.name,
-                            if spelled { "spelled out" } else { "`Self::e`" },
-                        );
+                        let what =
+                            format!("{}, `Low` given {g:?}, {spelled:?}, adding {add}", h.name);
                         failures.push(format!("{what}: {got:?}\n{src}"));
                     }
                 }
             }
         }
     }
-    assert!(count >= 72, "only {count} programs");
+    assert!(count >= 108, "only {count} programs");
     assert!(
         failures.is_empty(),
         "{} of {count} failed:\n\n{}",

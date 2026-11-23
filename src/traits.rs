@@ -1493,6 +1493,7 @@ impl Projections {
     pub fn guarded_set(&self, set: &Type, own: &[(Type, Pred)]) -> GuardedSet {
         let mut out = GuardedSet::default();
         let mut sources: Vec<(Type, Option<Pred>)> = Vec::new();
+        let set = self.normalise(set);
         self.guarded_items(set.effect_items(), own, &mut out.upper, &mut sources, 0);
         for (atom, _) in &sources {
             if out.always.contains(atom) || out.guarded.iter().any(|(a, _)| a == atom) {
@@ -1542,7 +1543,9 @@ impl Projections {
                     let Some((binding, open)) = found else {
                         continue;
                     };
-                    let binding = self.normalise(&binding);
+                    // The binding's own atoms, before the rest is worked
+                    // out: an associated effect in it that's `panic` has
+                    // that always, whatever the binding's `panic` hangs on.
                     for x in binding.effect_items() {
                         match open.iter().find(|(a, _)| a == x) {
                             Some((_, p)) => {
@@ -1552,7 +1555,7 @@ impl Projections {
                                 sources.push((x.clone(), Some(p.clone())));
                             }
                             None => self.guarded_items(
-                                std::slice::from_ref(x),
+                                Type::effects([self.normalise(x)]).effect_items(),
                                 &[],
                                 upper,
                                 sources,
@@ -1718,8 +1721,9 @@ fn binding(
     let guards = (d.assoc_unless.iter())
         .filter(|g| g.name == name)
         .map(|g| {
+            // Of an associated type, `I::Item`, what it is there.
             let pred = Pred {
-                ty: s.apply(&g.pred.ty),
+                ty: normalise(impls, anon, local, &s.apply(&g.pred.ty)),
                 trait_name: g.pred.trait_name.clone(),
             };
             (g.atom.clone(), pred)

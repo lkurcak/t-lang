@@ -363,10 +363,11 @@ what the rest of the signature is there.
 
 ## What it doesn't do
 
-- **`enumerate` still says `with panic`.** Its index is a field of
+- **`enumerate` still said `with panic`.** Its index is a field of
   `Enumerate`, and that it can't overflow is an invariant of the struct,
   where its iterator is bounded (docs/93-invariants-where.md), which its
-  associated effect must then say: step 96.
+  associated effect must then say: it does since step 96
+  (docs/96-associated-effects-unless.md).
 - **`chars` isn't bounded yet**, nor a range: `Chars`'s `next` needs an
   invariant of its own, and `Range<usize>` an impl for one type of a
   generic one (docs/88-iterator-laws.md).

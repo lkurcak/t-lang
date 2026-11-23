@@ -4,6 +4,7 @@
 // associated effect says: `{I::e, panic unless I: BoundedIterator}`
 // (docs/96-associated-effects-unless.md).
 use alloc::list::List;
+use core::iter::Enumerate;
 
 /// Over a slice: no `panic`.
 fn total(s: &[u64]) -> u64 with {} {
@@ -46,6 +47,19 @@ with {I::e, panic unless I: BoundedIterator}
     n
 }
 
+/// Saying the associated effect of two `enumerate`s, which hangs on two
+/// bounds, `Enumerate<I>: BoundedIterator` and `I: BoundedIterator`: the
+/// body is walked again under both at once.
+fn pairs<I: Iterator<Item = u64> + Discard>(it: I) -> usize
+with <Enumerate<Enumerate<I>> as Iterator>::e
+{
+    let mut n = 0;
+    for (i, (_j, _x)) in it.enumerate().enumerate() {
+        n = i;
+    }
+    n
+}
+
 fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     let mut out = os.stdout;
     let a = [1u64, 2, 3, 4];
@@ -53,6 +67,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
     out.line(&last(a.iter().copied()))?;        // expect: 3
     out.line(&last_any(a.iter().copied()))?;    // expect: 3
     out.line(&last_unless(a.iter().copied()))?; // expect: 3
+    out.line(&pairs(a.iter().copied()))?;       // expect: 3
     let mut l: List<u64> = List::new();
     l.push(5);
     l.push(6);

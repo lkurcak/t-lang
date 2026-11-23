@@ -311,7 +311,9 @@ impl Checker {
             // With what each associated effect it says may be, where its
             // binding hangs on a bound (lemma A4 of
             // docs/96-associated-effects-unless.md).
-            let upper = (self.adts.proj).guarded_set(&self.solved(&fs.effects), &[]).upper;
+            let upper = (self.adts.proj)
+                .guarded_set(&self.solved(&fs.effects), &[])
+                .upper;
             w.always = (upper.iter())
                 .filter(|e| matches!(e, Type::Panic | Type::Alloc | Type::Global))
                 .filter(|e| !conds.iter().any(|c| c.atom == **e))

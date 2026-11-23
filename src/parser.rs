@@ -1671,7 +1671,9 @@ impl Parser {
                     "an associated effect can't have a condition: it's of no call, whose \
                      parameters it could say; it can say `unless` a bound holds"
                 }
-                _ => "only a function's own effects can have a condition, not a type's or a bound's",
+                _ => {
+                    "only a function's own effects can have a condition, not a type's or a bound's"
+                }
             };
             return Err(Error::syntax(self.span(), message));
         }

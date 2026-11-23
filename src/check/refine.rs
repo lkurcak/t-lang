@@ -2118,8 +2118,9 @@ impl Checker {
             Some(Type::Fn(fs)) => self.solved(&fs.effects),
             _ => Type::no_effects(),
         };
-        let pairs: Vec<(Type, crate::traits::Pred)> =
-            (own.iter()).map(|u| (u.atom.clone(), u.pred.clone())).collect();
+        let pairs: Vec<(Type, crate::traits::Pred)> = (own.iter())
+            .map(|u| (u.atom.clone(), u.pred.clone()))
+            .collect();
         let set = self.adts.proj.guarded_set(&declared, &pairs);
         let mut out = Vec::new();
         for (atom, preds) in set.guarded {

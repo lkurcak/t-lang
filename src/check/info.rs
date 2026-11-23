@@ -754,12 +754,26 @@ impl Checker {
         for t in e.iter().flat_map(|e| e.types()) {
             self.type_expr_notes(t, params);
         }
+        self.effect_trait_notes(e);
         // And the bound of each said with `unless`.
         for g in e.iter().flat_map(|e| &e.items).flat_map(|i| &i.unless) {
             self.type_expr_notes(&g.subject, params);
             self.bound_item_notes(&g.bound, params);
         }
         self.effect_param_notes(e, params);
+    }
+
+    /// Notes the trait of each associated effect in effects `e` written
+    /// `<X as Tr>::e`, as of a projection type.
+    fn effect_trait_notes(&mut self, e: Option<&EffectSet>) {
+        for item in e.iter().flat_map(|e| &e.items) {
+            if let EffectKind::Proj(_, Some(tr), _) = &item.kind
+                && let Some(def) = self.traits.traits.get(&tr.name)
+            {
+                let (kind, def) = (NoteKind::Trait(tr.name.clone()), def.span);
+                self.note(tr.span, kind, None, def);
+            }
+        }
     }
 
     /// Notes the effect parameters in effects `e`, if there are any.
@@ -796,6 +810,12 @@ impl Checker {
             self.type_expr_notes(t, params);
         }
         self.effect_param_notes(b.effects.as_ref(), params);
+        self.effect_trait_notes(b.effects.as_ref());
+        for a in &b.assoc {
+            if let AssocBoundKind::Effects(e) = &a.kind {
+                self.effect_trait_notes(Some(e));
+            }
+        }
     }
 
     fn param_notes(&mut self, g: &Generics) {
