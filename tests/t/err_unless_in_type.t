@@ -14,4 +14,4 @@ impl Small for A {
 fn f(_g: fn() with panic unless A: Small) {}
 
 fn main() {}
-// error: only a function's own effects can say `unless`, not a type's or a bound's
+// error: only a function's own effects, or an impl's associated effect, can say `unless`, not a type's or a bound's

@@ -221,7 +221,9 @@ when a condition holds, `a if P_a`; one it doesn't say has the condition
 
 ## What it doesn't do
 
-- **`count` and `enumerate` still say `with panic`.** An exact iterator's
+- **`count` and `enumerate` still say `with panic`.** (Neither panics of a
+  bounded iterator since steps 92 and 96, docs/92-where-a-bound-holds.md
+  and docs/96-associated-effects-unless.md.) An exact iterator's
   count can't overflow, but that depends on the iterator's *type*, not on
   a value a call is given: proving it would need an invariant naming
   `len` inside a body every iterator shares, `count`'s loop or

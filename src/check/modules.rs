@@ -1386,6 +1386,20 @@ impl Rewrite<'_> {
             for a in &mut d.assoc {
                 self.ty(&mut a.ty)?;
             }
+            // What its associated effects are, and the bound each atom of
+            // one hangs on, `panic unless I: BoundedIterator`.
+            for t in d.effects.iter_mut().flat_map(|e| e.effects.types_mut()) {
+                self.ty(t)?;
+            }
+            for e in &mut d.effects {
+                self.effect_traits(&mut e.effects)?;
+            }
+            for item in d.effects.iter_mut().flat_map(|e| e.effects.items.iter_mut()) {
+                if let Some(g) = &mut item.unless {
+                    self.ty(&mut g.subject)?;
+                    self.bound(&mut g.bound)?;
+                }
+            }
             if d.trait_name.is_none()
                 && let Some(at) = d.methods.iter().find_map(|f| match f.vis {
                     Vis::Export(at) => Some((at, &f.name)),
@@ -1765,14 +1779,30 @@ impl Rewrite<'_> {
     fn bound(&mut self, b: &mut BoundItem) -> Result<(), Error> {
         self.trait_ref(&mut b.name)?;
         for a in &mut b.assoc {
-            if let AssocBoundKind::Bounds(traits) = &mut a.kind {
-                for t in traits {
-                    self.trait_ref(t)?;
+            match &mut a.kind {
+                AssocBoundKind::Bounds(traits) => {
+                    for t in traits {
+                        self.trait_ref(t)?;
+                    }
                 }
+                AssocBoundKind::Effects(e) => self.effect_traits(e)?,
+                AssocBoundKind::Eq(_) => {}
             }
+        }
+        if let Some(e) = &mut b.effects {
+            self.effect_traits(e)?;
         }
         for t in b.types_mut() {
             self.ty(t)?;
+        }
+        Ok(())
+    }
+
+    /// The traits the associated effects in `e` are written of:
+    /// `Iterator` in `<Enumerate<I> as Iterator>::e`.
+    fn effect_traits(&mut self, e: &mut EffectSet) -> Result<(), Error> {
+        for tr in e.traits_mut() {
+            self.trait_ref(tr)?;
         }
         Ok(())
     }
@@ -1795,6 +1825,14 @@ impl Rewrite<'_> {
         self.ty(&mut f.ret)?;
         for e in &mut f.ensures {
             self.pred(e)?;
+        }
+        // The types in its effects: `<Enumerate<I> as Iterator>::e` names
+        // a type, which may be another module's.
+        for t in f.effects.iter_mut().flat_map(EffectSet::types_mut) {
+            self.ty(t)?;
+        }
+        if let Some(e) = &mut f.effects {
+            self.effect_traits(e)?;
         }
         for item in (f.effects.iter_mut()).flat_map(|s| s.items.iter_mut()) {
             if let Some(c) = &mut item.cond {
@@ -1843,6 +1881,9 @@ impl Rewrite<'_> {
                 self.ty(ret)?;
                 for t in effects.iter_mut().flat_map(EffectSet::types_mut) {
                     self.ty(t)?;
+                }
+                if let Some(e) = effects {
+                    self.effect_traits(e)?;
                 }
             }
             TypeExprKind::Ref(_, _, inner) | TypeExprKind::Slice(inner) => self.ty(inner)?,

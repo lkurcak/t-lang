@@ -107,6 +107,9 @@ pub(super) fn names(
         for a in &d.assoc {
             w.ty(&a.ty);
         }
+        for e in &d.effects {
+            w.effects(Some(&e.effects));
+        }
         w.leave();
         for f in &d.methods {
             w.function(f, &params);
@@ -123,6 +126,7 @@ pub(super) fn names(
                     w.bounds(&m.decl.generics);
                     m.decl.params.iter().for_each(|p| w.ty(&p.ty));
                     w.ty(&m.decl.ret);
+                    w.effects(m.decl.effects.as_ref());
                     w.leave();
                 }
             }
@@ -133,6 +137,7 @@ pub(super) fn names(
             w.bounds(&l.decl.generics);
             l.decl.params.iter().for_each(|p| w.ty(&p.ty));
             w.ty(&l.decl.ret);
+            w.effects(l.decl.effects.as_ref());
             w.leave();
         }
     }
@@ -297,11 +302,7 @@ impl Walk<'_> {
             self.ty(&p.ty);
         }
         self.ty(&f.ret);
-        for item in f.effects.iter().flat_map(|s| &s.items) {
-            if let Some(g) = &item.unless {
-                self.ty(&g.subject);
-            }
-        }
+        self.effects(f.effects.as_ref());
         self.expr(&f.body);
         self.leave();
         self.current.pop();
@@ -309,6 +310,19 @@ impl Walk<'_> {
 
     /// The types in the bounds of `g`, like `i64` in `T: Iter<Item = i64>`
     /// and `F: Fn(i64) -> bool`.
+    /// The types in effects `e`: those `<Enumerate<I> as Iterator>::e` is
+    /// of, and those each `unless` is of.
+    fn effects(&mut self, e: Option<&EffectSet>) {
+        for t in e.into_iter().flat_map(EffectSet::types) {
+            self.ty(t);
+        }
+        for item in e.iter().flat_map(|s| &s.items) {
+            if let Some(g) = &item.unless {
+                self.ty(&g.subject);
+            }
+        }
+    }
+
     fn bounds(&mut self, g: &Generics) {
         for (_, items) in &g.bounds {
             for t in items.iter().flat_map(|b| b.types()) {

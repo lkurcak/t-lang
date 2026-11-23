@@ -1313,6 +1313,15 @@ impl EffectSet {
             EffectKind::Named(_) => None,
         })
     }
+
+    /// The traits its associated effects are written of, `Iterator` in
+    /// `<Enumerate<I> as Iterator>::e`, to resolve.
+    pub fn traits_mut(&mut self) -> impl Iterator<Item = &mut Ident> {
+        self.items.iter_mut().filter_map(|e| match &mut e.kind {
+            EffectKind::Proj(_, tr, _) => tr.as_mut(),
+            EffectKind::Named(_) => None,
+        })
+    }
 }
 
 /// `with panic`, `with {alloc, e}`, or `{}` after `effect e =`: in braces

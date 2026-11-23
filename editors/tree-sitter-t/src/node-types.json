@@ -438,7 +438,7 @@
         "required": false,
         "types": [
           {
-            "type": "effect_set",
+            "type": "binding_effects",
             "named": true
           }
         ]
@@ -711,6 +711,33 @@
           }
         ]
       }
+    }
+  },
+  {
+    "type": "binding_effects",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": false,
+      "types": [
+        {
+          "type": "effect",
+          "named": true
+        },
+        {
+          "type": "guarded_effect",
+          "named": true
+        },
+        {
+          "type": "projection_type",
+          "named": true
+        },
+        {
+          "type": "qualified_type",
+          "named": true
+        }
+      ]
     }
   },
   {

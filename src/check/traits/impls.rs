@@ -113,7 +113,8 @@ impl Checker {
                     .method(tr, &f.name.name)
                     .expect("checked")
                     .clone();
-                self.same_signature(f, &got, &want, &def)?;
+                let symbol = self.fns[id.0].symbol.clone();
+                self.same_signature(f, &symbol, &got, &want, &def)?;
             }
             for s in self.traits.traits[tr].supers.clone() {
                 if self
@@ -350,6 +351,7 @@ impl Checker {
     fn same_signature(
         &self,
         f: &FnDecl,
+        symbol: &str,
         got: &Scheme,
         want: &MethodDef,
         d: &ImplDef,
@@ -471,12 +473,57 @@ impl Checker {
             )));
         }
         // Its effects, at most the trait's: callers going by the trait's
-        // signature may count on its calls having no others.
-        let more = Type::effects(
-            (g.effects.effect_items().iter())
-                .filter(|e| !w.effects.effect_items().contains(e))
-                .cloned(),
-        );
+        // signature may count on its calls having no others. As each copy
+        // has them: an atom the trait's has only where some bounds don't
+        // hold, as the impl's associated effect says, it may have only
+        // where some of those don't, by an `unless` of its own (lemma A5
+        // of docs/96-associated-effects-unless.md).
+        let own: Vec<(Type, Pred)> = (self.unless.get(symbol).into_iter().flatten())
+            .map(|u| (u.atom.clone(), u.pred.clone()))
+            .collect();
+        let got_set = proj.guarded_set(&g.effects, &own);
+        let want_set = proj.guarded_set(&w.effects, &[]);
+        let mut more = Vec::new();
+        for e in &got_set.upper {
+            let guards = |set: &crate::traits::GuardedSet| -> Option<Option<Vec<Pred>>> {
+                if set.always.contains(e) {
+                    return Some(None);
+                }
+                let (_, ps) = set.guarded.iter().find(|(a, _)| a == e)?;
+                Some(Some(ps.clone()))
+            };
+            let atom = matches!(e, Type::Panic | Type::Alloc | Type::Global | Type::Unsafe);
+            if !atom {
+                if !want_set.upper.contains(e) {
+                    more.push(e.clone());
+                }
+                continue;
+            }
+            match (guards(&got_set), guards(&want_set)) {
+                (_, None) => more.push(e.clone()),
+                (_, Some(None)) => {}
+                (Some(Some(gp)), Some(Some(wp))) if gp.iter().all(|p| wp.contains(p)) => {}
+                (_, Some(Some(wp))) => {
+                    let bounds = (wp.iter())
+                        .map(|p| format!("{}: {}", p.ty, crate::check::source_name(&p.trait_name)))
+                        .collect::<Vec<_>>();
+                    let atom = Type::effects([e.clone()]);
+                    return Err(Error::ty(
+                        f.name.span,
+                        format!(
+                            "`{0}` {1} where `{2}`, but `{3}`'s `{0}` can't there, as this impl's \
+                             associated effect says; so it can't either: say `with {4} unless {2}`",
+                            f.name.name,
+                            crate::check::effects::does(&atom),
+                            bounds.join("` and `"),
+                            crate::check::source_name(crate::traits::shown_trait(tr)),
+                            crate::types::effects_text(&atom),
+                        ),
+                    ));
+                }
+            }
+        }
+        let more = Type::effects(more);
         if !more.is_no_effects() {
             let e = Error::ty(
                 f.name.span,

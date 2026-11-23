@@ -66,6 +66,7 @@ impl Checker {
                     eqs: def.eqs.clone(),
                     effect_bounds: Vec::new(),
                     assoc: Vec::new(),
+                    assoc_unless: Vec::new(),
                     methods: Vec::new(),
                     derived: true,
                 });

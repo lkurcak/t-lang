@@ -307,8 +307,10 @@ impl Signature {
             // Sets of effects: no values.
             effect_bounds: _,
             // What its associated types are, which is what it gives, not
-            // where it gets it.
+            // where it gets it; and which atoms of its associated effects
+            // hang on bounds: no values.
             assoc: _,
+            assoc_unless: _,
             // Checked with its bounds, which are these, and their own,
             // which are the trait's (`protocol_methods_harmless`).
             methods: _,

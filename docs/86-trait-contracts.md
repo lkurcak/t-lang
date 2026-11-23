@@ -271,7 +271,8 @@ file's check what the operating system says (which keeps it), as an
   changes it: a contract on another trait's method, which `Rev` needs of
   `next_back` too. So adapters still have no `len`, and `count` and
   `enumerate` still say `with panic` (docs/84). (Step 88: laws,
-  docs/88-iterator-laws.md.)
+  docs/88-iterator-laws.md. Steps 92 and 96: neither panics of a bounded
+  iterator, docs/96-associated-effects-unless.md.)
 - A trait's measure can't be implemented for a slice or `str` (which only
   the built-in libraries can implement traits for): its measures are of
   the reference.

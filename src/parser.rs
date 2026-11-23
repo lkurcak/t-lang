@@ -1185,7 +1185,7 @@ impl Parser {
                 id: self.id(),
             }
         };
-        let effects = self.with_effects(true)?;
+        let effects = self.with_effects(Said::Fn)?;
         let mut generics = generics;
         if *self.peek() == Tok::Where {
             self.where_clause(&mut generics)?;
@@ -1566,7 +1566,7 @@ impl Parser {
         head.no_allows()?;
         let name = self.ident()?;
         self.expect(Tok::Eq)?;
-        let effects = self.effect_set(None, false)?;
+        let effects = self.effect_set(None, Said::Binding)?;
         let end = self.expect(Tok::Semi)?;
         Ok(EffectDef {
             doc: head.doc,
@@ -1576,32 +1576,32 @@ impl Parser {
         })
     }
 
-    /// `with panic` or `with {alloc, e}`, if a `with` is next: of a
-    /// function's own signature if `conds`, where each may have a
-    /// condition.
-    fn with_effects(&mut self, conds: bool) -> Result<Option<EffectSet>, Error> {
+    /// `with panic` or `with {alloc, e}`, if a `with` is next, said where
+    /// `said` says.
+    fn with_effects(&mut self, said: Said) -> Result<Option<EffectSet>, Error> {
         match *self.peek() == Tok::With {
             true => {
                 let with = self.bump().span;
-                Ok(Some(self.effect_set(Some(with), conds)?))
+                Ok(Some(self.effect_set(Some(with), said)?))
             }
             false => Ok(None),
         }
     }
 
     /// One effect, or a set of them in braces, after the `with` at `with`
-    /// if there is one, each with a condition if `conds` allows.
-    fn effect_set(&mut self, with: Option<Span>, conds: bool) -> Result<EffectSet, Error> {
+    /// if there is one, each with a condition or an `unless` if `said`
+    /// allows.
+    fn effect_set(&mut self, with: Option<Span>, said: Said) -> Result<EffectSet, Error> {
         let start = with.unwrap_or_else(|| self.span());
         if self.eat(&Tok::LBrace) {
-            let (items, end) = self.comma_list(Tok::RBrace, |p| p.effect(conds))?;
+            let (items, end) = self.comma_list(Tok::RBrace, |p| p.effect(said))?;
             return Ok(EffectSet {
                 items,
                 span: start.to(end),
                 with: with.is_some(),
             });
         }
-        let item = self.effect(conds)?;
+        let item = self.effect(said)?;
         Ok(EffectSet {
             span: start.to(item.span),
             items: vec![item],
@@ -1611,8 +1611,8 @@ impl Parser {
 
     /// `panic`, `alloc`, `unsafe`, an effect parameter `e`, or an
     /// associated effect `I::e` or `<I as Iterator>::e`, with a condition
-    /// if `conds` allows one.
-    fn effect(&mut self, conds: bool) -> Result<Effect, Error> {
+    /// or an `unless` if `said` allows one.
+    fn effect(&mut self, said: Said) -> Result<Effect, Error> {
         if *self.peek() == Tok::Unsafe {
             let span = self.bump().span;
             let name = Ident {
@@ -1627,7 +1627,7 @@ impl Parser {
                 cond: None,
                 unless: None,
             };
-            return self.effect_cond(e, conds);
+            return self.effect_cond(e, said);
         }
         let t = self.ty()?;
         let kind = match t.kind {
@@ -1654,19 +1654,26 @@ impl Parser {
             cond: None,
             unless: None,
         };
-        self.effect_cond(e, conds)
+        self.effect_cond(e, said)
     }
 
     /// Effect `e`'s condition, `if x > 3`, if one is next: an expression,
     /// with no struct literal, as a function's body may follow it. Only a
-    /// function's own effects (`conds`) can have one: a type's are of
-    /// whatever has it, whose parameters aren't named.
-    fn effect_cond(&mut self, mut e: Effect, conds: bool) -> Result<Effect, Error> {
-        if *self.peek() == Tok::If && !conds {
-            return Err(Error::syntax(
-                self.span(),
-                "only a function's own effects can have a condition, not a type's or a bound's",
-            ));
+    /// function's own effects can have one: a type's are of whatever has
+    /// it, whose parameters aren't named, and an impl's associated effect
+    /// is of no call. Or its `unless T: Trait`, which an impl's associated
+    /// effect can say too, of the impl's type parameters
+    /// (docs/96-associated-effects-unless.md).
+    fn effect_cond(&mut self, mut e: Effect, said: Said) -> Result<Effect, Error> {
+        if *self.peek() == Tok::If && said != Said::Fn {
+            let message = match said {
+                Said::Binding => {
+                    "an associated effect can't have a condition: it's of no call, whose \
+                     parameters it could say; it can say `unless` a bound holds"
+                }
+                _ => "only a function's own effects can have a condition, not a type's or a bound's",
+            };
+            return Err(Error::syntax(self.span(), message));
         }
         if self.eat(&Tok::If) {
             let cond = self.structs(false, Self::expr)?;
@@ -1675,10 +1682,11 @@ impl Parser {
         }
         // `unless T: Trait`: `unless` is a word only here, after an effect.
         if matches!(self.peek(), Tok::Ident(n) if n == "unless") {
-            if !conds {
+            if said == Said::Other {
                 return Err(Error::syntax(
                     self.span(),
-                    "only a function's own effects can say `unless`, not a type's or a bound's",
+                    "only a function's own effects, or an impl's associated effect, can say \
+                     `unless`, not a type's or a bound's",
                 ));
             }
             self.bump();
@@ -1866,7 +1874,7 @@ impl Parser {
                 }
                 false => None,
             };
-            let effects = self.with_effects(false)?;
+            let effects = self.with_effects(Said::Other)?;
             if let Some(e) = &effects {
                 end = e.span;
             }
@@ -1891,7 +1899,7 @@ impl Parser {
                     // .. }` is a refined type.
                     let refined = matches!(p.peek2(), Tok::Ident(_)) && *p.peek3() == Tok::Colon;
                     match *p.peek() == Tok::LBrace && !refined {
-                        true => AssocBoundKind::Effects(p.effect_set(None, false)?),
+                        true => AssocBoundKind::Effects(p.effect_set(None, Said::Other)?),
                         false => AssocBoundKind::Eq(p.ty()?),
                     }
                 }
@@ -2195,7 +2203,7 @@ impl Parser {
                         id: self.id(),
                     }
                 };
-                let effects = self.with_effects(false)?;
+                let effects = self.with_effects(Said::Other)?;
                 let span = start.to(effects.as_ref().map_or(ret.span, |e| e.span));
                 Ok(TypeExpr {
                     kind: TypeExprKind::Fn(params, Box::new(ret), effects),
@@ -3769,6 +3777,18 @@ const NOT_BLAMING: &str = "`#[blame_caller]` can only be on a function with a bo
 
 /// Why a `#[measure]` can't be where it is.
 const NOT_METHOD: &str = "only a method of `&self` can be a measure";
+
+/// Where effects are said, which decides what each may say besides
+/// itself.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Said {
+    /// A function's own signature: a condition, `if P`, or an `unless`.
+    Fn,
+    /// An impl's associated effect, `effect e = ..;`: an `unless`.
+    Binding,
+    /// A type's, or a bound's: neither.
+    Other,
+}
 
 struct Head {
     doc: Option<DocComment>,
