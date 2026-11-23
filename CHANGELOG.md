@@ -1,5 +1,34 @@
 # Changelog
 
+## 0.106.1 (2026-11-23)
+
+Step 94: retrospective 18's fixes. See
+[docs/92-where-a-bound-holds.md](docs/92-where-a-bound-holds.md#why-its-sound)
+and [docs/30-postconditions.md](docs/30-postconditions.md).
+
+### Fixed
+
+- An impl's own method in place of a trait's method that says `with panic
+  unless Self: Small` could panic though an instance of the impl's type
+  is `Small`: `impl<T> Bump for W<T>` beside `impl Small for W<u8>`, and
+  a call of `bump` at `W<u8>` had no `panic`. Only the impl's type itself
+  was asked of. Now the method can't have the effect if any instance of
+  its type may meet the bound, by the question coherence asks (a hole
+  since 0.105.0).
+- What a function was given is known four references, boxes or structs
+  deep. Deeper, `old(..)` read what was there when it was read, which may
+  have been written since: `ensures *****a == old(*****a)` held of a body
+  that wrote there, in a postcondition, a result's refinement or a loop's
+  invariant. Now it's unknown (a hole since 0.71.0).
+
+### Changed
+
+- `Cargo.toml` no longer says a `rust-version`: `t` is a program, and its
+  releases are built with the toolchain CI uses.
+- The test suite takes the libraries' checked state from a pool of
+  copies, and the compiled and golden tests use mimalloc: 192 s to 80 s
+  on 32 threads.
+
 ## 0.106.0 (2026-11-22)
 
 Step 93: an invariant where a bound holds. See

@@ -284,3 +284,196 @@ fn effects_unless_a_bound() {
         failures.join("\n\n")
     );
 }
+
+/// The type an impl of `Bump` is for, in place of a default that says
+/// `with panic unless Self: Small`: its header, an instance of it that's
+/// `Small` where an impl says so, and the items it needs.
+struct Header {
+    name: &'static str,
+    params: &'static str,
+    head: &'static str,
+    items: &'static str,
+    /// An instance of `head`, and a value of it.
+    instance: &'static str,
+    value: &'static str,
+    /// `head` with a parameter `U: Foo` for a conditional blanket impl
+    /// of `Small`, if there's one to write: `(params, head)`.
+    blanket: Option<(&'static str, &'static str)>,
+    /// Whether what decides who may implement a trait for it is a
+    /// parameter, under references (`head_of`): then the package of
+    /// whatever it's given may write one, `impl Small for &X`, so it may
+    /// be `Small` whatever impls there are here.
+    headless: bool,
+}
+
+const HEADERS: [Header; 7] = [
+    Header {
+        name: "a struct",
+        params: "<T>",
+        head: "W<T>",
+        items: "#[derive(Discard where T: Discard)]\nstruct W<T> { n: u8, t: T }\n",
+        instance: "W<u8>",
+        value: "W { n: 9, t: 0u8 }",
+        blanket: Some(("<U: Foo>", "W<U>")),
+        headless: false,
+    },
+    Header {
+        name: "a reference",
+        params: "<'a, T>",
+        head: "&'a T",
+        items: "",
+        instance: "&'a A",
+        value: "&A { n: 9 }",
+        blanket: Some(("<'a, U: Foo>", "&'a U")),
+        headless: true,
+    },
+    Header {
+        name: "a tuple",
+        params: "<T>",
+        head: "(T, u8)",
+        items: "",
+        instance: "(A, u8)",
+        value: "(A { n: 9 }, 1u8)",
+        blanket: Some(("<U: Foo>", "(U, u8)")),
+        headless: false,
+    },
+    Header {
+        name: "an array of a const length",
+        params: "<const N: usize>",
+        head: "[u8; N]",
+        items: "",
+        instance: "[u8; 3]",
+        value: "[1u8, 2, 3]",
+        blanket: None,
+        headless: false,
+    },
+    Header {
+        name: "an array",
+        params: "<T>",
+        head: "[T; 2]",
+        items: "",
+        instance: "[A; 2]",
+        value: "[A { n: 9 }, A { n: 8 }]",
+        blanket: Some(("<U: Foo>", "[U; 2]")),
+        headless: false,
+    },
+    Header {
+        name: "an option",
+        params: "<T>",
+        head: "Option<T>",
+        items: "",
+        instance: "Option<A>",
+        value: "Some(A { n: 9 })",
+        blanket: Some(("<U: Foo>", "Option<U>")),
+        headless: false,
+    },
+    Header {
+        name: "a struct in a struct",
+        params: "<T>",
+        head: "W<W<T>>",
+        items: "#[derive(Discard where T: Discard)]\nstruct W<T> { n: u8, t: T }\n",
+        instance: "W<W<u8>>",
+        value: "W { n: 9, t: W { n: 8, t: 0u8 } }",
+        blanket: Some(("<U: Foo>", "W<W<U>>")),
+        headless: false,
+    },
+];
+
+/// How `Small`'s impl for an instance of the header is given, if it is.
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Given {
+    /// For the instance alone.
+    Instance,
+    /// For every instance whose parameter is `Foo`, as `A` and `u8` are.
+    Blanket,
+    /// Not at all: no instance can be `Small`.
+    Never,
+}
+
+/// A program with `Bump`'s impl for `h`, whose own `bump` panics if
+/// `lie`, `Small`'s impl given as `g`, and a `main` calling `bump` of
+/// `h`'s value, saying `panic` if `says`.
+fn overridden(h: &Header, g: Given, lie: bool, says: bool) -> Option<String> {
+    let small = match g {
+        Given::Instance => {
+            let params = if h.instance.contains("'a") {
+                "<'a>"
+            } else {
+                ""
+            };
+            format!("impl{params} Small for {} {{}}\n", h.instance)
+        }
+        Given::Blanket => {
+            let (params, head) = h.blanket?;
+            format!("impl{params} Small for {head} {{}}\n")
+        }
+        Given::Never => String::new(),
+    };
+    let body = match lie {
+        true => "panic(\"bumped\")",
+        false => "1",
+    };
+    let says = if says { "panic" } else { "{}" };
+    Some(format!(
+        "trait Small {{}}\n\ntrait Foo {{}}\n\n#[derive(Discard)]\nstruct A {{ n: u8 }}\n\n\
+         impl Foo for A {{}}\n\nimpl Foo for u8 {{}}\n\n{}\n{small}\n\
+         trait Bump {{\n    fn bump(&self) -> u8 with panic unless Self: Small {{ 1 }}\n}}\n\n\
+         impl{} Bump for {} {{\n    fn bump(&self) -> u8 with panic {{ {body} }}\n}}\n\n\
+         fn main() with {says} {{\n    let v = {};\n    let _b = Bump::bump(&v);\n}}\n",
+        h.items, h.params, h.head, h.value,
+    ))
+}
+
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn overrides_by_header() {
+    let mut failures = Vec::new();
+    let mut count = 0;
+    for h in &HEADERS {
+        for g in [Given::Instance, Given::Blanket, Given::Never] {
+            for lie in [false, true] {
+                for says in [false, true] {
+                    let Some(src) = overridden(h, g, lie, says) else {
+                        continue;
+                    };
+                    count += 1;
+                    let got = verdict(&src);
+                    // Barred: some instance may be `Small`, so the impl's
+                    // own method can't panic, as a call at one has no
+                    // `panic`. Met: the instance called is.
+                    let barred = g != Given::Never || h.headless;
+                    let met = g != Given::Never;
+                    let ok = match (lie, &got) {
+                        (true, Err(m)) if barred => !m.starts_with("accepted"),
+                        // Where none can be, it may; and every call says it.
+                        (true, Err(m)) if !says => m.contains("doesn't say `with panic`"),
+                        (true, Err(m)) => m.starts_with("accepted, but it failed"),
+                        (false, r) if met || says => r.is_ok(),
+                        (false, Err(m)) => m.contains("doesn't say `with panic`"),
+                        _ => false,
+                    };
+                    if !ok {
+                        let what = format!(
+                            "{}, `Small` given {g:?}, {}, main {}",
+                            h.name,
+                            if lie { "panicking" } else { "not panicking" },
+                            if says {
+                                "saying `panic`"
+                            } else {
+                                "saying nothing"
+                            },
+                        );
+                        failures.push(format!("{what}: {got:?}\n{src}"));
+                    }
+                }
+            }
+        }
+    }
+    assert!(count >= 80, "only {count} programs");
+    assert!(
+        failures.is_empty(),
+        "{} of {count} failed:\n\n{}",
+        failures.len(),
+        failures.join("\n\n")
+    );
+}

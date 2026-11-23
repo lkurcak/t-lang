@@ -245,6 +245,13 @@ impl Checker {
     /// its trait's method says `unless` a bound that the impl's type may
     /// meet, as a call through the trait there has none (lemma B6 of
     /// docs/92-where-a-bound-holds.md).
+    ///
+    /// "May meet" is of any instance of the impl's type, as `W<T>` is
+    /// `W<u8>` in a copy: so it's that the bound isn't refuted there, by
+    /// unifying each impl's type with it (lemma N1 of
+    /// docs/73-for-over-collections.md), as coherence asks. Matching
+    /// impls against it, its parameters fixed, misses `impl Small for
+    /// W<u8>` (retrospective 18).
     pub(super) fn barred(&self, symbol: &str) -> Vec<(Type, String)> {
         let mut out = Vec::new();
         for g in self.unless.get(symbol).into_iter().flatten() {
@@ -266,14 +273,15 @@ impl Checker {
                     ty: this.clone(),
                     trait_name: g.pred.trait_name.clone(),
                 };
-                let open = matches!(this, Type::Param(..) | Type::Proj(..) | Type::Opaque(..));
-                let local = &self.adts.proj.local;
-                let may = open
-                    || self.pred_holds(&pred)
-                    || self
-                        .traits
-                        .select(&this, Some(&pred.trait_name), local)
-                        .is_some();
+                let may = self.pred_holds(&pred)
+                    || !crate::traits::refuted(
+                        &self.traits.impls,
+                        &self.traits.sealed,
+                        &crate::traits::Knowable::Closed,
+                        &this,
+                        &pred.trait_name,
+                        0,
+                    );
                 if may {
                     let tr = crate::check::source_name(&pred.trait_name);
                     out.push((g.atom.clone(), format!("{this}: {tr}")));
