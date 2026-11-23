@@ -91,6 +91,23 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
 `old` can only be in a postcondition, and not inside another `old`,
 which would mean the same.
 
+What the arguments were is kept four levels deep: each reference, box
+and struct on the way is one. So `old(**a)` of an `a: &mut &mut u8` is
+known, and `old(*****a)` five references deep isn't: nothing can be
+proved of it, as the checker no longer knows what was there. It mustn't
+read what's there *now* instead, which may have been written since:
+until 0.106.1 it did, and `ensures *****a == old(*****a)` held of a body
+that wrote 3 there.
+
+```rust,error
+fn f(a: &mut &mut &mut &mut &mut u8) ensures *****a == old(*****a) {
+    *****a = 3;
+}
+
+fn main() {}
+// error: can't prove `*****a == old(*****a)` for what `f` ensures
+```
+
 ## Call-scoped: when the value at return is the value after
 
 What the caller learns is what the callee left behind the reference when
@@ -283,7 +300,9 @@ Step 21's induction, with three more ways to learn facts.
 - **P3 (the caller's fact).** After the call, the lent place is a new
   object, whose value is what the callee left (P1), of which the
   postcondition holds (P2). `old(..)` is about the arguments as they
-  were, kept from before the call.
+  were, kept from before the call: each read then, four levels deep,
+  and unknown below (`Walk::settled`), so the value kept names no place
+  that's read later, in the caller or in the callee.
 - **P4 (invariants across a lend).** A struct's refinements hold of
   every value of it whenever it can be read. During a call lent one of
   its fields, nothing can read it: the caller waits, the borrow is

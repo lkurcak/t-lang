@@ -270,7 +270,10 @@ with `Self: Trait`. An impl's own method in its place has the trait's
 method's effects, as ever (docs/70-bounds-in-impls.md), and may have the
 effect only if its type can't meet the bound: if some impl of the bound's
 trait may be for it, it can't, as a call through the trait there has
-none.
+none. "Its type" is every type the impl is for: an `impl<T> Bump for
+W<T>` is for `W<u8>` too, so an `impl Small for W<u8>` is enough to
+take the effect away from its `bump`, and so is an impl another package
+could write, of `&T` for its own `T`.
 
 ```rust,error
 trait Small {
@@ -330,9 +333,14 @@ what the rest of the signature is there.
 - **Lemma B6 (every body).** Each body a call of a trait's method with an
   `unless` can run is under B4: the trait's default is walked under
   `Self: B`, in the trait's package; an impl's own method has no `a` at
-  all if any impl of `B`'s trait may be for its type. A trait whose
-  methods' bodies are written for it, derived or built in, can't say
-  `unless`.
+  all if any impl of `B`'s trait may be for an instance of its type, as
+  `W<u8>` is of `W<T>`. That's `B` not being *refuted* of its type
+  (lemma N1 of docs/73-for-over-collections.md): every impl that could
+  be for an instance is in a package loaded where the impl is, by the
+  orphan rule, and its type unifies with the impl's. A copy of the
+  method runs at an instance; if `B` holds there, the method was checked
+  without `a`. A trait whose methods' bodies are written for it, derived
+  or built in, can't say `unless`.
 - **Lemma B7 (the stack).** When effect `a` happens, every function on
   the stack says `a`, or says it with a condition that held (lemma C5 of
   docs/90-conditional-effects.md), or says `a unless B` in a copy whose
@@ -366,7 +374,10 @@ what the rest of the signature is there.
   loop is written out.
 - **An impl's own method** in place of a default with an `unless` isn't
   walked under the bound: it just can't have the effect, of a type that
-  may meet it.
+  may meet it, at any of its instances. Until 0.106.1 only the impl's
+  type itself was asked of, by matching impls against it, so an `impl<T>
+  Bump for W<T>` could panic though `impl Small for W<u8>` was there,
+  and a call at `W<u8>` had no `panic` (retrospective 18).
 
 ## Decisions
 

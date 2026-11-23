@@ -6073,19 +6073,29 @@ impl Walk<'_> {
     }
 
     /// `v`, with what each reference in it points to read now, `depth`
-    /// references deep, rather than when it's needed.
+    /// references and structs deep, rather than when it's needed: what a
+    /// function was given, which `old(..)` names. Deeper, what a reference
+    /// points to isn't known: read later, it would be what's there then,
+    /// which may have been written since. So the value mentions no place,
+    /// and is what was there when it was settled, or unknown
+    /// (retrospective 18: a reference left as it was below the depth made
+    /// `old(*****a)` the value written after).
     fn settled(&mut self, v: Val, depth: usize) -> Val {
+        let below = depth.saturating_sub(1);
         match v {
             Val::Ref(o, Pointee::Place(q)) if depth > 0 => {
                 let to = self.read_place(&q);
-                let to = self.settled(to, depth - 1);
+                let to = self.settled(to, below);
                 Val::Ref(o, Pointee::Val(Box::new(to)))
             }
-            Val::Struct(o, vals) if depth > 0 => {
-                let vals = vals
-                    .into_iter()
-                    .map(|v| self.settled(v, depth - 1))
-                    .collect();
+            Val::Ref(o, Pointee::Place(_)) => Val::Ref(o, Pointee::Unknown),
+            // What a box owns is a value already, but what it holds may
+            // point to places.
+            Val::Ref(o, Pointee::Val(to)) => {
+                Val::Ref(o, Pointee::Val(Box::new(self.settled(*to, below))))
+            }
+            Val::Struct(o, vals) => {
+                let vals = vals.into_iter().map(|v| self.settled(v, below)).collect();
                 Val::Struct(o, vals)
             }
             v => v,
