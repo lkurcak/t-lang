@@ -1440,6 +1440,25 @@ impl Projections {
         }
     }
 
+    /// The impls again, from `traits`, once `derive` has added its: these
+    /// are a copy, made when the impls a package writes were collected, and
+    /// what a bound decides must be what monomorphisation and every later
+    /// package decide, which see the derived impls too (H1 of
+    /// retrospective 19: a derived `Ord` refuted here, proved there).
+    pub fn refresh_impls(&mut self, traits: &Traits) {
+        let impls = traits.impls.iter().filter(|d| d.trait_name.is_some());
+        self.impls = Arc::new(impls.cloned().collect());
+    }
+
+    /// Are these impls `traits`' trait impls, each in its place? So that no
+    /// impl was added to one copy and not the other.
+    pub fn same_impls(&self, traits: &Traits) -> bool {
+        let theirs = traits.impls.iter().filter(|d| d.trait_name.is_some());
+        self.impls.len() == theirs.clone().count()
+            && (self.impls.iter().zip(theirs))
+                .all(|(a, b)| a.span == b.span && a.self_ty == b.self_ty)
+    }
+
     /// These, outside any function, impl or type: with no bounds in scope.
     pub fn outside(&self) -> Projections {
         Projections {
@@ -1797,11 +1816,18 @@ fn without(set: &Type, atom: &Type) -> Type {
 
 /// Whether `ty: tr` holds of every copy where it's asked (`true`), or of
 /// none (`false`), if that's decided there: proved from the bounds in scope
-/// (lemma B2 of docs/92-where-a-bound-holds.md); or refuted, no impl that
-/// could prove it of any instance of `ty` being there to find (lemma N1 of
-/// docs/73-for-over-collections.md), which of a type with no parameter in
-/// it is that none does. `None` where some copies may meet it and others
-/// not, or it's of a type not worked out yet.
+/// (lemma B2 of docs/92-where-a-bound-holds.md); or not, of a type with
+/// nothing in it that a copy could make another (`closed`), which is the
+/// type in every copy, with all of its impls here, by the orphan rule,
+/// derived ones too, and the checker's rules for the rest; or refuted, no
+/// impl that could prove it of any instance of `ty` being there to find
+/// (lemma N1 of docs/73-for-over-collections.md). `None` where some copies
+/// may meet it and others not, or it's of a type not worked out yet.
+///
+/// Monomorphisation asks this too, of types that are all closed, so it's
+/// decided there, as here (lemma A1 of docs/96-associated-effects-unless.md):
+/// until 0.107.1 a bound refuted never, as of `Copy` or a closure, stayed
+/// undecided in a copy (retrospective 19).
 fn decided(
     impls: &Impls,
     anon: &Anon,
@@ -1815,10 +1841,28 @@ fn decided(
     if implements_at(impls, anon, local, ty, tr, 0).is_ok() {
         return Some(true);
     }
-    if refuted(impls, anon.sealed, &Knowable::Closed, ty, tr, 0) {
+    if closed(ty) || refuted(impls, anon.sealed, &Knowable::Closed, ty, tr, 0) {
         return Some(false);
     }
     None
+}
+
+/// Is `t` the same type in every copy of the code it's in: nothing in it a
+/// type parameter, a variable of the checker's, a projection or an opaque
+/// type, which may stand for something else, nor a const item, which as a
+/// length may one day be its value (lemma C6 of docs/36-consts.md)? Then
+/// whether it implements a trait is what `implements_at` says, there and in
+/// monomorphisation alike, with every impl that could be for it loaded.
+fn closed(t: &Type) -> bool {
+    match t {
+        Type::Param(..)
+        | Type::Var(_)
+        | Type::Proj(..)
+        | Type::Opaque(..)
+        | Type::Const(_)
+        | Type::Inferred(..) => false,
+        t => t.parts().all(closed),
+    }
 }
 
 /// The region `t` has where `pat`, which `t` matches, has each of

@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.107.1 (2026-11-25)
+
+Step 97: retrospective 19's fixes. See
+[docs/96-associated-effects-unless.md](docs/96-associated-effects-unless.md#why-its-sound).
+
+### Fixed
+
+- An impl's associated effect whose `panic` hangs on a bound a type
+  derives, `effect e = panic unless T: Ord` at a `C` with
+  `#[derive(Ord)]`, was taken to have `panic` there by the checker of the
+  package that has `C`, which didn't see derived impls when it decided
+  such a bound, and to have none by monomorphisation and every later
+  package, which did. So a library's method that said `<W<C> as Go>::e`
+  could panic, and a program calling it in a function that says `with
+  {}` ran a `panic` (a hole since 0.107.0). Bounds are now decided with
+  every impl, derived ones too, wherever they're asked.
+- A bound an associated effect hangs on that the checker's rules decide,
+  `T: Copy` of a type that isn't `Copy`, or any bound of a closure's
+  type, was left undecided of a type with no parameter in it: refused
+  where it held, and a crash in monomorphisation where it didn't. Of
+  such a type it's now decided either way.
+- Such a bound of an array whose length is a const item, `[u8; LEN]: G`,
+  was worked out in a copy before `LEN` was its value, and left
+  undecided there: a crash in monomorphisation. Lengths are their values
+  first now.
+
 ## 0.107.0 (2026-11-23)
 
 Step 96: associated effects that hang on a bound. See
