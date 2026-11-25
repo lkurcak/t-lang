@@ -1408,6 +1408,9 @@ impl Checker {
         self.collect_impls(prog)?;
         self.projections_known(prog);
         self.derive(prog)?;
+        // What a bound decides is decided with the derived impls too, as
+        // monomorphisation and later packages see them (retrospective 19).
+        self.adts.proj.refresh_impls(&self.traits);
         self.signatures(prog, &fns)?;
         self.const_lengths()?;
         self.pending_refinements()?;
@@ -1737,6 +1740,13 @@ impl Checker {
         // where another body uses it. Then callees first, a group at a
         // time, so that what's inferred of a function's effects is known
         // where it's called (see `check/infer.rs`).
+        //
+        // The projections' copy of the impls is the program's: a bound's
+        // decided by the same impls in a body as in monomorphisation.
+        assert!(
+            self.adts.proj.same_impls(&self.traits),
+            "an impl was added after the projections' copy of them was made"
+        );
         let all = prog.all_fns();
         let roots: Vec<usize> = (0..all.len()).map(|i| infer::root(&all, i)).collect();
         for group in infer::body_groups(prog, &all, self.from.all_fns) {

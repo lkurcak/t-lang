@@ -212,12 +212,19 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
   of a binding that hangs on a bound `B`, at the impl's arguments `σ`:
   out where `B[σ]` is proved from the bounds in scope, which holds in
   every copy made there (lemma B2 of docs/92-where-a-bound-holds.md); in
-  where it's refuted, no impl that could prove it of any instance of
-  `B[σ]`'s type being there to find (lemma N1 of
-  docs/73-for-over-collections.md), which of a type with no parameter in
-  it is that none proves it, as all its impls are loaded (the orphan
-  rule). `refuted` gives up at a depth, saying it may hold: then it's
-  left undecided, which allows less.
+  where it isn't, of a type that's the same in every copy, with nothing
+  in it a parameter, a projection, an opaque type or a const item could
+  make another (`closed`), as all its impls are loaded (the orphan rule),
+  derived ones too, and the checker's rules decide the rest; in where
+  it's refuted, no impl that could prove it of any instance of `B[σ]`'s
+  type being there to find (lemma N1 of docs/73-for-over-collections.md).
+  `refuted` gives up at a depth, saying it may hold: then it's left
+  undecided, which allows less. The impls it's decided by are the
+  program's, those `derive` writes among them, so a later package and
+  monomorphisation decide it the same (H1 of retrospective 19: they were
+  a copy made before `derive`, so a derived `Ord` was refuted here and
+  proved there, and an impl's method that said `<W<C> as Go>::e` could
+  panic where another package called it in `with {}`).
 - **Lemma A2 (itself, and at most its binding).** Where it isn't decided,
   `<X as Tr>::e` stays itself. The impl `project` found for `X` is the
   impl in every copy (coherence, and `alone` of docs/73), so in each it's
@@ -251,7 +258,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
   copy, what a call through the trait counts on holds of the body that
   runs.
 - **Lemma A6 (copies).** Monomorphisation decides every projection by the
-  same `project`, every type being known (A1), and leaves out of each
+  same `project`, every type being known and closed, so every bound
+  decided (A1; until 0.107.1 one `refuted` never decides, `Copy` of a
+  type that isn't, or anything of a closure, was left in a copy), and leaves out of each
   copy of a method each atom it says `unless` a bound that holds of the
   copy's types (lemma B8 of docs/92). The interpreter checks every
   function on the stack at each effect, as before.

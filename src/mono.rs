@@ -1543,9 +1543,14 @@ impl Cx<'_, '_, '_> {
 
     /// `t`, of the original, as it is in the copy: with the copy's type
     /// arguments, every opaque type replaced by the type it stands for,
-    /// and every projection worked out, as each can be now.
+    /// and every projection worked out, as each can be now. Each length a
+    /// const item is, is its value before projections are worked out, as
+    /// a bound an associated effect hangs on may be of `[u8; LEN]`, which
+    /// is decided only of `[u8; 3]` (retrospective 19), and after, as what
+    /// one is may say `LEN` too.
     fn subst(&self, t: &Type) -> Type {
-        self.m.lengths(&self.m.proj.reveal(&self.s.apply(t)))
+        let t = self.m.lengths(&self.s.apply(t));
+        self.m.lengths(&self.m.proj.reveal(&t))
     }
 
     /// `t`, of the original, as it is in the copy, as `subst` says, and
