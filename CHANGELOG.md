@@ -21,6 +21,10 @@ Step 97: retrospective 19's fixes. See
   type, was left undecided of a type with no parameter in it: refused
   where it held, and a crash in monomorphisation where it didn't. Of
   such a type it's now decided either way.
+- Such a bound of an array whose length is a const item, `[u8; LEN]: G`,
+  was worked out in a copy before `LEN` was its value, and left
+  undecided there: a crash in monomorphisation. Lengths are their values
+  first now.
 
 ## 0.107.0 (2026-11-23)
 

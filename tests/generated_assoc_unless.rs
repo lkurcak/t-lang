@@ -607,7 +607,8 @@ fn guards_by_how_the_bound_is_given() {
                         // Where the bound holds, what says the projection
                         // says no `panic`, and can't have one.
                         (true, true, Err(m)) => {
-                            m.contains("may panic, but") && m.contains(&format!("{who} doesn't say"))
+                            m.contains("may panic, but")
+                                && m.contains(&format!("{who} doesn't say"))
                         }
                         (true, false, r) => r.is_ok(),
                         // Where it doesn't, it may, and does, which is no
