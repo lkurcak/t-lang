@@ -185,27 +185,28 @@ that starts with an uppercase letter and isn't one of the last three.
 > the interpreter and the C backend see nothing new, and every lemma
 > about them holds as it did.
 
-## Consts in patterns, not yet
+## Consts in patterns
 
 The case rule makes room for a const in a pattern: `MAX =>` is now
-unambiguously a path. What it would mean isn't decided (a test against
-an opaque value, which no `match` could count as exhaustive), so for
-now it's an error that says so:
+unambiguously a path. What it would mean wasn't decided here (a test
+against an opaque value, which no `match` could count as exhaustive), so
+it was an error that said so. Step 100 decided it
+(docs/100-patterns.md): it compares with the const's value, and covers
+no value, so a `match` on consts still needs a `_`:
 
-```rust,error
+```rust
 const LIMIT: u8 = 3;
 
 fn at_limit(x: u8) -> bool {
     match x {
         LIMIT => true,
-        // error: `LIMIT` is a const: a pattern can't name one yet
         _ => false,
     }
 }
 ```
 
-Adding them later won't change the meaning of any program that checks
-now.
+That changed the meaning of no program that checked before, as none
+could name a const in a pattern.
 
 ## Design decisions worth noticing
 
@@ -234,7 +235,7 @@ now.
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| consts in patterns | a test against an opaque value needs a design | — |
+| consts in patterns | a test against an opaque value needs a design | 100 |
 | `use Shape::*` | glob imports would make resolution depend on order (lemma M1) | — |
 | a variant as a function value, `map(Some)` | a closure `\|x\| Some(x)` does it; closures are their own types | — |
 | struct-like variants, `Move { x, y }` | variants hold tuples | — |

@@ -1012,6 +1012,14 @@ impl Parser {
     }
 
     fn unexpected(&self, wanted: &str) -> Error {
+        // A word that's a keyword, where a name would be: `let sealed`,
+        // `fn invariant`. Many are ordinary words.
+        if let ("a name" | "a pattern", Some(word)) = (wanted, self.peek().keyword()) {
+            return Error::syntax(
+                self.span(),
+                format!("`{word}` is a keyword, so it can't be a name"),
+            );
+        }
         Error::syntax(
             self.span(),
             format!("expected {wanted}, found {}", self.peek().describe()),
@@ -2520,12 +2528,13 @@ impl Parser {
 
     /// `let pat = e`, after the `if` or `while` of an `if let` or `while
     /// let` (`what`).
-    fn let_cond(&mut self, what: &str) -> Result<LetCond, Error> {
+    /// `let pat = e`, a condition of a chain: `e` binds more tightly than
+    /// `&&`, which joins it to the next condition.
+    fn let_cond(&mut self) -> Result<LetCond, Error> {
         let let_span = self.expect(Tok::Let)?;
         let pat = self.pattern()?;
         self.expect(Tok::Eq)?;
-        let expr = self.structs(false, Self::expr)?;
-        no_chain(&expr, what)?;
+        let expr = self.binary(AND_PREC + 1)?;
         Ok(LetCond {
             let_span,
             pat,
@@ -2533,10 +2542,73 @@ impl Parser {
         })
     }
 
+    /// What an `if` or a `while` tests: an expression, or a chain of
+    /// conditions with a `let` in it, joined by `&&`
+    /// (docs/100-patterns.md). Each condition binds more tightly than
+    /// `&&`; with no `let`, they're the operands of the `&&`s, and the
+    /// expression goes on from there as any other, so what has no `let`
+    /// in it means what it always did.
+    fn condition(&mut self) -> Result<Result<Expr, Chain>, Error> {
+        self.structs(false, |p| {
+            let mut conds = Vec::new();
+            loop {
+                conds.push(match p.peek() {
+                    Tok::Let => Cond::Let(p.let_cond()?),
+                    _ => Cond::Bool(p.binary(AND_PREC + 1)?),
+                });
+                if !p.eat(&Tok::AndAnd) {
+                    break;
+                }
+            }
+            if conds.iter().any(|c| matches!(c, Cond::Let(_))) {
+                return match p.peek() {
+                    Tok::OrOr => Err(Error::syntax(
+                        p.span(),
+                        "`||` can't join a condition with a `let` in it: what the `let` binds \
+                         would be there on one side and not the other; put the `||` in \
+                         parentheses, or use an `if` inside",
+                    )),
+                    Tok::DotDot | Tok::Eq | Tok::OpEq(_) => Err(Error::syntax(
+                        p.span(),
+                        "in a condition with a `let`, put a range or an assignment in \
+                         parentheses",
+                    )),
+                    _ => Ok(Err(Chain { conds })),
+                };
+            }
+            let mut ops = conds.into_iter().map(|c| match c {
+                Cond::Bool(e) => e,
+                Cond::Let(_) => unreachable!("no `let` among them"),
+            });
+            let mut lhs = ops.next().expect("one condition at least");
+            let mut lhs_op = match &lhs.kind {
+                ExprKind::Binary(op, ..) => Some(*op),
+                _ => None,
+            };
+            for rhs in ops {
+                let span = lhs.span.to(rhs.span);
+                lhs = Expr {
+                    kind: ExprKind::Binary(BinOp::And, Box::new(lhs), Box::new(rhs)),
+                    span,
+                    id: p.id(),
+                };
+                lhs_op = Some(BinOp::And);
+            }
+            let lhs = p.binary_op_from(lhs, lhs_op, 0)?.0;
+            let lhs = p.range_from(lhs)?;
+            Ok(Ok(p.expr_from(lhs)?))
+        })
+    }
+
     /// An expression, which may be an assignment: `x = 1`, `p.x += 2`.
     /// Assignment binds less tightly than anything, and to the right.
     fn expr(&mut self) -> Result<Expr, Error> {
         let lhs = self.range()?;
+        self.expr_from(lhs)
+    }
+
+    /// `expr`, from its first operand, `lhs`, parsed already.
+    fn expr_from(&mut self, lhs: Expr) -> Result<Expr, Error> {
         let op = match self.peek() {
             Tok::Eq => None,
             Tok::OpEq(op) => Some(match op {
@@ -2574,6 +2646,11 @@ impl Parser {
     /// so `0..n + 1` is `0..(n + 1)`, and doesn't chain.
     fn range(&mut self) -> Result<Expr, Error> {
         let lhs = self.binary(0)?;
+        self.range_from(lhs)
+    }
+
+    /// `range`, from its first operand, `lhs`, parsed already.
+    fn range_from(&mut self, lhs: Expr) -> Result<Expr, Error> {
         match self.peek() {
             Tok::DotDot => {}
             Tok::DotDotEq => {
@@ -2616,8 +2693,18 @@ impl Parser {
     /// operation, not in parentheses: whether it may be the operand of
     /// another is `BinOp::nests_in`.
     fn binary_op(&mut self, min_prec: u8) -> Result<(Expr, Option<BinOp>), Error> {
-        let mut lhs = self.cast()?;
-        let mut lhs_op = None;
+        let lhs = self.cast()?;
+        self.binary_op_from(lhs, None, min_prec)
+    }
+
+    /// `binary_op`, from its first operand, `lhs`, parsed already, and
+    /// its operator, `lhs_op`.
+    fn binary_op_from(
+        &mut self,
+        mut lhs: Expr,
+        mut lhs_op: Option<BinOp>,
+        min_prec: u8,
+    ) -> Result<(Expr, Option<BinOp>), Error> {
         while let Some((op, prec)) = self.binop() {
             if prec < min_prec {
                 break;
@@ -2935,6 +3022,13 @@ impl Parser {
             Tok::While | Tok::Loop | Tok::For | Tok::Lifetime(_) => return self.loop_expr(),
             Tok::Return | Tok::Break | Tok::Continue => return self.jump(),
             Tok::Pipe | Tok::OrOr | Tok::Move => return self.lambda(),
+            Tok::Let => {
+                return Err(Error::syntax(
+                    self.span(),
+                    "a `let` can only be a condition of an `if` or a `while`, joined to the \
+                     others by `&&`",
+                ));
+            }
             _ => return Err(self.unexpected("an expression")),
         };
         self.bump();
@@ -2974,10 +3068,7 @@ impl Parser {
 
     fn if_expr(&mut self) -> Result<Expr, Error> {
         let start = self.expect(Tok::If)?;
-        let cond = match self.peek() {
-            Tok::Let => Err(self.let_cond("an `if let`")?),
-            _ => Ok(self.structs(false, Self::expr)?),
-        };
+        let cond = self.condition()?;
         let then = self.block()?;
         let els = if self.eat(&Tok::Else) {
             Some(Box::new(if *self.peek() == Tok::If {
@@ -3046,20 +3137,20 @@ impl Parser {
             });
         }
         let (cond, inv, body) = match self.peek() {
-            Tok::While if *self.peek2() == Tok::Let => {
-                self.bump();
-                let c = self.let_cond("a `while let`")?;
-                let inv = self.invariant()?;
-                let body = self.block()?;
-                return Ok(Expr {
-                    span: start.to(body.span),
-                    kind: ExprKind::WhileLet(label, Box::new(c), inv, Box::new(body)),
-                    id: self.id(),
-                });
-            }
             Tok::While => {
                 self.bump();
-                let c = self.structs(false, Self::expr)?;
+                let c = match self.condition()? {
+                    Ok(c) => c,
+                    Err(chain) => {
+                        let inv = self.invariant()?;
+                        let body = self.block()?;
+                        return Ok(Expr {
+                            span: start.to(body.span),
+                            kind: ExprKind::WhileLet(label, Box::new(chain), inv, Box::new(body)),
+                            id: self.id(),
+                        });
+                    }
+                };
                 (Some(c), self.invariant()?, self.block()?)
             }
             Tok::Loop => {
@@ -3338,7 +3429,42 @@ impl Parser {
         })
     }
 
+    /// A pattern, which can't be `..`: that's only one of a tuple's, a
+    /// variant's or an array's (`element`).
     fn pattern(&mut self) -> Result<Pattern, Error> {
+        let p = self.alternatives()?;
+        if let PatternKind::Rest = p.kind {
+            return Err(Error::syntax(
+                p.span,
+                "`..` stands for the values of a tuple, a variant or an array that the \
+                 patterns beside it don't name, so it can only be one of those: `(a, ..)`",
+            ));
+        }
+        Ok(p)
+    }
+
+    /// One of the patterns of a tuple's, a variant's or an array's values:
+    /// a pattern, or `..`, for the values the others don't name.
+    fn element(&mut self) -> Result<Pattern, Error> {
+        self.alternatives()
+    }
+
+    /// The patterns of a tuple's, a variant's or an array's values, with
+    /// at most one `..`: with two, which values each stands for isn't said.
+    fn one_rest(pats: &[Pattern]) -> Result<(), Error> {
+        let mut rests = pats.iter().filter(|p| matches!(p.kind, PatternKind::Rest));
+        if let (Some(_), Some(second)) = (rests.next(), rests.next()) {
+            return Err(Error::syntax(
+                second.span,
+                "only one `..` can be among a pattern's values: with two, which values each \
+                 stands for isn't said",
+            ));
+        }
+        Ok(())
+    }
+
+    /// A pattern, or alternatives of one: `a | b`.
+    fn alternatives(&mut self) -> Result<Pattern, Error> {
         let first = self.pat_atom()?;
         if *self.peek() == Tok::OrOr {
             let span = self.span();
@@ -3354,6 +3480,12 @@ impl Parser {
         let mut alts = vec![first];
         while self.eat(&Tok::Pipe) {
             alts.push(self.pat_atom()?);
+        }
+        if let Some(rest) = alts.iter().find(|a| matches!(a.kind, PatternKind::Rest)) {
+            return Err(Error::syntax(
+                rest.span,
+                "`..` can't be an alternative: it stands for values, not one of them",
+            ));
         }
         let span = alts[0].span.to(alts[alts.len() - 1].span);
         Ok(Pattern {
@@ -3401,6 +3533,9 @@ impl Parser {
                     id: self.id(),
                 });
             }
+            // `..` alone: the values of a tuple, variant or array the
+            // patterns beside it don't name.
+            Tok::DotDot if !starts_pat_int(self.peek2()) => PatternKind::Rest,
             Tok::DotDot | Tok::DotDotEq => {
                 let inclusive = self.bump().tok == Tok::DotDotEq;
                 let (hi, lit, end) = self.pat_int()?;
@@ -3430,7 +3565,8 @@ impl Parser {
             }
             Tok::LParen => {
                 let open = self.bump().span;
-                let (mut pats, tuple, end) = self.parens(open, Self::pattern)?;
+                let (mut pats, tuple, end) = self.parens(open, Self::element)?;
+                Self::one_rest(&pats)?;
                 return Ok(match pats.pop() {
                     None => Pattern {
                         kind: PatternKind::Unit,
@@ -3445,6 +3581,12 @@ impl Parser {
                             id: self.id(),
                         }
                     }
+                    // `(..)`: any tuple.
+                    Some(inner) if matches!(inner.kind, PatternKind::Rest) => Pattern {
+                        kind: PatternKind::Tuple(vec![inner]),
+                        span: start.to(end),
+                        id: self.id(),
+                    },
                     // Only grouped: `(a | b)`.
                     Some(inner) => Pattern {
                         span: start.to(end),
@@ -3454,7 +3596,8 @@ impl Parser {
             }
             Tok::LBracket => {
                 self.bump();
-                let (pats, end) = self.comma_list(Tok::RBracket, Self::pattern)?;
+                let (pats, end) = self.comma_list(Tok::RBracket, Self::element)?;
+                Self::one_rest(&pats)?;
                 return Ok(Pattern {
                     kind: PatternKind::Array(pats),
                     span: start.to(end),
@@ -3475,7 +3618,8 @@ impl Parser {
                 _ if starts_upper(&name) => {
                     let name = self.ident()?;
                     let (args, end, parens) = if self.eat(&Tok::LParen) {
-                        let (args, end) = self.comma_list(Tok::RParen, Self::pattern)?;
+                        let (args, end) = self.comma_list(Tok::RParen, Self::element)?;
+                        Self::one_rest(&args)?;
                         (args, end, true)
                     } else {
                         (Vec::new(), name.span, false)
@@ -3531,10 +3675,11 @@ impl Parser {
         let ty = self.join_all(&all[..all.len() - 1]);
         let targs = ty_segs[ty_segs.len() - 1].1.clone();
         let (args, end) = if self.eat(&Tok::LParen) {
-            self.comma_list(Tok::RParen, Self::pattern)?
+            self.comma_list(Tok::RParen, Self::element)?
         } else {
             (Vec::new(), last.span)
         };
+        Self::one_rest(&args)?;
         Ok(Pattern {
             kind: PatternKind::Variant(ty, targs, last, args),
             span: start.to(end),
@@ -3731,6 +3876,9 @@ fn starts_expr(tok: &Tok) -> bool {
     )
 }
 
+/// How tightly `&&` binds: a chain's conditions bind more tightly.
+const AND_PREC: u8 = 2;
+
 const CMP_PREC: u8 = 3;
 
 /// How tightly `&`, `|`, `^`, `<<` and `>>` bind: more than comparisons,
@@ -3741,7 +3889,7 @@ const BITS_PREC: u8 = 4;
 fn binop(tok: &Tok) -> Option<(BinOp, u8)> {
     Some(match tok {
         Tok::OrOr => (BinOp::Or, 1),
-        Tok::AndAnd => (BinOp::And, 2),
+        Tok::AndAnd => (BinOp::And, AND_PREC),
         Tok::EqEq => (BinOp::Eq, CMP_PREC),
         Tok::NotEq => (BinOp::Ne, CMP_PREC),
         Tok::Lt => (BinOp::Lt, CMP_PREC),

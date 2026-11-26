@@ -118,6 +118,20 @@ pub enum Tok {
 }
 
 impl Tok {
+    /// The word it is, if it's a keyword: `sealed`, `with`.
+    pub fn keyword(&self) -> Option<String> {
+        match self {
+            Tok::Ident(_) | Tok::Lifetime(_) | Tok::True | Tok::False => None,
+            _ => {
+                let d = self.describe();
+                let w = d.strip_prefix('`')?.strip_suffix('`')?;
+                w.bytes()
+                    .all(|b| b.is_ascii_lowercase())
+                    .then(|| w.to_string())
+            }
+        }
+    }
+
     /// How the token is shown in error messages.
     pub fn describe(&self) -> String {
         let s = match self {

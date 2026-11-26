@@ -83,6 +83,13 @@ enum Place {
     Closure,
     /// In a branch whose condition makes it hold; asked there, later.
     SamePath,
+    /// In the block of a chain whose conditions make it hold; asked in its
+    /// `else` (docs/100-patterns.md).
+    ChainElse,
+    /// The same; asked after the chain.
+    AfterChain,
+    /// The same; asked there, later.
+    ChainSamePath,
 }
 
 /// The function: `l`'s elements are below 10; `Small` says below `n`.
@@ -113,8 +120,17 @@ fn program(learn: Learn, place: Place) -> String {
         Place::SamePath => format!(
             "    if n > 10 {{\n        {{\n            {s}\n        }}\n        let z: Small = l;\n        first(n, z)\n    }} else {{\n        0\n    }}"
         ),
+        Place::ChainElse => format!(
+            "    if let Some(_) = Some(1u8) && n > 10 {{\n        {{\n            {s}\n        }}\n        0\n    }} else {{\n        {ask}\n    }}"
+        ),
+        Place::AfterChain => format!(
+            "    if let Some(_) = Some(1u8) && n > 10 {{\n        {{\n            {s}\n        }}\n    }}\n    {ask}"
+        ),
+        Place::ChainSamePath => format!(
+            "    if let Some(_) = Some(1u8) && n > 10 {{\n        {{\n            {s}\n        }}\n        let z: Small = l;\n        first(n, z)\n    }} else {{\n        0\n    }}"
+        ),
     };
-    let main_n = if matches!(place, Place::SamePath) {
+    let main_n = if matches!(place, Place::SamePath | Place::ChainSamePath) {
         11
     } else {
         3
@@ -152,6 +168,9 @@ fn learned_on_a_path_stays_on_it() {
         Place::Iteration,
         Place::Closure,
         Place::SamePath,
+        Place::ChainElse,
+        Place::AfterChain,
+        Place::ChainSamePath,
     ];
     let mut wrong = Vec::new();
     let mut count = 0;
@@ -160,7 +179,7 @@ fn learned_on_a_path_stays_on_it() {
             let src = program(learn, place);
             count += 1;
             let got = verdict(&src);
-            let ok = matches!(place, Place::SamePath);
+            let ok = matches!(place, Place::SamePath | Place::ChainSamePath);
             let right = match (&got, ok) {
                 (Ok(()), true) => true,
                 (Err(m), false) => m.contains("can't prove") && m.contains("for `z`"),

@@ -170,6 +170,16 @@ break:
   breaks like any expression.
 - **If an `if` or `match` head breaks, its `{` goes on a line of its own**,
   so the condition doesn't run into the body.
+- **A chain of conditions breaks as a run of `&&`** (step 100), each `let`
+  and `bool` after the first on its own line, indented once, and the `{`
+  on the next, as rustfmt does:
+
+  ```text
+  if let Some(first_value) = a
+      && let Some(second_value) = b
+      && first_value < second_value
+  {
+  ```
 - **A last argument that's a closure with a block, a block, `match`, `if` or
   struct literal breaks inside, not between arguments.** This is the one
   rule Wadler's groups can't express:

@@ -1581,9 +1581,9 @@ impl Expr {
             }
             ExprKind::If(c, then, els) => [&**c, then].into_iter().chain(els.as_deref()).collect(),
             ExprKind::IfLet(c, then, els) => {
-                [&c.expr, then].into_iter().chain(els.as_deref()).collect()
+                c.exprs().chain([&**then]).chain(els.as_deref()).collect()
             }
-            ExprKind::WhileLet(_, c, _, body) => vec![&c.expr, body],
+            ExprKind::WhileLet(_, c, _, body) => c.exprs().chain([&**body]).collect(),
             ExprKind::Block(stmts, tail) => stmts
                 .iter()
                 .flat_map(|s| match s {
@@ -1938,10 +1938,11 @@ pub enum ExprKind {
     MethodCall(Box<Expr>, Ident, Vec<TypeExpr>, Vec<Expr>),
     /// `if c { .. } else { .. }`; the `else` is optional.
     If(Box<Expr>, Box<Expr>, Option<Box<Expr>>),
-    /// `if let pat = e { .. } else { .. }`; the `else` is optional. Only
-    /// until paths are resolved, which rewrites it as the `match` it means
-    /// (see `check/modules.rs`).
-    IfLet(Box<LetCond>, Box<Expr>, Option<Box<Expr>>),
+    /// `if let pat = e { .. } else { .. }`, or a chain of conditions with
+    /// a `let` in it, `if let Some(x) = o && x > 3 { .. }`; the `else` is
+    /// optional. Only until paths are resolved, which rewrites it as the
+    /// `match` it means (see `check/modules.rs`).
+    IfLet(Box<Chain>, Box<Expr>, Option<Box<Expr>>),
     /// `[a, b, c]`: an array of these values, in order.
     Array(Vec<Expr>),
     /// `(a, b)`: a tuple of these values, two or more, in order (see
@@ -1979,10 +1980,10 @@ pub enum ExprKind {
     /// `while c { .. }`, or `'a: while c { .. }` with a label, maybe with
     /// an `invariant`.
     While(Option<Label>, Box<Expr>, Invariant, Box<Expr>),
-    /// `while let pat = e { .. }`, maybe with a label and an `invariant`.
-    /// Only until paths are resolved, which rewrites it as the `loop` it
-    /// means (see `check/modules.rs`).
-    WhileLet(Option<Label>, Box<LetCond>, Invariant, Box<Expr>),
+    /// `while let pat = e { .. }`, or a chain with a `let` in it, maybe
+    /// with a label and an `invariant`. Only until paths are resolved,
+    /// which rewrites it as the `loop` it means (see `check/modules.rs`).
+    WhileLet(Option<Label>, Box<Chain>, Invariant, Box<Expr>),
     /// `loop { .. }`: runs its body again and again, until a `break`.
     Loop(Option<Label>, Invariant, Box<Expr>),
     /// `for p in it { .. }`. Only until paths are resolved, which rewrites
@@ -2017,6 +2018,39 @@ pub struct LetCond {
     pub let_span: Span,
     pub pat: Pattern,
     pub expr: Expr,
+}
+
+/// What an `if` or a `while` with a `let` in it tests: conditions joined
+/// by `&&`, worked out in order until one doesn't hold, each a `let` or a
+/// `bool` (docs/100-patterns.md). What a `let` binds is there in the
+/// conditions after it and in the block. At least one is a `let`.
+#[derive(Debug, Clone)]
+pub struct Chain {
+    pub conds: Vec<Cond>,
+}
+
+/// One condition of a `Chain`.
+#[derive(Debug, Clone)]
+pub enum Cond {
+    Let(LetCond),
+    Bool(Expr),
+}
+
+impl Chain {
+    /// The chain of the one condition `c`.
+    pub fn one(c: LetCond) -> Chain {
+        Chain {
+            conds: vec![Cond::Let(c)],
+        }
+    }
+
+    /// The expressions in it, in order: each `let`'s value, each `bool`.
+    pub fn exprs(&self) -> impl Iterator<Item = &Expr> {
+        self.conds.iter().map(|c| match c {
+            Cond::Let(l) => &l.expr,
+            Cond::Bool(e) => e,
+        })
+    }
 }
 
 /// `for pat in iter { body }`, or with a label.
@@ -2162,18 +2196,32 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
             els.iter().for_each(|e| go(e, bound));
         }
         ExprKind::IfLet(c, then, els) => {
-            go(&c.expr, bound);
             let scope = bound.len();
-            pattern_binds(&c.pat, bound);
+            for cond in &c.conds {
+                match cond {
+                    Cond::Let(l) => {
+                        go(&l.expr, bound);
+                        pattern_binds(&l.pat, bound);
+                    }
+                    Cond::Bool(e) => go(e, bound),
+                }
+            }
             go(then, bound);
             bound.truncate(scope);
             els.iter().for_each(|e| go(e, bound));
         }
         ExprKind::WhileLet(_, c, inv, body) => {
             inv.iter().for_each(|p| go(p, bound));
-            go(&c.expr, bound);
             let scope = bound.len();
-            pattern_binds(&c.pat, bound);
+            for cond in &c.conds {
+                match cond {
+                    Cond::Let(l) => {
+                        go(&l.expr, bound);
+                        pattern_binds(&l.pat, bound);
+                    }
+                    Cond::Bool(e) => go(e, bound),
+                }
+            }
             go(body, bound);
             bound.truncate(scope);
         }
@@ -2273,8 +2321,39 @@ fn pattern_binds(p: &Pattern, out: &mut Vec<String>) {
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
         | PatternKind::Str(_)
-        | PatternKind::Unit => {}
+        | PatternKind::Unit
+        | PatternKind::Rest
+        | PatternKind::Const(_) => {}
     }
+}
+
+/// The patterns of a tuple's or an array's `arity` values that `pats`
+/// names, each with the index of the value it's for: a `..` among them
+/// stands for the values the others don't name, which it skips. `None`
+/// if `pats` names more than there are, or, without a `..`, fewer.
+pub fn rest_fields(pats: &[Pattern], arity: usize) -> Option<Vec<(usize, &Pattern)>> {
+    let rest = pats
+        .iter()
+        .position(|p| matches!(p.kind, PatternKind::Rest));
+    let named = pats.len() - usize::from(rest.is_some());
+    if named > arity || (rest.is_none() && named < arity) {
+        return None;
+    }
+    Some(
+        pats.iter()
+            .enumerate()
+            .filter(|(_, p)| !matches!(p.kind, PatternKind::Rest))
+            .map(|(i, p)| match rest {
+                Some(r) if i > r => (i - 1 + arity - named, p),
+                _ => (i, p),
+            })
+            .collect(),
+    )
+}
+
+/// Does `pats`, a tuple's or an array's patterns, have a `..`?
+pub fn has_rest(pats: &[Pattern]) -> bool {
+    pats.iter().any(|p| matches!(p.kind, PatternKind::Rest))
 }
 
 #[derive(Debug, Clone)]
@@ -2441,6 +2520,20 @@ pub enum PatternKind {
     /// `(a, b)`: matches a tuple of as many values, each matched by the
     /// pattern in its place.
     Tuple(Vec<Pattern>),
+    /// `..` among the patterns of a variant's, a tuple's or an array's
+    /// values: as many `_`s as there are values the others don't name,
+    /// none or more (docs/100-patterns.md). Only there, and once in each.
+    /// A variant's is replaced by its `_`s when paths are resolved
+    /// (`check::modules`), as its fields are known by then; a tuple's or
+    /// an array's stays, as how many values it has is its type's to say
+    /// (`rest_fields`).
+    Rest,
+    /// `N` or `m::N`: a const, or a const parameter, which matches a value
+    /// equal to it. A `Path` that names one is resolved into this
+    /// (`check::modules`), with the expression that's its value: what
+    /// it's compared with is worked out before the match, as that
+    /// expression would be (docs/100-patterns.md).
+    Const(Box<Expr>),
     /// `Shape::Circle(r) | Shape::Rect(r, _)`: matches if any alternative
     /// does. Every alternative must bind the same variables, at the same types.
     Or(Vec<Pattern>),

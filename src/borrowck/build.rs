@@ -103,6 +103,9 @@ pub(crate) struct Builder<'a> {
     temps: Vec<Vec<Local>>,
     /// Each variable's local, by its id.
     vars: HashMap<NodeId, Local>,
+    /// What each const pattern of the `match` being lowered compares with,
+    /// worked out before it, by the pattern's id (`Builder::const_values`).
+    consts: HashMap<NodeId, Local>,
     /// In a closure's body, where each place it captured is, by the
     /// variable's id, with the fields and `*`s from the variable to it:
     /// `*(*env).x` for one captured by reference, and `(*env).x` or
@@ -186,6 +189,7 @@ impl<'a> Builder<'a> {
             }],
             temps: Vec::new(),
             vars: HashMap::new(),
+            consts: HashMap::new(),
             captured: HashMap::new(),
             loops: Vec::new(),
             live: vec![true],
@@ -1795,6 +1799,8 @@ impl<'a> Builder<'a> {
             else {
                 unreachable!("a temporary")
             };
+            // An alternative of an or-pattern may compare with a const.
+            self.const_values(pat);
             self.declare(pat);
             self.bind(pat, &p);
             self.end_temps(init.span);
@@ -1856,6 +1862,7 @@ impl<'a> Builder<'a> {
             _ => {
                 let p = self.place(init);
                 self.inspect(pat, &p);
+                self.const_values(pat);
                 self.declare(pat);
                 self.bind(pat, &p);
             }
@@ -1870,6 +1877,9 @@ impl<'a> Builder<'a> {
         let p = self.place(scrutinee);
         for arm in arms {
             self.inspect(&arm.pat, &p);
+        }
+        for arm in arms {
+            self.const_values(&arm.pat);
         }
         let blocks: Vec<Bb> = arms.iter().map(|_| self.new_block()).collect();
         let join = self.new_block();
@@ -1907,12 +1917,14 @@ impl<'a> Builder<'a> {
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
             | PatternKind::Str(_)
+            | PatternKind::Const(_)
             | PatternKind::Unit => self.push(StmtKind::Inspect(place), p.span),
+            PatternKind::Rest => unreachable!("only among a tuple's, variant's or array's values"),
             PatternKind::Variant(_, _, v, pats) => {
                 self.push(StmtKind::Inspect(place.clone()), p.span);
                 let t = self.place_ty(&place);
                 let i = variant_index(self.adts(), &t, &v.name);
-                for (j, q) in pats.iter().enumerate() {
+                for (j, q) in self.placed(pats, &t, Some(i)) {
                     self.inspect(q, &place.project(Proj::Variant(i, j)));
                 }
             }
@@ -1924,7 +1936,8 @@ impl<'a> Builder<'a> {
                 }
             }
             PatternKind::Array(pats) | PatternKind::Tuple(pats) => {
-                for (j, q) in pats.iter().enumerate() {
+                let t = self.place_ty(&place);
+                for (j, q) in self.placed(pats, &t, None) {
                     self.inspect(q, &place.project(Proj::Field(j)));
                 }
             }
@@ -1943,6 +1956,8 @@ impl<'a> Builder<'a> {
         let pat = match &p.kind {
             PatternKind::Path(..) => unreachable!("resolved into a variant (`check::modules`)"),
             PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Unit => Pat::Any,
+            PatternKind::Rest => unreachable!("only among a tuple's, variant's or array's values"),
+            PatternKind::Const(_) => Pat::Eq(self.consts[&p.id]),
             PatternKind::Int(n, _) => Pat::Range(Some(*n), Some(*n)),
             PatternKind::Range(lo, hi, ..) => Pat::Range(*lo, *hi),
             PatternKind::Bool(b) => Pat::Bool(*b),
@@ -1950,9 +1965,10 @@ impl<'a> Builder<'a> {
             PatternKind::Variant(_, _, v, pats) => {
                 let t = self.place_ty(&place);
                 let i = variant_index(self.adts(), &t, &v.name);
-                let fields = (pats.iter().enumerate())
-                    .map(|(j, q)| self.pat(q, &place.project(Proj::Variant(i, j))))
-                    .collect();
+                let mut fields = vec![Pat::Any; variant_fields(self.adts(), &t, i).len()];
+                for (j, q) in self.placed(pats, &t, Some(i)) {
+                    fields[j] = self.pat(q, &place.project(Proj::Variant(i, j)));
+                }
                 Pat::Variant(i, fields)
             }
             PatternKind::Struct(_, _, fields, _) => {
@@ -1965,18 +1981,25 @@ impl<'a> Builder<'a> {
                     .collect();
                 Pat::Struct(fields)
             }
-            PatternKind::Array(pats) => Pat::Array(
-                (pats.iter().enumerate())
-                    .map(|(j, q)| self.pat(q, &place.project(Proj::Field(j))))
-                    .collect(),
-            ),
+            PatternKind::Array(pats) => {
+                let t = self.place_ty(&place);
+                let placed = self.placed(pats, &t, None);
+                let mut values = vec![Pat::Any; self.arity(&t, None)];
+                for (j, q) in placed {
+                    values[j] = self.pat(q, &place.project(Proj::Field(j)));
+                }
+                Pat::Array(values)
+            }
             // A tuple is a struct, its fields in order (lemma T1 of
             // docs/58-tuples.md).
-            PatternKind::Tuple(pats) => Pat::Struct(
-                (pats.iter().enumerate())
-                    .map(|(j, q)| (j, self.pat(q, &place.project(Proj::Field(j)))))
-                    .collect(),
-            ),
+            PatternKind::Tuple(pats) => {
+                let t = self.place_ty(&place);
+                Pat::Struct(
+                    (self.placed(pats, &t, None).into_iter())
+                        .map(|(j, q)| (j, self.pat(q, &place.project(Proj::Field(j)))))
+                        .collect(),
+                )
+            }
             PatternKind::Or(alts) => Pat::Or(alts.iter().map(|a| self.pat(a, &place)).collect()),
         };
         (0..peels).fold(pat, |pat, _| Pat::Deref(Box::new(pat)))
@@ -2058,7 +2081,7 @@ impl<'a> Builder<'a> {
             PatternKind::Variant(_, _, v, pats) => {
                 let t = self.place_ty(&place);
                 let i = variant_index(self.adts(), &t, &v.name);
-                for (j, q) in pats.iter().enumerate() {
+                for (j, q) in self.placed(pats, &t, Some(i)) {
                     self.bind(q, &place.project(Proj::Variant(i, j)));
                 }
                 self.consume(&place, Some(i), p);
@@ -2072,7 +2095,8 @@ impl<'a> Builder<'a> {
                 self.consume(&place, None, p);
             }
             PatternKind::Array(pats) | PatternKind::Tuple(pats) => {
-                for (j, q) in pats.iter().enumerate() {
+                let t = self.place_ty(&place);
+                for (j, q) in self.placed(pats, &t, None) {
                     self.bind(q, &place.project(Proj::Field(j)));
                 }
                 self.consume(&place, None, p);
@@ -2092,6 +2116,59 @@ impl<'a> Builder<'a> {
                     self.goto(join);
                 }
                 self.block = join;
+            }
+            _ => {}
+        }
+    }
+}
+
+impl<'a> Builder<'a> {
+    /// How many values a value of type `t` has, as a pattern takes it
+    /// apart: variant `variant`'s fields, if it's an enum, an array's
+    /// values, or a tuple's or struct's fields.
+    fn arity(&self, t: &Type, variant: Option<usize>) -> usize {
+        match (variant, t) {
+            (Some(i), t) => variant_fields(self.adts(), t, i).len(),
+            (None, Type::Array(_, n)) => match **n {
+                Type::Nat(n) => usize::try_from(n).expect("a length that fits"),
+                _ => unreachable!("an array a pattern takes apart has a length (lemma A6)"),
+            },
+            (None, Type::Tuple(ts)) => ts.len(),
+            (None, t) => struct_fields(self.adts(), t).expect("a struct").len(),
+        }
+    }
+
+    /// The patterns `pats` of the values of a `t` (of variant `variant`, if
+    /// it's an enum), each with the index of the value it's for: a `..`
+    /// among them stands for the ones they don't name (`ast::rest_fields`).
+    fn placed<'p>(
+        &self,
+        pats: &'p [Pattern],
+        t: &Type,
+        variant: Option<usize>,
+    ) -> Vec<(usize, &'p Pattern)> {
+        rest_fields(pats, self.arity(t, variant)).expect("as many as the checker saw")
+    }
+
+    /// Works out the value each const pattern in `p` compares with, into
+    /// a temporary of the `match`'s, before it looks at anything: what a
+    /// use of the const would give, which can't have an effect (docs/36,
+    /// C1), so when it's worked out makes no difference (lemma P3 of
+    /// docs/100-patterns.md).
+    fn const_values(&mut self, p: &'a Pattern) {
+        match &p.kind {
+            PatternKind::Const(e) => {
+                let t = self.ty(e);
+                let tmp = self.temp(t, e.span);
+                self.expr_into(e, &Place::local(tmp));
+                self.consts.insert(p.id, tmp);
+            }
+            PatternKind::Variant(_, _, _, pats)
+            | PatternKind::Array(pats)
+            | PatternKind::Tuple(pats)
+            | PatternKind::Or(pats) => pats.iter().for_each(|q| self.const_values(q)),
+            PatternKind::Struct(_, _, fields, _) => {
+                fields.iter().for_each(|f| self.const_values(&f.pat))
             }
             _ => {}
         }
@@ -2138,9 +2215,7 @@ impl Builder<'_> {
                 let t = self.place_ty(&place);
                 let i = variant_index(self.adts(), &t, &v.name);
                 self.consumes_at(&place)
-                    || pats
-                        .iter()
-                        .enumerate()
+                    || (self.placed(pats, &t, Some(i)).into_iter())
                         .any(|(j, q)| self.consumes(q, &place.project(Proj::Variant(i, j))))
             }
             PatternKind::Struct(_, _, fields, _) => {
@@ -2152,8 +2227,9 @@ impl Builder<'_> {
                     })
             }
             PatternKind::Array(pats) => {
+                let t = self.place_ty(&place);
                 self.consumes_at(&place)
-                    || (pats.iter().enumerate())
+                    || (self.placed(pats, &t, None).into_iter())
                         .any(|(j, q)| self.consumes(q, &place.project(Proj::Field(j))))
             }
             PatternKind::Or(alts) => alts.iter().any(|a| self.consumes(a, &place)),

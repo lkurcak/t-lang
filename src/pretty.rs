@@ -1276,14 +1276,14 @@ impl Printer<'_> {
             ExprKind::WhileLet(label, c, Some(inv), body) if clauses(inv) => group(
                 label_doc(label)
                     + "while "
-                    + self.let_cond(c, true)
+                    + self.chain(c, true)
                     + self.clauses(inv)
                     + self.block_or_expr(body),
             ),
             ExprKind::WhileLet(label, c, inv, body) => group(
                 label_doc(label)
                     + "while "
-                    + self.let_cond(c, false)
+                    + self.chain(c, false)
                     + self.invariant(inv)
                     + self.block_or_expr(body),
             ),
@@ -1574,7 +1574,7 @@ impl Printer<'_> {
         loop {
             let (head, then, els) = match &e.kind {
                 ExprKind::If(c, then, els) => (self.head(c), then, els),
-                ExprKind::IfLet(c, then, els) => (self.let_cond(c, false), then, els),
+                ExprKind::IfLet(c, then, els) => (self.chain(c, false), then, els),
                 _ => {
                     doc = doc + self.block_or_expr(e);
                     break;
@@ -1650,6 +1650,41 @@ impl Printer<'_> {
         match inv {
             Some(p) => text("invariant ") + self.head(p),
             None => text(""),
+        }
+    }
+
+    /// The conditions of a chain after an `if` or `while`, with the space
+    /// before the `{`, or without it, if `bare`: as `let_cond` prints a
+    /// `let` alone, and several as `&&`'s operands, each on a line of its
+    /// own if they don't fit on one, and then the `{` on the next:
+    ///
+    /// ```text
+    /// if let Some(x) = aaaa
+    ///     && x > 3
+    ///     && let Some(y) = bbbb
+    /// {
+    /// ```
+    fn chain(&mut self, c: &Chain, bare: bool) -> Doc {
+        if let [Cond::Let(l)] = &c.conds[..] {
+            return self.let_cond(l, bare);
+        }
+        let ctx = Ctx {
+            no_struct: true,
+            stmt: false,
+        };
+        let min = prec(BinOp::And) + 1;
+        let mut docs = c.conds.iter().map(|cond| match cond {
+            Cond::Let(l) => {
+                let value = self.expr(&l.expr, min, ctx);
+                text("let ") + self.pattern(&l.pat) + " = " + value
+            }
+            Cond::Bool(e) => self.expr(e, min, ctx),
+        });
+        let first = docs.next().expect("a condition at least");
+        let rest = docs.fold(Doc::nil(), |rest, d| rest + Doc::Line + "&& " + d);
+        match bare {
+            true => group(first + nest(rest)),
+            false => group(first + nest(rest) + Doc::Line),
         }
     }
 
@@ -1859,6 +1894,8 @@ impl Printer<'_> {
     fn pattern(&mut self, p: &Pattern) -> Doc {
         match &p.kind {
             PatternKind::Wild => text("_"),
+            PatternKind::Rest => text(".."),
+            PatternKind::Const(e) => self.expr(e, 0, Ctx::default()),
             PatternKind::Bind(name, false) => text(name),
             PatternKind::Bind(name, true) => text(format!("mut {name}")),
             PatternKind::Int(n, lit) => self.spelled(p.span, lit.show(*n)),

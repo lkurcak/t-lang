@@ -339,6 +339,10 @@
         {
           "type": "_pattern",
           "named": true
+        },
+        {
+          "type": "rest_pattern",
+          "named": true
         }
       ]
     }
@@ -2109,6 +2113,10 @@
             "named": true
           },
           {
+            "type": "let_chain",
+            "named": true
+          },
+          {
             "type": "let_condition",
             "named": true
           }
@@ -2379,6 +2387,25 @@
         },
         {
           "type": "where_clause",
+          "named": true
+        }
+      ]
+    }
+  },
+  {
+    "type": "let_chain",
+    "named": true,
+    "fields": {},
+    "children": {
+      "multiple": true,
+      "required": true,
+      "types": [
+        {
+          "type": "_expression",
+          "named": true
+        },
+        {
+          "type": "let_condition",
           "named": true
         }
       ]
@@ -3104,6 +3131,11 @@
     "fields": {}
   },
   {
+    "type": "rest_pattern",
+    "named": true,
+    "fields": {}
+  },
+  {
     "type": "return_expression",
     "named": true,
     "fields": {},
@@ -3745,6 +3777,10 @@
         {
           "type": "_pattern",
           "named": true
+        },
+        {
+          "type": "rest_pattern",
+          "named": true
         }
       ]
     }
@@ -4191,6 +4227,10 @@
         {
           "type": "_pattern",
           "named": true
+        },
+        {
+          "type": "rest_pattern",
+          "named": true
         }
       ]
     }
@@ -4261,6 +4301,10 @@
         "types": [
           {
             "type": "_expression",
+            "named": true
+          },
+          {
+            "type": "let_chain",
             "named": true
           },
           {

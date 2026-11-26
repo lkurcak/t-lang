@@ -8,7 +8,7 @@
 //! renamed source, and `unused_mut` is the borrow checker's, which knows
 //! what's changed. `#[allow(..)]` turns any of them off (`allow.rs`).
 
-use super::modules::ElseOf;
+use super::modules::{ChainAt, ElseOf};
 use super::scope::FnId;
 use super::{Checker, Local, Scoped, adt_names};
 use crate::ast::*;
@@ -217,6 +217,29 @@ pub(super) fn irrefutable_let(span: Span, of: ElseOf) -> Warning {
         message: format!("this pattern always matches, {message}"),
         fixes: Vec::new(),
     }
+}
+
+/// The pattern at `span` of a `let` that's `at` among a chain's conditions
+/// always matches, of the chain of an `if` or a `while`, as `of` says: one
+/// first in an `if`'s, or last in either, needn't be in the chain. One
+/// between others names something for the ones after, and one first in a
+/// `while`'s is worked out again at each turn, as nothing before the loop
+/// would be: those are worth writing.
+pub(super) fn chain_irrefutable(span: Span, at: ChainAt, of: ElseOf) -> Option<Warning> {
+    let message = match (at, of) {
+        (ChainAt::First, ElseOf::IfLet(_)) => "write it as a `let` before the `if`",
+        (ChainAt::Last, _) => "write it as a `let` at the start of the block",
+        _ => return None,
+    };
+    Some(Warning {
+        notes: Vec::new(),
+        lint: Lint::UnreachablePatterns,
+        span,
+        message: format!(
+            "this pattern always matches, so this `let` needn't be one of the conditions: {message}"
+        ),
+        fixes: Vec::new(),
+    })
 }
 
 /// The or-pattern alternative at `span`, somewhere in `pats`, can never

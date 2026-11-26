@@ -2,21 +2,15 @@
 
 ## Now
 
-1. A batch for patterns (step 100): let chains in `if` and `while` (`if let Some(x) = a &&
-   x > 3 { .. }`; today both refuse `&&` beside a `let`), `..` in tuple, tuple-variant and
-   array patterns (`ExprKind::If(..)`), and consts as patterns; with clearer messages for a
-   keyword used as a name, a parameter that shadows a function, and which lifetime an error
-   is about. All found by t-fmt (see its `FRICTION.md`), whose own parser and printer take
-   the new syntax in the same change.
-2. [Floats](backlog/floats.md) (`f32`, `f64`), as a design step first. Owner to decide: `Eq`
+1. [Floats](backlog/floats.md) (`f32`, `f64`), as a design step first. Owner to decide: `Eq`
    and `Ord` against NaN, whether a float can be refined (not at first, is the proposal),
    literals, formatting and parsing, the C backend.
-3. Owner to decide: a generic helper that takes a closure has to spell out every effect
+2. Owner to decide: a generic helper that takes a closure has to spell out every effect
    (`effect e`, `F: .. with e + Discard`, then `with {alloc, panic, e}` in full). In a private
    function, either the rest is inferred beside a written `e`, or an `F: FnMut(..)` bound that
    names no effect gets an inferred one (see "Generic helpers over closures" in t-fmt's
    `FRICTION.md`).
-4. A retrospective after the next feature release: look for soundness holes in what shipped
+3. A retrospective after the next feature release: look for soundness holes in what shipped
    since the last one, with generated tests for a fact learned on one path and read on
    another (the hole 0.107.3 closed).
 
@@ -78,6 +72,12 @@
   says "unknown type `Self`".
 - One copy of the program's impls: the checker's `Projections` keeps its own, kept equal to
   `Traits` by hand and an assertion (and `info.traits` for monomorphisation).
+- A lifetime error names a lifetime implied by the one needed, not that one: `exprs(p: &mut
+  Parser, close: Tok)` calling `expect(p, close)` says `close` must outlive `Parser`'s first
+  lifetime, which follows from outliving its second, the one `expect` asks for.
+- Patterns, once a use appears: consts of structs and enums (matching by structure), ranges of
+  consts (`LO..=HI`), and `..` in slice patterns, which don't exist yet (see "What it doesn't
+  do" in `docs/100-patterns.md`).
 - Messages: `greatest::<T>()` of a type parameter says "unknown type `T`"; `old(..)` deeper
   than what's kept says "could not be represented by the supported reasoning" instead of
   that what a parameter pointed to that deep isn't known; a scenario under nested
@@ -100,6 +100,10 @@
 
 ## Done
 
+- Step 100 (0.108.0): let chains in `if` and `while`, `..` in variant, tuple and array
+  patterns, consts and const parameters as patterns, and clearer messages for a keyword used
+  as a name, a parameter called as a function, and which lifetime an error means; t-fmt takes
+  the new syntax.
 - t-fmt: `t fmt` written in T, about 9,600 lines, printing byte for byte what `t fmt` does
   for every T file in this repo's tests, examples and libraries; its CI compares the two.
 - Step 99 (0.107.3, #151): a refinement proved of a value in one branch is no longer known in

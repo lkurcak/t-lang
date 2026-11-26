@@ -1,7 +1,9 @@
 //! `match` and patterns: the types of what each pattern binds, and which
 //! arms can never match or are missing (see docs/02-adts.md).
 
-use super::lints::{irrefutable_let, mergeable, narrowable, unreachable_alt, unreachable_arm};
+use super::lints::{
+    chain_irrefutable, irrefutable_let, mergeable, narrowable, unreachable_alt, unreachable_arm,
+};
 use super::modules::ElseOf;
 use super::{Checker, Local, plural, result_span};
 use crate::ast::*;
@@ -51,6 +53,17 @@ impl Checker {
         let written: Vec<Pattern> = arms.iter().map(|a| a.pat.clone()).collect();
         for r in exhaust::redundant(&self.adts, &t, &pats) {
             self.warnings.push(match r {
+                // A `let` of a chain that always matches is worth one only
+                // between others, where it names something for them.
+                Redundant::Arm(1)
+                    if let Some(of) = made
+                        && let Some(&at) = self.modules.chain_lets.get(&arms[1].pat.span) =>
+                {
+                    match chain_irrefutable(arms[0].pat.span, at, of) {
+                        Some(w) => w,
+                        None => continue,
+                    }
+                }
                 Redundant::Arm(1) if let Some(of) = made => irrefutable_let(arms[0].pat.span, of),
                 Redundant::Arm(i) => unreachable_arm(arms, i),
                 Redundant::Alt(span) => unreachable_alt(span, &written),
@@ -127,9 +140,17 @@ impl Checker {
             PatternKind::Wild | PatternKind::Bind(..) | PatternKind::Or(_)
         );
         let mut ty = ty.clone();
+        // A const's type, which it's compared at.
+        let konst = match &p.kind {
+            PatternKind::Const(e) => Some(self.synth(e)?),
+            _ => None,
+        };
         // A string literal matches a `&str`: it looks through every `&`
-        // but that last one.
-        let str_pattern = matches!(p.kind, PatternKind::Str(_));
+        // but that last one. So does a const of one.
+        let str_pattern = matches!(p.kind, PatternKind::Str(_))
+            || konst.as_ref().is_some_and(
+                |t| matches!(self.shallow(t), Type::Ref(_, false, inner) if *inner == Type::Str),
+            );
         if looks_inside {
             let mut peeled = 0;
             while let Type::Ref(_, m, inner) = self.shallow(&ty) {
@@ -148,7 +169,38 @@ impl Checker {
         let ty = &ty;
         Ok(match &p.kind {
             PatternKind::Path(..) => unreachable!("resolved into a variant (`check::modules`)"),
+            PatternKind::Rest => unreachable!("only among a tuple's, variant's or array's values"),
             PatternKind::Wild => Pat::Wild,
+            // A const, compared with what it's matched against as a literal
+            // of its value would be: of a type a literal can be, where `==`
+            // is the language's own, so no code of the program's runs. Its
+            // value isn't known while bodies are checked, so it covers
+            // nothing (lemma P2 of docs/100-patterns.md).
+            PatternKind::Const(e) => {
+                let found = konst.expect("worked out above");
+                let name = const_name(e);
+                let scalar = match self.shallow(&found) {
+                    Type::Int(_) | Type::Bool | Type::Char => true,
+                    Type::Ref(_, false, inner) => *inner == Type::Str,
+                    _ => false,
+                };
+                if !scalar {
+                    return Err(Error::ty(
+                        p.span,
+                        format!(
+                            "`{name}` is a const of type `{found}`: a pattern can name a const \
+                             of an integer type, `bool`, `char` or `&str`; to compare with \
+                             it, bind another name and use `if x == {name}`"
+                        ),
+                    ));
+                }
+                self.unify_or(&found, ty, p.span, |found, ty| {
+                    format!(
+                        "`{name}` is a const of type `{found}`, but the value matched is `{ty}`"
+                    )
+                })?;
+                Pat::Opaque
+            }
             PatternKind::Bind(name, mutable) => {
                 if let Some(super::scope::Binding::Fn(f)) = self.binding(name)
                     && self.fns[f.0].konst
@@ -220,24 +272,31 @@ impl Checker {
                     self.uses().types.insert(symbol.clone());
                 }
                 self.pattern_is(p, ty, t)?;
-                if fields.len() != args.len() {
-                    return Err(Error::ty(
-                        p.span,
-                        format!(
+                let Some(placed) = rest_fields(args, fields.len()) else {
+                    let message = match has_rest(args) {
+                        true => format!(
+                            "`{}::{}` has {}, but this pattern names {} besides `..`",
+                            name.name,
+                            variant.name,
+                            plural(fields.len(), "field"),
+                            args.len() - 1,
+                        ),
+                        false => format!(
                             "`{}::{}` has {}, but this pattern has {}",
                             name.name,
                             variant.name,
                             plural(fields.len(), "field"),
                             args.len(),
                         ),
-                    ));
+                    };
+                    return Err(Error::ty(p.span, message));
+                };
+                // What `..` stands for, `_`s.
+                let mut pats = vec![Pat::Wild; fields.len()];
+                for (j, a) in placed {
+                    pats[j] = self.pattern(a, &fields[j], by_ref, binds)?;
                 }
-                let args = args
-                    .iter()
-                    .zip(&fields)
-                    .map(|(a, t)| self.pattern(a, t, by_ref, binds))
-                    .collect::<Result<_, _>>()?;
-                Pat::Ctor(Ctor::Variant(i), args)
+                Pat::Ctor(Ctor::Variant(i), pats)
             }
             // Each alternative is checked separately, and they must all bind
             // the same Δ. Otherwise the arm's body could read a variable that
@@ -334,6 +393,72 @@ impl Checker {
             // A tuple's fields, each by the pattern in its place: a struct
             // pattern of the struct it's taken for, every field mentioned
             // (lemma T1 of docs/58-tuples.md).
+            // With `..`, the tuple's type says how many values it stands
+            // for, so it must be known here.
+            PatternKind::Tuple(pats) if has_rest(pats) => {
+                let k = pats.len() - 1;
+                let elems = match self.shallow(ty) {
+                    Type::Tuple(ts) => ts,
+                    Type::Var(_) => {
+                        return Err(Error::ty(
+                            p.span,
+                            "the type of this tuple isn't known here, so neither is how many \
+                             values `..` stands for; say what it is",
+                        ));
+                    }
+                    _ => Vec::new(),
+                };
+                let Some(placed) = rest_fields(pats, elems.len()).filter(|_| elems.len() >= 2)
+                else {
+                    return Err(Error::ty(
+                        p.span,
+                        format!(
+                            "this pattern is for a tuple of at least {} values, but the value \
+                             is `{}`",
+                            k.max(2),
+                            self.solved(ty)
+                        ),
+                    ));
+                };
+                let mut args = vec![Pat::Wild; elems.len()];
+                for (j, q) in placed {
+                    args[j] = self.pattern(q, &elems[j], by_ref, binds)?;
+                }
+                Pat::Ctor(Ctor::Struct, args)
+            }
+            // The same of an array's, whose length must be a number (lemma
+            // A6 of docs/22-arrays.md).
+            PatternKind::Array(pats) if has_rest(pats) => {
+                let k = pats.len() - 1;
+                let (elem, len) = match self.shallow(ty) {
+                    Type::Array(elem, len) => match self.shallow(&len) {
+                        Type::Nat(n) => (*elem, usize::try_from(n).ok()),
+                        _ => (*elem, None),
+                    },
+                    Type::Var(_) => {
+                        return Err(Error::ty(
+                            p.span,
+                            "the type of this array isn't known here, so neither is how many \
+                             values `..` stands for; say what it is",
+                        ));
+                    }
+                    _ => (Type::Unit, None),
+                };
+                let Some(placed) = len.and_then(|n| rest_fields(pats, n)) else {
+                    return Err(Error::ty(
+                        p.span,
+                        format!(
+                            "this pattern is for an array of at least {k}, but the value is `{}`",
+                            self.solved(ty)
+                        ),
+                    ));
+                };
+                let mut args = vec![Pat::Wild; len.expect("a length")];
+                for (j, q) in placed {
+                    args[j] = self.pattern(q, &elem, by_ref, binds)?;
+                }
+                Pat::Ctor(Ctor::Struct, args)
+            }
             PatternKind::Tuple(pats) => {
                 let k = pats.len();
                 let elems = match self.shallow(ty) {
@@ -446,4 +571,13 @@ fn or_mismatch(a: &[Local], b: &[Local]) -> Option<String> {
         "`{}` is bound in this alternative but not in the first",
         extra.name
     ))
+}
+
+/// How a const pattern's value is written, for messages: `N`, `m::N`.
+fn const_name(e: &Expr) -> String {
+    match &e.kind {
+        ExprKind::Var(name, _) => name.clone(),
+        ExprKind::Variant(ty, _, name, ..) => format!("{}::{}", ty.name, name.name),
+        _ => "the const".to_string(),
+    }
 }

@@ -124,7 +124,7 @@ struct Context {
     followed: bool,
 }
 
-const CONTEXTS: [Context; 10] = [
+const CONTEXTS: [Context; 12] = [
     Context {
         name: "a call's arguments",
         k: "0u8",
@@ -183,6 +183,22 @@ const CONTEXTS: [Context; 10] = [
         name: "a function value's arguments",
         k: "0u8",
         expr: |a, b| format!("{{ let g: fn(u8, u8) -> u8 = plain; g({a}, {b}) }}"),
+        followed: false,
+    },
+    // A chain's conditions, each worked out after the ones before
+    // (docs/100-patterns.md).
+    Context {
+        name: "a chain's `let`s",
+        k: "0u8",
+        expr: |a, b| {
+            format!("if let Some(x) = Some({a}) && let Some(_y) = Some({b}) {{ x }} else {{ 0 }}")
+        },
+        followed: false,
+    },
+    Context {
+        name: "a chain's `let` and `bool`",
+        k: "0u8",
+        expr: |a, b| format!("if let Some(x) = Some({a}) && {b} < 200 {{ x }} else {{ 0 }}"),
         followed: false,
     },
 ];

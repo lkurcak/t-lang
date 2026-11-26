@@ -2174,7 +2174,7 @@ impl<'p> Interp<'p, '_> {
                 }
                 Some(Term::Match(place, pats, targets)) => {
                     let p = self.ptr(&fr, place);
-                    let Some(i) = pats.iter().position(|pat| self.matches(pat, &p)) else {
+                    let Some(i) = pats.iter().position(|pat| self.matches(&fr, pat, &p)) else {
                         unsound(&format!("no `match` arm fits `{}`", self.memory.get(&p)));
                     };
                     b = targets[i];
@@ -2635,32 +2635,44 @@ impl<'p> Interp<'p, '_> {
     }
 
     /// Does the value at `v` match `pat`?
-    fn matches(&self, pat: &crate::mir::Pat, v: &Ptr) -> bool {
+    /// Does the value at `v` match `pat`, in frame `fr`?
+    fn matches(&self, fr: &Frame, pat: &crate::mir::Pat, v: &Ptr) -> bool {
         use crate::mir::Pat;
         let in_range = |lo: &Option<i128>, hi: &Option<i128>, m: i128| {
             lo.is_none_or(|lo| lo <= m) && hi.is_none_or(|hi| m <= hi)
         };
         match (pat, self.memory.get(v)) {
             (Pat::Any, _) => true,
-            (Pat::Deref(pat), Value::Ref(q)) => self.matches(pat, q),
+            (Pat::Deref(pat), Value::Ref(q)) => self.matches(fr, pat, q),
             (Pat::Range(lo, hi), Value::Int(m, _)) => in_range(lo, hi, *m),
             (Pat::Range(lo, hi), Value::Char(c)) => in_range(lo, hi, i128::from(u32::from(*c))),
             (Pat::Bool(b), Value::Bool(c)) => b == c,
             (Pat::Str(s), v @ Value::Ref(..)) => self.bytes(v) == s.as_bytes(),
+            // A const's value, by the language's own `==`.
+            (Pat::Eq(l), v) => {
+                let c = self.ptr(fr, &crate::mir::Place::local(*l));
+                match (v, self.memory.get(&c)) {
+                    (Value::Int(m, _), Value::Int(n, _)) => m == n,
+                    (Value::Char(a), Value::Char(b)) => a == b,
+                    (Value::Bool(a), Value::Bool(b)) => a == b,
+                    (v @ Value::Ref(..), c @ Value::Ref(..)) => self.bytes(v) == self.bytes(c),
+                    (v, c) => unsound(&format!("comparing `{v}` with a const's `{c}`")),
+                }
+            }
             (Pat::Variant(i, pats), Value::Variant(ty, name, _)) => {
                 self.enums[ty.as_str()].variants[*i].name.name == *name
-                    && (pats.iter().enumerate()).all(|(j, p)| self.matches(p, &v.field(j)))
+                    && (pats.iter().enumerate()).all(|(j, p)| self.matches(fr, p, &v.field(j)))
             }
-            (Pat::Struct(fields), Value::Struct(..)) => {
-                fields.iter().all(|(j, p)| self.matches(p, &v.field(*j)))
-            }
+            (Pat::Struct(fields), Value::Struct(..)) => fields
+                .iter()
+                .all(|(j, p)| self.matches(fr, p, &v.field(*j))),
             (Pat::Array(pats), Value::Slots(values)) => {
                 if pats.len() != values.len() {
                     unsound("an array pattern of another length");
                 }
-                (pats.iter().enumerate()).all(|(j, p)| self.matches(p, &v.field(j)))
+                (pats.iter().enumerate()).all(|(j, p)| self.matches(fr, p, &v.field(j)))
             }
-            (Pat::Or(alts), _) => alts.iter().any(|alt| self.matches(alt, v)),
+            (Pat::Or(alts), _) => alts.iter().any(|alt| self.matches(fr, alt, v)),
             (_, Value::Moved) => unsound("matching a value that was moved"),
             (pat, v) => unsound(&format!("pattern {pat:?} can't apply to `{v}`")),
         }

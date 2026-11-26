@@ -236,7 +236,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
   can't be a struct literal without parentheses, as in `if`.
 - An `&&` or `||` at the top of what's matched is an error, `if let
   Option::Some(n) = o && n > 0`: that's a *let chain* in Rust, and may
-  mean that here one day. In parentheses, it's a `bool`, matched.
+  mean that here one day. In parentheses, it's a `bool`, matched. (Step
+  100 made `&&` there a chain, docs/100-patterns.md; `||` is still an
+  error.)
 - What's before the `else` of a `let .. else` can't end in `}`: in `let x
   = if c { 1 } else { 2 } else { return };`, which `else` is whose? As in
   Rust, write the parentheses.
@@ -324,7 +326,7 @@ fn rem(a: i64, b: { b: i64 | b > 0 }) -> { r: i64 | r >= 0 } { a % b }
 
 | Missing | Why it's missing | Step |
 |---|---|---|
-| let chains, `if let p = e && c` | the `else` is reached from several places: a labelled block, or the `else` written twice | — |
+| let chains, `if let p = e && c` | the `else` is reached from several places: a labelled block, or the `else` written twice | 100: the `else` once, after the conditions, what the block gives taken out in an `Option` |
 | a type on `let .. else` | the pattern's type arguments say it; a type would need ascription on `e` | — |
 | precise `else` arms for local enums and aliases | their variants aren't known where the rewrite is; `_` is sound | — |
 | facts about `/` by a variable | not asked for yet; the same reasoning gives them | — |

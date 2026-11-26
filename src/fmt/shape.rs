@@ -143,6 +143,7 @@ structs! {
     ForLoop { label, pat, in_span, name, iter, invariant, body };
     Label { name, head };
     LetCond { let_span, pat, expr };
+    Chain { conds };
     Lambda { id, moves, params, ret, body, captures };
     LambdaParam { mutable, name, ty, pat };
     FieldInit { name, value };
@@ -193,7 +194,9 @@ enums! {
     PatternKind {
         Wild, Bind(name, mutable), Int(n, kind), Range(start, end, inclusive, kind), Bool(b), Unit, Str(s),
         Variant(ty, types, name, fields), Path(name, fields, called), Struct(ty, types, fields, rest), Array(elems), Tuple(elems), Or(alts),
+        Rest, Const(value),
     };
+    Cond { Let(cond), Bool(cond) };
 }
 
 impl Describe for FmtPiece {

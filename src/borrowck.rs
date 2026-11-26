@@ -827,7 +827,8 @@ fn decide(
 /// closure, which parameter each lifetime it's generic over is in, by its
 /// universal region, and the regions of each capture and of its result.
 struct Names {
-    params: Vec<(String, Vec<Region>)>,
+    /// Each parameter's name and type, and the regions in it.
+    params: Vec<(String, Type, Vec<Region>)>,
     generics: Option<Span>,
     bound: Vec<(usize, String)>,
     captures: Vec<(String, Vec<Region>)>,
@@ -844,6 +845,7 @@ impl Names {
                 .map(|(p, t)| {
                     (
                         p.name.name.clone(),
+                        t.clone(),
                         t.regions().into_iter().cloned().collect(),
                     )
                 })
@@ -889,8 +891,17 @@ impl Names {
             Region::Static => "`'static`".to_string(),
             Region::Named(n) if !r.is_elided() => format!("`{n}`"),
             Region::Result(..) => format!("`{r}`"),
-            _ => match self.params.iter().find(|(_, rs)| rs.contains(r)) {
-                Some((p, _)) => format!("the lifetime of `{p}`"),
+            _ => match self.params.iter().find(|(_, _, rs)| rs.contains(r)) {
+                // Of a type with several, which: `'1`, in the type as
+                // written, `&mut Parser<'_, '1>`.
+                Some((p, t, rs)) if rs.iter().any(|q| q != r) => {
+                    let marked = t.map_regions(&mut |q| match q == r {
+                        true => Region::Named("'1".into()),
+                        false => Region::Erased,
+                    });
+                    format!("the lifetime `'1` in the type of `{p}`, `{marked}`")
+                }
+                Some((p, ..)) => format!("the lifetime of `{p}`"),
                 None => "the closure's lifetime".to_string(),
             },
         }

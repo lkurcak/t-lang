@@ -991,25 +991,42 @@ module.exports = grammar({
 
     if_expression: $ => prec.right(seq(
       'if',
-      field('condition', choice($._expression, $.let_condition)),
+      field('condition', $._condition),
       field('consequence', $.block),
       optional(field('alternative', $.else_clause)),
     )),
 
     else_clause: $ => seq('else', choice($.block, $.if_expression)),
 
-    // `let pat = e`, what an `if let` or `while let` matches.
+    // `let pat = e`, what an `if let` or `while let` matches. Its value
+    // binds more tightly than `&&`, which joins it to the next condition.
     let_condition: $ => seq(
       'let',
       field('pattern', $._pattern),
       '=',
-      field('value', $._expression),
+      field('value', prec.left(PREC.and, $._expression)),
     ),
+
+    // What an `if` or a `while` tests: an expression, a `let`, or a chain of
+    // them joined by `&&`, `let Some(x) = a && x > 3`.
+    _condition: $ => choice(
+      $._expression,
+      $.let_condition,
+      alias($._let_chain, $.let_chain),
+    ),
+
+    _let_chain: $ => prec.left(PREC.and, choice(
+      seq($._let_chain, '&&', $.let_condition),
+      seq($._let_chain, '&&', $._expression),
+      seq($.let_condition, '&&', $._expression),
+      seq($.let_condition, '&&', $.let_condition),
+      seq($._expression, '&&', $.let_condition),
+    )),
 
     while_expression: $ => seq(
       optional(seq(field('label', $.lifetime), ':')),
       'while',
-      field('condition', choice($._expression, $.let_condition)),
+      field('condition', $._condition),
       repeat($.invariant_clause),
       field('body', $.block),
     ),
@@ -1117,8 +1134,17 @@ module.exports = grammar({
 
     unit_pattern: _ => seq('(', ')'),
 
-    // `(a, b)`: a tuple's values, two or more.
-    tuple_pattern: $ => seq('(', $._pattern, repeat1(seq(',', $._pattern)), optional(','), ')'),
+    // `(a, b)`: a tuple's values, two or more; `(..)`, any tuple's.
+    tuple_pattern: $ => choice(
+      seq('(', $._element, repeat1(seq(',', $._element)), optional(','), ')'),
+      seq('(', $.rest_pattern, ')'),
+    ),
+
+    // One of a tuple's, a variant's or an array's values: a pattern, or
+    // `..`, for the values the others don't name.
+    _element: $ => choice($._pattern, $.rest_pattern),
+
+    rest_pattern: _ => '..',
 
     // `Shape::Dot(p)`, or `Dot(p)` by itself: a name that starts with an
     // uppercase letter is a path in a pattern, never a variable, so a bare
@@ -1129,12 +1155,12 @@ module.exports = grammar({
         optional($._turbofish),
         '::',
         field('variant', $.identifier),
-        optional(seq('(', commaSep($._pattern), ')')),
+        optional(seq('(', commaSep($._element), ')')),
       ),
-      seq(field('variant', $.identifier), '(', commaSep($._pattern), ')'),
+      seq(field('variant', $.identifier), '(', commaSep($._element), ')'),
     ),
 
-    array_pattern: $ => seq('[', commaSep($._pattern), ']'),
+    array_pattern: $ => seq('[', commaSep($._element), ']'),
 
     struct_pattern: $ => seq(
       field('type', $._path_type),

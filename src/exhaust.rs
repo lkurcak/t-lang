@@ -45,6 +45,12 @@ pub enum Pat {
     /// Matches if any alternative does. Each alternative keeps its source
     /// span, to point at it if it's unreachable.
     Or(Vec<(Pat, Span)>),
+    /// A test this can't see through: a const's, whose value isn't known
+    /// while bodies are checked (docs/100-patterns.md). It may match any
+    /// value or none, so it covers none (`missing`, `known`), and is
+    /// reached wherever a `_` would be (`redundant`). `useful` never sees
+    /// one: `plain` turns it into a `_`.
+    Opaque,
 }
 
 /// The least and greatest values of an integer type, which a range with an
@@ -166,7 +172,11 @@ pub fn redundant(adts: &Adts, ty: &Type, arms: &[Pat]) -> Vec<Redundant> {
                     }
                 }
             }
-            rows.push(vec![q]);
+            // What it covers for the arms after: nothing, if it's up to a
+            // test this can't see through.
+            if !opaque_in(&p) {
+                rows.push(vec![q]);
+            }
         }
         if !arm_useful {
             found.push(Redundant::Arm(i));
@@ -205,7 +215,7 @@ struct Reach {
 /// at `narrow`'s span, if any, becomes `narrow`'s constructor instead.
 fn plain(p: &Pat, narrow: Option<(Span, Ctor)>) -> Pat {
     match p {
-        Pat::Wild => Pat::Wild,
+        Pat::Wild | Pat::Opaque => Pat::Wild,
         Pat::Range(lo, hi, span, _) => match narrow {
             Some((s, c)) if s == *span => Pat::Ctor(c, Vec::new()),
             _ => Pat::Ctor(Ctor::Int(*lo, *hi), Vec::new()),
@@ -215,10 +225,40 @@ fn plain(p: &Pat, narrow: Option<(Span, Ctor)>) -> Pat {
     }
 }
 
+/// Does or-free pattern `p` have a test this can't see through?
+fn opaque_in(p: &Pat) -> bool {
+    match p {
+        Pat::Opaque => true,
+        Pat::Ctor(_, args) => args.iter().any(opaque_in),
+        Pat::Wild | Pat::Range(..) => false,
+        Pat::Or(_) => unreachable!("expanded before looking for tests"),
+    }
+}
+
+/// What `p` is sure to cover: the alternatives with no test this can't
+/// see through. `None` if it's sure to cover nothing.
+fn known(p: &Pat) -> Option<Pat> {
+    match p {
+        Pat::Opaque => None,
+        Pat::Wild | Pat::Range(..) => Some(p.clone()),
+        Pat::Ctor(c, args) => Some(Pat::Ctor(
+            *c,
+            args.iter().map(known).collect::<Option<_>>()?,
+        )),
+        Pat::Or(alts) => {
+            let alts: Vec<(Pat, Span)> = alts
+                .iter()
+                .filter_map(|(a, s)| Some((known(a)?, *s)))
+                .collect();
+            (!alts.is_empty()).then_some(Pat::Or(alts))
+        }
+    }
+}
+
 /// The ranges in an or-free pattern, as `(lo, hi, span)`.
 fn ranges_in(p: &Pat) -> Vec<(i128, i128, Span, Ends)> {
     match p {
-        Pat::Wild => Vec::new(),
+        Pat::Wild | Pat::Opaque => Vec::new(),
         Pat::Range(lo, hi, span, ends) => vec![(*lo, *hi, *span, *ends)],
         Pat::Ctor(_, args) => args.iter().flat_map(ranges_in).collect(),
         Pat::Or(_) => unreachable!("expanded before looking for ranges"),
@@ -242,7 +282,7 @@ fn ints_in(p: &Pat, out: &mut Vec<Ctor>) {
 /// chose.
 fn expand(p: &Pat) -> Vec<(Pat, Vec<Span>)> {
     match p {
-        Pat::Wild | Pat::Range(..) => vec![(p.clone(), Vec::new())],
+        Pat::Wild | Pat::Range(..) | Pat::Opaque => vec![(p.clone(), Vec::new())],
         Pat::Or(alts) => alts
             .iter()
             .flat_map(|(alt, span)| {
@@ -279,7 +319,11 @@ fn expand(p: &Pat) -> Vec<(Pat, Vec<Span>)> {
 /// the arms are exhaustive.
 pub fn missing(adts: &Adts, ty: &Type, arms: &[Pat]) -> Option<String> {
     let cx = Cx { adts };
-    let rows: Vec<Vec<Pat>> = arms.iter().map(|p| vec![plain(p, None)]).collect();
+    let rows: Vec<Vec<Pat>> = arms
+        .iter()
+        .filter_map(known)
+        .map(|p| vec![plain(&p, None)])
+        .collect();
     let witness = cx.useful(&rows, &[Pat::Wild], std::slice::from_ref(ty))?;
     Some(cx.show(&witness[0], ty))
 }
@@ -376,7 +420,9 @@ impl Cx<'_> {
         match &q[0] {
             // `redundant` expands or-patterns before asking, and `missing`
             // asks about `_`, so `q` never holds one.
-            Pat::Or(_) | Pat::Range(..) => unreachable!("or-pattern or range in `q`"),
+            Pat::Or(_) | Pat::Range(..) | Pat::Opaque => {
+                unreachable!("or-pattern, range or opaque test in `q`")
+            }
             Pat::Ctor(c, args) => {
                 // A range in `q` may overlap a row's only in part, like
                 // `0..=9` and `5..`. Then `q` is useful iff one of its pieces
@@ -703,7 +749,7 @@ fn head_ctors(rows: &[Vec<Pat>]) -> Vec<Ctor> {
         .filter_map(|row| match &row[0] {
             Pat::Ctor(c, _) => Some(*c),
             Pat::Wild => None,
-            Pat::Or(_) | Pat::Range(..) => {
+            Pat::Or(_) | Pat::Range(..) | Pat::Opaque => {
                 unreachable!("expanded and made plain before looking at constructors")
             }
         })
@@ -752,7 +798,7 @@ fn specialize(rows: &[Vec<Pat>], c: Ctor, arity: usize) -> Vec<Vec<Pat>> {
                 Pat::Ctor(d, args) if covers(*d, c) => args.clone(),
                 Pat::Ctor(..) => return None,
                 Pat::Wild => vec![Pat::Wild; arity],
-                Pat::Or(_) | Pat::Range(..) => {
+                Pat::Or(_) | Pat::Range(..) | Pat::Opaque => {
                     unreachable!("expanded and made plain before specializing")
                 }
             };

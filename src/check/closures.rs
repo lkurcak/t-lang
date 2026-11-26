@@ -1141,9 +1141,10 @@ fn names_in(e: &Expr, out: &mut Vec<String>) {
 fn pattern_sites(p: &Pattern, f: &mut impl FnMut(NodeId)) {
     match &p.kind {
         PatternKind::Bind(..) => f(p.id),
-        PatternKind::Variant(_, _, _, pats) | PatternKind::Or(pats) => {
-            pats.iter().for_each(|p| pattern_sites(p, f))
-        }
+        PatternKind::Variant(_, _, _, pats)
+        | PatternKind::Or(pats)
+        | PatternKind::Tuple(pats)
+        | PatternKind::Array(pats) => pats.iter().for_each(|p| pattern_sites(p, f)),
         PatternKind::Struct(_, _, fields, _) => {
             fields.iter().for_each(|fp| pattern_sites(&fp.pat, f))
         }

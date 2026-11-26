@@ -482,6 +482,37 @@ fn hovers_and_goes_to_definitions_in_format_strings() {
     stop(child, c);
 }
 
+/// A const in a pattern is a use of it: it hovers, and goes to where it's
+/// declared (docs/100-patterns.md).
+#[test]
+fn hovers_and_goes_to_consts_in_patterns() {
+    let (child, mut c) = start();
+    let uri = "file:///tmp/const_pattern.t";
+    let src = "const LIMIT: u8 = 3;\nfn f(x: u8) -> bool {\n    match x {\n        LIMIT => true,\n        _ => false,\n    }\n}\nfn main() {\n    let _ = f(3);\n}\n";
+    c.send(
+        json!({"jsonrpc": "2.0", "method": "textDocument/didOpen", "params": {
+            "textDocument": {"uri": uri, "languageId": "t", "version": 1, "text": src}
+        }}),
+    );
+    assert_eq!(c.diagnostics(), Vec::<Value>::new());
+    let at = |line: u32, character: u32| json!({"textDocument": {"uri": uri}, "position": {"line": line, "character": character}});
+    c.send(json!({"jsonrpc": "2.0", "id": 2, "method": "textDocument/hover", "params": at(3, 10)}));
+    let hover = c.response(2)["result"].clone();
+    assert!(
+        hover["contents"]["value"]
+            .as_str()
+            .is_some_and(|v| v.contains("LIMIT")),
+        "{hover}"
+    );
+    c.send(json!({"jsonrpc": "2.0", "id": 3, "method": "textDocument/definition", "params": at(3, 10)}));
+    let def = c.response(3)["result"].clone();
+    assert_eq!(
+        def["range"],
+        json!({"start": {"line": 0, "character": 6}, "end": {"line": 0, "character": 11}})
+    );
+    stop(child, c);
+}
+
 /// A hole's expression is code like any: what's in it hovers and goes to
 /// its definition.
 #[test]
@@ -1768,7 +1799,7 @@ extern fn on_tick() {}
     assert_eq!(
         d.rename(&mut c, "a", 3, "print"),
         Err(
-            "can't rename `a` to `print`: line 7 would be an error: `i64` is not a function".into()
+            "can't rename `a` to `print`: line 7 would be an error: `print` is a variable of type `i64`, not a function".into()
         )
     );
     // A nested `fn` would then capture it.
