@@ -1768,7 +1768,7 @@ extern fn on_tick() {}
     assert_eq!(
         d.rename(&mut c, "a", 3, "print"),
         Err(
-            "can't rename `a` to `print`: line 7 would be an error: `i64` is not a function".into()
+            "can't rename `a` to `print`: line 7 would be an error: `print` is a variable of type `i64`, not a function".into()
         )
     );
     // A nested `fn` would then capture it.

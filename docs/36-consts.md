@@ -322,11 +322,12 @@ a branch never taken still counts.
 - **Not in patterns.** In Rust, `N` in a pattern compares with the const
   if one is in scope, and binds otherwise, so a typo silently binds. Here
   a pattern that names a const in scope is an error, which keeps the
-  question open.
+  question open. (Step 45 made such a name always a path, and step 100
+  a comparison with the const, docs/100-patterns.md.)
 
 ## Deliberately missing (coming later)
 
-- Consts in patterns, as above.
+- Consts in patterns, as above (step 100, docs/100-patterns.md).
 - Associated consts, in traits and impls, and consts in blocks.
 - `&CONST` as a `&'static`: needs statics, and frozenness (which step 37
   added: a const has no `Cell` in it).

@@ -450,7 +450,7 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
   same `Option`, what's said of the one before is in both cases, and
   doubles each time (twelve `if let`s in a row take seconds). Saying
   "what's known of that branch's value" by naming the value, not copying
-  it, is step 100.
+  it, is still to do (`BACKLOG.md`, joins by reference).
 - The solver still has no learning: a conflict found in one branch of a
   split isn't remembered for the others, as a CDCL solver would.
 

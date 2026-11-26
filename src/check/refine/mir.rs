@@ -2407,6 +2407,10 @@ impl Walk<'_> {
             }
             Some(Term::Match(mp, pats, bbs)) => {
                 let s = self.read_mir(fr, mp);
+                self.pat_consts = (pats.iter())
+                    .flat_map(Pat::locals)
+                    .map(|l| (l, self.read_mir(fr, &crate::mir::Place::local(l))))
+                    .collect();
                 let mut before: Vec<Formula> = Vec::new();
                 let mut assumed = Vec::new();
                 for pat in pats {
@@ -2423,6 +2427,7 @@ impl Walk<'_> {
                     assumed.push(assume);
                     before.extend(this);
                 }
+                self.pat_consts.clear();
                 let base = self.take_state();
                 let mut out = Vec::new();
                 for (b, assume) in bbs.iter().zip(assumed) {
@@ -2484,6 +2489,14 @@ impl Walk<'_> {
                 },
             ])),
             (Pat::Bool(b), Val::Bool(f)) => Some(if *b { f.clone() } else { f.clone().not() }),
+            // A const's value, which the logic knows if it can tell it
+            // from the const's initializer (docs/36, C5): equal to it, by
+            // `==`, as the pattern tests.
+            (Pat::Eq(c), _) => match (s, &self.pat_consts.iter().find(|(l, _)| l == c)?.1) {
+                (Val::Int(l), Val::Int(r)) => Formula::eq(l, r),
+                (Val::Bool(f), Val::Bool(g)) => Some(Formula::iff(f.clone(), g.clone())),
+                _ => None,
+            },
             (Pat::Or(alts), _) => {
                 let mut each = Vec::new();
                 for p in alts {

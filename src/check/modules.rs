@@ -100,6 +100,25 @@ pub(crate) struct Module {
     pub(crate) values: HashMap<String, Binding>,
 }
 
+/// What a path in a pattern names (`Rewrite::pattern_path`).
+enum Named {
+    /// Variant `.1` of enum `.0`.
+    Variant(usize, usize),
+    /// A const, or a const parameter.
+    Const,
+}
+
+/// The error for a const written with fields, `N(x)`.
+fn no_fields(name: &Ident) -> Error {
+    Error::ty(
+        name.span,
+        format!(
+            "`{}` is a const, not a variant: it has no fields",
+            name.name
+        ),
+    )
+}
+
 /// Which rewrite made a node, for `Rewrite::made_at`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Made {
@@ -115,6 +134,14 @@ pub(crate) enum ElseOf {
     IfLet(bool),
     WhileLet,
     LetElse,
+}
+
+/// Where a `let` is among a chain's conditions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ChainAt {
+    First,
+    Between,
+    Last,
 }
 
 impl ElseOf {
@@ -183,6 +210,10 @@ pub(crate) struct Modules {
     /// else` means, by where its pattern is, the `let` (`Rewrite::if_let`):
     /// for saying what's wrong with it in terms of what was written.
     pub(crate) elses: HashMap<Span, ElseOf>,
+    /// Where each `let` of a chain of several conditions is among them, by
+    /// where it is (`Rewrite::if_chain`): for the lint of one that always
+    /// matches, which only one at an end is.
+    pub(crate) chain_lets: HashMap<Span, ChainAt>,
     /// The pattern of each closure parameter written as one, by its node,
     /// which the `let` `Rewrite::param_patterns` makes takes apart: for
     /// saying what's wrong with it as what was written.
@@ -1970,7 +2001,11 @@ impl Rewrite<'_> {
             self.let_else(stmts, tail, i, e.span);
         }
         if let ExprKind::IfLet(c, ..) | ExprKind::WhileLet(_, c, ..) = &mut e.kind {
-            self.pattern(&mut c.pat)?;
+            for cond in &mut c.conds {
+                if let Cond::Let(l) = cond {
+                    self.pattern(&mut l.pat)?;
+                }
+            }
         }
         // The bound a clause of an invariant hangs on.
         if let ExprKind::Where(_, g) = &mut e.kind {
@@ -1990,13 +2025,7 @@ impl Rewrite<'_> {
                 else {
                     unreachable!("matched above");
                 };
-                let of = ElseOf::IfLet(els.is_some());
-                let els = els.map(|e| *e).unwrap_or_else(|| Expr {
-                    kind: ExprKind::Unit,
-                    span: Span::new(then.span.end, then.span.end),
-                    id: self.id(),
-                });
-                e.kind = self.if_let(*c, *then, els, of);
+                e.kind = self.if_chain(*c, *then, els.map(|e| *e), e.span);
                 return self.expr(e);
             }
             ExprKind::WhileLet(label, _, _, body) => {
@@ -2861,6 +2890,179 @@ impl Rewrite<'_> {
     /// Nothing about them needs a rule of its own. The made-up pattern is
     /// where the `let` is, which is where errors about it are, in terms of
     /// what was written (`Modules::elses`).
+    /// What `if c1 && .. && cn { then } else { els }`, at `span`, means
+    /// (lemma L3 of docs/100-patterns.md): each condition in turn, the
+    /// next only where it holds, and `then` where they all do. A `let`
+    /// alone is `if_let`'s. With no `else`, every condition that doesn't
+    /// hold gives `()`:
+    ///
+    /// ```text
+    /// match x {               // c1 is `let pat = x`
+    ///     pat => if c2 { then },
+    ///     other => (),
+    /// }
+    /// ```
+    ///
+    /// With one, `els` is written once, after them, so a chain of `else
+    /// if`s doesn't grow with its length, and what `then` gives is taken
+    /// out to it by an `Option`:
+    ///
+    /// ```text
+    /// match (match x { pat => if c2 { Some(then) } else { None }, other => None }) {
+    ///     Some(v) => v,
+    ///     None => els,
+    /// }
+    /// ```
+    ///
+    /// `then` is where every condition holds, which is all the
+    /// refinement checker knows there, and `els` where one doesn't, which
+    /// it knows nothing of.
+    fn if_chain(&mut self, c: Chain, then: Expr, els: Option<Expr>, span: Span) -> ExprKind {
+        let of = ElseOf::IfLet(els.is_some());
+        let end = Span::new(then.span.end, then.span.end);
+        if let [Cond::Let(_)] = &c.conds[..] {
+            let Some(Cond::Let(l)) = c.conds.into_iter().next() else {
+                unreachable!("matched above");
+            };
+            let els = els.unwrap_or_else(|| Expr {
+                kind: ExprKind::Unit,
+                span: end,
+                id: self.id(),
+            });
+            return self.if_let(l, then, els, of);
+        }
+        self.chain_lets(&c);
+        let Some(els) = els else {
+            let unit = |cx: &mut Self| {
+                Some(Expr {
+                    kind: ExprKind::Unit,
+                    span: end,
+                    id: cx.id(),
+                })
+            };
+            return self
+                .nested(c.conds, then, span, &mut |cx| unit(cx), of)
+                .kind;
+        };
+        let at = Span::new(then.span.start, then.span.start);
+        let (option, some, none) = self.option_variants();
+        let then_span = then.span;
+        let member = self.member(option, some, at);
+        let some_then = Expr {
+            kind: self.variant_expr(option, some, member, vec![then], true),
+            span: then_span,
+            id: self.id(),
+        };
+        let mut stop = |cx: &mut Self| {
+            let member = cx.member(option, none, at);
+            Some(Expr {
+                kind: cx.variant_expr(option, none, member, Vec::new(), false),
+                span: at,
+                id: cx.id(),
+            })
+        };
+        let inner = self.nested(c.conds, some_then, span, &mut stop, of);
+        let bind = Pattern {
+            kind: PatternKind::Bind(CHAIN_VALUE.into(), false),
+            span: at,
+            id: self.id(),
+        };
+        let some_ty = self.enum_ident(option, at);
+        let some_member = self.member(option, some, at);
+        let none_ty = self.enum_ident(option, at);
+        let none_member = self.member(option, none, at);
+        let arms = vec![
+            Arm {
+                pat: Pattern {
+                    kind: PatternKind::Variant(some_ty, Vec::new(), some_member, vec![bind]),
+                    span: at,
+                    id: self.id(),
+                },
+                body: Expr {
+                    kind: ExprKind::Var(CHAIN_VALUE.into(), Vec::new()),
+                    span: at,
+                    id: self.id(),
+                },
+            },
+            Arm {
+                pat: Pattern {
+                    kind: PatternKind::Variant(none_ty, Vec::new(), none_member, Vec::new()),
+                    span: at,
+                    id: self.id(),
+                },
+                body: els,
+            },
+        ];
+        ExprKind::Match(Box::new(inner), arms)
+    }
+
+    /// `conds` each in turn around `then`, each with what `stop` makes
+    /// where it doesn't hold (no `else` at all, for a `bool`, if `None`):
+    /// a `let` as `if_let` has it, as `of` says, and a `bool` as an `if`.
+    /// The outermost is at `span`, each inner one from its condition on.
+    fn nested(
+        &mut self,
+        conds: Vec<Cond>,
+        then: Expr,
+        span: Span,
+        stop: &mut dyn FnMut(&mut Self) -> Option<Expr>,
+        of: ElseOf,
+    ) -> Expr {
+        let end = then.span.end;
+        let mut body = then;
+        for (i, cond) in conds.into_iter().enumerate().rev() {
+            let start = match &cond {
+                Cond::Let(l) => l.let_span.start,
+                Cond::Bool(b) => b.span.start,
+            };
+            let at = if i == 0 { span } else { Span::new(start, end) };
+            let kind = match cond {
+                Cond::Let(l) => {
+                    let els = stop(self).unwrap_or_else(|| Expr {
+                        kind: ExprKind::Unit,
+                        span: Span::new(end, end),
+                        id: self.id(),
+                    });
+                    self.if_let(l, body, els, of)
+                }
+                Cond::Bool(b) => {
+                    ExprKind::If(Box::new(b), Box::new(body), stop(self).map(Box::new))
+                }
+            };
+            body = Expr {
+                kind,
+                span: at,
+                id: self.id(),
+            };
+        }
+        body
+    }
+
+    /// Notes where each `let` of chain `c` is among its conditions.
+    fn chain_lets(&mut self, c: &Chain) {
+        let last = c.conds.len() - 1;
+        for (i, cond) in c.conds.iter().enumerate() {
+            if let Cond::Let(l) = cond {
+                let at = match i {
+                    0 => ChainAt::First,
+                    _ if i == last => ChainAt::Last,
+                    _ => ChainAt::Between,
+                };
+                self.r.m.chain_lets.insert(l.let_span, at);
+            }
+        }
+    }
+
+    /// `core::option::Option`, and its variants `Some` and `None`.
+    fn option_variants(&self) -> (usize, usize, usize) {
+        let Item::Type(k) = self.core_item("option", "Option") else {
+            unreachable!("`core::option::Option` is a type");
+        };
+        let variants = self.r.m.enums[k].1.as_ref().expect("an enum");
+        let at = |name: &str| variants.iter().position(|v| v == name).expect("a variant");
+        (k, at("Some"), at("None"))
+    }
+
     fn if_let(&mut self, c: LetCond, then: Expr, els: Expr, of: ElseOf) -> ExprKind {
         let at = c.let_span;
         self.made_at(at, Made::Else);
@@ -2898,22 +3100,35 @@ impl Rewrite<'_> {
     fn while_let(
         &mut self,
         label: Option<Label>,
-        c: LetCond,
+        c: Chain,
         inv: Invariant,
         body: Expr,
         span: Span,
     ) -> ExprKind {
-        let at = Span::new(c.let_span.start, c.let_span.start);
-        let stop = Expr {
-            kind: ExprKind::Break(None, None),
-            span: at,
-            id: self.id(),
+        if c.conds.len() > 1 {
+            self.chain_lets(&c);
+        }
+        // Each condition stops the loop where it doesn't hold: a `break`
+        // where it starts.
+        let starts: Vec<usize> = c
+            .conds
+            .iter()
+            .map(|cond| match cond {
+                Cond::Let(l) => l.let_span.start,
+                Cond::Bool(b) => b.span.start,
+            })
+            .collect();
+        let mut next = starts.len();
+        let mut stop = |cx: &mut Self| {
+            next -= 1;
+            let at = Span::new(starts[next], starts[next]);
+            Some(Expr {
+                kind: ExprKind::Break(None, None),
+                span: at,
+                id: cx.id(),
+            })
         };
-        let step = Expr {
-            kind: self.if_let(c, body, stop, ElseOf::WhileLet),
-            span,
-            id: self.id(),
-        };
+        let step = self.nested(c.conds, body, span, &mut stop, ElseOf::WhileLet);
         let body = Expr {
             kind: ExprKind::Block(vec![Stmt::BlockLike(step)], None),
             span,
@@ -3005,7 +3220,11 @@ impl Rewrite<'_> {
             expr: *init,
         };
         *tail = Some(Box::new(Expr {
-            kind: ExprKind::IfLet(Box::new(c), Box::new(after), Some(Box::new(els))),
+            kind: ExprKind::IfLet(
+                Box::new(Chain::one(c)),
+                Box::new(after),
+                Some(Box::new(els)),
+            ),
             span: Span::new(at.start, span.end),
             id: self.id(),
         }));
@@ -3122,24 +3341,11 @@ impl Rewrite<'_> {
     /// The variant that `name`, a path in a pattern, names (lemma V3 of
     /// docs/45-variants.md): it must name one, as a name there is never a
     /// new variable. `member` is its last segment, if it has a `::`.
-    fn pattern_path(
-        &mut self,
-        name: &Ident,
-        member: Option<&Ident>,
-    ) -> Result<(usize, usize), Error> {
+    fn pattern_path(&mut self, name: &Ident, member: Option<&Ident>) -> Result<Named, Error> {
         let last = member.unwrap_or(name);
         let found = match member {
             Some(_) => Some(self.path(name, Ns::Values)?.item),
-            None if self.params.contains(&name.name) => {
-                return Err(Error::ty(
-                    name.span,
-                    format!(
-                        "`{}` is a const parameter: a pattern can't name one yet; to compare \
-                         with it, bind another name and use `if x == {}`",
-                        name.name, name.name
-                    ),
-                ));
-            }
+            None if self.params.contains(&name.name) => return Ok(Named::Const),
             None => self
                 .r
                 .m
@@ -3147,7 +3353,7 @@ impl Rewrite<'_> {
                 .map(|b| b.item),
         };
         match found {
-            Some(Item::Variant(k, v)) => Ok((k, v)),
+            Some(Item::Variant(k, v)) => Ok(Named::Variant(k, v)),
             Some(Item::Fn(i)) if self.r.m.statics.contains(&i) => Err(Error::ty(
                 name.span,
                 format!(
@@ -3155,14 +3361,7 @@ impl Rewrite<'_> {
                     last.name
                 ),
             )),
-            Some(Item::Fn(i)) if self.r.m.consts.contains(&i) => Err(Error::ty(
-                name.span,
-                format!(
-                    "`{}` is a const: a pattern can't name one yet; to compare with it, bind \
-                     another name and use `if x == {}`",
-                    last.name, name.name
-                ),
-            )),
+            Some(Item::Fn(i)) if self.r.m.consts.contains(&i) => Ok(Named::Const),
             Some(Item::Fn(_)) => Err(Error::ty(
                 name.span,
                 format!("`{}` is a function: a pattern can't name one", last.name),
@@ -3252,7 +3451,9 @@ impl Rewrite<'_> {
             PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
-            | PatternKind::Str(_) => true,
+            | PatternKind::Str(_)
+            | PatternKind::Const(_) => true,
+            PatternKind::Rest => false,
             PatternKind::Variant(ty, _, _, pats) => {
                 self.variants_of(ty).is_none_or(|vs| vs.len() != 1)
                     || pats.iter().any(|p| self.refutable(p))
@@ -3267,11 +3468,24 @@ impl Rewrite<'_> {
 
     fn pattern(&mut self, p: &mut Pattern) -> Result<(), Error> {
         match &mut p.kind {
-            PatternKind::Path(name, pats, _) => {
+            PatternKind::Path(name, pats, parens) => {
                 for p in pats.iter_mut() {
                     self.pattern(p)?;
                 }
-                let (k, v) = self.pattern_path(name, None)?;
+                let (k, v) = match self.pattern_path(name, None)? {
+                    Named::Variant(k, v) => (k, v),
+                    Named::Const => {
+                        if *parens {
+                            return Err(no_fields(name));
+                        }
+                        let value = Expr {
+                            kind: ExprKind::Var(name.name.clone(), Vec::new()),
+                            span: name.span,
+                            id: name.id,
+                        };
+                        return self.const_pattern(p, value);
+                    }
+                };
                 let ty = self.enum_ident(k, name.span);
                 let member = self.member(k, v, name.span);
                 let pats = std::mem::take(pats);
@@ -3301,7 +3515,26 @@ impl Rewrite<'_> {
                             "a module has no type arguments; they go after the enum",
                         ));
                     }
-                    let (k, v) = self.pattern_path(&path, Some(member))?;
+                    let (k, v) = match self.pattern_path(&path, Some(member))? {
+                        Named::Variant(k, v) => (k, v),
+                        Named::Const => {
+                            if !pats.is_empty() {
+                                return Err(no_fields(&path));
+                            }
+                            let value = Expr {
+                                kind: ExprKind::Variant(
+                                    ty.clone(),
+                                    Vec::new(),
+                                    member.clone(),
+                                    Vec::new(),
+                                    false,
+                                ),
+                                span: path.span,
+                                id: self.id(),
+                            };
+                            return self.const_pattern(p, value);
+                        }
+                    };
                     *ty = self.enum_ident(k, path.span);
                     *member = self.member(k, v, member.span);
                     return Ok(());
@@ -3322,14 +3555,26 @@ impl Rewrite<'_> {
                     self.pattern(p)?;
                 }
             }
+            // Made here, its value resolved as it was made.
+            PatternKind::Const(_) => {}
             PatternKind::Wild
             | PatternKind::Bind(..)
             | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
             | PatternKind::Str(_)
-            | PatternKind::Unit => {}
+            | PatternKind::Unit
+            | PatternKind::Rest => {}
         }
+        Ok(())
+    }
+
+    /// Makes `p`, which names a const or a const parameter, the pattern
+    /// that compares with it: with `value`, the expression that names it,
+    /// resolved as any other (docs/100-patterns.md).
+    fn const_pattern(&mut self, p: &mut Pattern, mut value: Expr) -> Result<(), Error> {
+        self.expr(&mut value)?;
+        p.kind = PatternKind::Const(Box::new(value));
         Ok(())
     }
 }
@@ -3360,6 +3605,11 @@ pub(crate) const FOR_ITERATOR: &str = "{for}";
 /// The name of the variable each arm of what `?` means binds, which no
 /// program can write (see `Rewrite::try_expr`).
 pub(crate) const TRY_VALUE: &str = "{try}";
+
+/// What the block of a chain with an `else` gives, taken out of the
+/// chain's conditions (`Rewrite::if_chain`): no name the program can
+/// write.
+pub(crate) const CHAIN_VALUE: &str = "{chain}";
 
 /// Checks that no `break` in `e`, the body of a `for` or `while let`
 /// (`what`) labelled `label`, if it is, gives that loop a value: it can end
@@ -3492,11 +3742,14 @@ pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
             vec![&mut **l, &mut **r]
         }
         ExprKind::For(f) => vec![&mut f.iter, &mut f.body],
-        ExprKind::IfLet(c, then, els) => [&mut c.expr, &mut **then]
+        ExprKind::IfLet(c, then, els) => chain_exprs(c)
             .into_iter()
+            .chain([&mut **then])
             .chain(els.as_deref_mut())
             .collect(),
-        ExprKind::WhileLet(_, c, _, body) => vec![&mut c.expr, &mut **body],
+        ExprKind::WhileLet(_, c, _, body) => {
+            chain_exprs(c).into_iter().chain([&mut **body]).collect()
+        }
         ExprKind::Try(e, _) => vec![e],
         ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
             std::iter::once(&mut **f).chain(args.iter_mut()).collect()
@@ -3570,4 +3823,15 @@ fn is_place(e: &Expr) -> bool {
         ExprKind::Field(x, _) => is_place(x),
         _ => false,
     }
+}
+
+/// The expressions of chain `c`, in order.
+fn chain_exprs(c: &mut Chain) -> Vec<&mut Expr> {
+    c.conds
+        .iter_mut()
+        .map(|cond| match cond {
+            Cond::Let(l) => &mut l.expr,
+            Cond::Bool(e) => e,
+        })
+        .collect()
 }

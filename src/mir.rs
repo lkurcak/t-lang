@@ -296,6 +296,11 @@ pub(crate) enum Pat {
     Bool(bool),
     /// A `&str` with these bytes.
     Str(String),
+    /// Equal to the value of this local, an integer, `bool`, `char` or
+    /// `&str` worked out before the match: a const's, which a pattern names
+    /// (docs/100-patterns.md). By the language's own `==`, so no code of
+    /// the program's runs.
+    Eq(Local),
     /// Variant `.0` of an enum, with patterns for its fields.
     Variant(usize, Vec<Pat>),
     /// Patterns for some of a struct's fields, by index.
@@ -793,6 +798,21 @@ fn show_rv(r: &Rvalue, names: &dyn Names) -> String {
     }
 }
 
+impl Pat {
+    /// The locals it reads: what each `Eq` in it compares with.
+    pub(crate) fn locals(&self) -> Vec<Local> {
+        match self {
+            Pat::Eq(l) => vec![*l],
+            Pat::Variant(_, pats) | Pat::Array(pats) | Pat::Or(pats) => {
+                pats.iter().flat_map(Pat::locals).collect()
+            }
+            Pat::Struct(fields) => fields.iter().flat_map(|(_, p)| p.locals()).collect(),
+            Pat::Deref(p) => p.locals(),
+            Pat::Any | Pat::Range(..) | Pat::Bool(_) | Pat::Str(_) => Vec::new(),
+        }
+    }
+}
+
 fn show_pat(p: &Pat) -> String {
     match p {
         Pat::Any => "_".to_string(),
@@ -804,6 +824,7 @@ fn show_pat(p: &Pat) -> String {
         ),
         Pat::Bool(b) => b.to_string(),
         Pat::Str(s) => crate::lexer::str_literal(s),
+        Pat::Eq(l) => format!("== _{}", l.0),
         Pat::Variant(i, pats) if pats.is_empty() => format!("#{i}"),
         Pat::Variant(i, pats) => format!("#{i}({})", show_pats(pats)),
         Pat::Struct(fields) => {

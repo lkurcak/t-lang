@@ -1362,6 +1362,14 @@ impl<'e> Gen<'e> {
                     s.len()
                 )
             }
+            // A const's value, in a local of the type matched: a `&str` by
+            // its bytes, as a literal's, anything else by C's `==`.
+            Pat::Eq(l) => match t {
+                Type::Ref(_, _, inner) if **inner == Type::Str => {
+                    format!("t_bytes_eq({e}.ptr, {e}.len, _{0}.ptr, _{0}.len)", l.0)
+                }
+                _ => format!("({e} == _{})", l.0),
+            },
             Pat::Range(lo, hi) => {
                 let lit = |n: i128| match t {
                     Type::Int(i) if i.signed() => format!("INT64_C({n})"),

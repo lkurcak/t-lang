@@ -417,6 +417,10 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
             // its name doesn't matter.
             NoteKind::Struct(_) | NoteKind::Enum(_) | NoteKind::TypeParam(_) => true,
             NoteKind::EffectParam(_) | NoteKind::Variant(..) => true,
+            // In a pattern, a name that starts with an uppercase letter is
+            // a path, so a const's or a const parameter's must, to stay one
+            // (docs/100-patterns.md).
+            NoteKind::Const(_) | NoteKind::ConstParam(_) => true,
             _ => false,
         };
         renames.push(Rename {

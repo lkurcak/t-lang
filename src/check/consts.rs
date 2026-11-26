@@ -250,9 +250,11 @@ impl Checker {
     }
 
     /// The error for a pattern binding `name` at `span` where a const of
-    /// that name is in scope: whether it binds or compares would depend on
-    /// what's in scope, so it's neither yet, and the name is kept for
-    /// comparing (see docs/36-consts.md).
+    /// that name is in scope, one whose name doesn't start with an
+    /// uppercase letter: whether it binds or compares would depend on
+    /// what's in scope, so it's neither (see docs/36-consts.md). A const
+    /// is compared with by a path, which starts with an uppercase letter
+    /// (docs/100-patterns.md).
     pub(super) fn const_pattern(&self, name: &str, span: Span) -> Error {
         let is_static =
             matches!(self.binding(name), Some(Binding::Fn(f)) if self.fns[f.0].is_static);
@@ -265,8 +267,9 @@ impl Checker {
         Error::ty(
             span,
             format!(
-                "`{name}` is a const: a pattern can't name one yet; to compare with it, bind \
-                 another name and use `if x == {name}`"
+                "`{name}` is a const, but in a pattern a name that starts with a lowercase \
+                 letter binds a variable: to compare with it, give it a name in upper case, \
+                 or bind another name and use `if x == {name}`"
             ),
         )
     }

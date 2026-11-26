@@ -1304,6 +1304,20 @@ impl Checker {
                         ),
                         _ => String::new(),
                     };
+                    // A local of the name, which may hide a function's:
+                    // say which it is, not only its type.
+                    if let (ExprKind::Var(name, _), Some(super::typed::Res::Local(id))) =
+                        (&f.kind, self.typed.vars.get(&f.id))
+                    {
+                        let what = match self.fn_params.contains_key(id) {
+                            true => "a parameter",
+                            false => "a variable",
+                        };
+                        return Err(Error::ty(
+                            f.span,
+                            format!("`{name}` is {what} of type `{t}`, not a function{hint}"),
+                        ));
+                    }
                     return Err(Error::ty(f.span, format!("`{t}` is not a function{hint}")));
                 };
                 let pred = Checker::callable_pred(&t);

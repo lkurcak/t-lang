@@ -3756,6 +3756,7 @@ impl Checker {
             cx: self,
             kinds: Vec::new(),
             facts: Vec::new(),
+            pat_consts: Vec::new(),
             laws: Vec::new(),
             quotients: HashMap::new(),
             reachable: true,
@@ -4297,6 +4298,11 @@ struct Walk<'c> {
     kinds: Vec<Kind>,
     /// What's known here, on this path.
     facts: Vec<Formula>,
+    /// While a `match`'s patterns are worked out, what each const pattern
+    /// in them compares with, by the local it's in (`Pat::Eq`): read at
+    /// the `match`, on its path, and gone after it, so nothing of it is
+    /// kept anywhere else.
+    pat_consts: Vec<(crate::mir::Local, Val)>,
     /// Whether this point can be reached at all.
     reachable: bool,
     /// Which variable of the logic each `i64` or `bool` place stands for

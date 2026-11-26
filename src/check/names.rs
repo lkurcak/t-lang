@@ -486,13 +486,15 @@ impl Walk<'_> {
             PatternKind::Or(alts) | PatternKind::Array(alts) | PatternKind::Tuple(alts) => {
                 alts.iter().for_each(|p| self.pattern(p))
             }
+            PatternKind::Const(e) => self.expr(e),
             PatternKind::Wild
             | PatternKind::Bind(..)
             | PatternKind::Int(..)
             | PatternKind::Range(..)
             | PatternKind::Bool(_)
             | PatternKind::Str(_)
-            | PatternKind::Unit => {}
+            | PatternKind::Unit
+            | PatternKind::Rest => {}
         }
     }
 }

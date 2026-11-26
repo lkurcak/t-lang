@@ -124,6 +124,7 @@
 
 (wildcard_pattern) @variable.builtin
 (remaining_field_pattern) @variable.builtin
+(rest_pattern) @variable.builtin
 
 ["(" ")" "[" "]" "{" "}"] @punctuation.bracket
 ["," ";" ":" "::" "."] @punctuation.delimiter

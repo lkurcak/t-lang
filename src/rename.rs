@@ -471,6 +471,8 @@ fn shorthand_pats(p: &Pattern, out: &mut HashMap<Span, usize>) {
         | PatternKind::Range(..)
         | PatternKind::Bool(_)
         | PatternKind::Str(_)
-        | PatternKind::Unit => {}
+        | PatternKind::Unit
+        | PatternKind::Rest
+        | PatternKind::Const(_) => {}
     }
 }

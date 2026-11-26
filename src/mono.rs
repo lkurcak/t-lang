@@ -2355,7 +2355,12 @@ fn tidy(body: &mut crate::mir::Body) {
                     read[p.local.0] = true;
                 }
             }
-            Some(Term::Match(p, ..)) => read[p.local.0] = true,
+            Some(Term::Match(p, pats, _)) => {
+                read[p.local.0] = true;
+                for l in pats.iter().flat_map(crate::mir::Pat::locals) {
+                    read[l.0] = true;
+                }
+            }
             _ => {}
         }
     }

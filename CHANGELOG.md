@@ -1,5 +1,35 @@
 # Changelog
 
+## 0.108.0 (2026-11-26)
+
+Step 100: chains, `..` and consts in patterns, found by `t fmt` written in
+T. See [docs/100-patterns.md](docs/100-patterns.md).
+
+### Added
+
+- Let chains: the condition of an `if` or a `while` can be conditions
+  joined by `&&`, each a `let` or a `bool`, `if let Some(x) = a && x > 3
+  && let Some(y) = f(x) { .. } else { .. }`. Each is worked out only
+  where the ones before it held; what a `let` binds is there in the
+  conditions after it and in the block, not in the `else`. `||` can't
+  join a `let`, and `let .. else` takes no chain.
+- `..` among a variant's, a tuple's or an array's values, `ExprKind::If(..)`,
+  `(a, .., z)`, `[first, ..]`: the values the others don't name, none or
+  more.
+- Consts, and const parameters, of an integer type, `bool`, `char` or
+  `&str` in patterns: `Some((_, CMP_PREC))` matches where the value is
+  the const's. A const covers no value, so a `match` on consts needs a
+  `_`; in its arm, the value is known to be the const's.
+
+### Changed
+
+- A keyword where a name would be says it's a keyword: "`sealed` is a
+  keyword, so it can't be a name".
+- Calling a parameter or a variable says which it is: "`head` is a
+  parameter of type `Head`, not a function".
+- A lifetime of a parameter whose type has several says which: "the
+  lifetime `'1` in the type of `p`, `&mut Parser<'1, '_>`".
+
 ## 0.107.3 (2026-11-26)
 
 Step 99: what a path learns stays on it. See
