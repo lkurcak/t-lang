@@ -37,6 +37,10 @@
 - [After floats](backlog/floats.md#after-floats): a matrix and small neural-network library
   in t-libs, and an agent that learns to play a T game such as t-maze; then FFI with
   pointers and linking shared libraries; GPU kernels later.
+- Fast floats, explicitly and the same everywhere: `mul_add` (one rounding; slow without an
+  FMA unit), and sums and dot products defined in a SIMD-shaped order (eight accumulators
+  joined in a fixed tree), so they vectorise without fast-math. Never "assume no NaN", which
+  is UB in C (it can delete the range check of `x as usize`).
 - `chars`, the other iterators of a `str`, and ranges as bounded iterators, so
   `s.chars().enumerate()` can't panic (see "What it doesn't do" in
   `docs/92-where-a-bound-holds.md`).
