@@ -612,9 +612,15 @@ impl Formula {
     }
 }
 
+/// `fs`, each said once, in order; hashed in place, not copied, as each
+/// may be big.
 fn dedup(fs: Vec<Formula>) -> Vec<Formula> {
     let mut seen = std::collections::HashSet::new();
-    fs.into_iter().filter(|f| seen.insert(f.clone())).collect()
+    let first: Vec<bool> = fs.iter().map(|f| seen.insert(f)).collect();
+    drop(seen);
+    (fs.into_iter().zip(first))
+        .filter_map(|(f, first)| first.then_some(f))
+        .collect()
 }
 
 /// The most cases `valid` looks at before giving up.

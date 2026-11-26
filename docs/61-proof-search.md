@@ -2,8 +2,8 @@
 
 Code: `valid`, `refuted`, `impossible`, `eliminate` and `nnf` in
 `src/check/refine/logic.rs`; `Cand::all`, `Walk::join_trees`,
-`Walk::join_values`, `Walk::knowledge` and `Walk::place_read` in
-`src/check/refine/targs.rs`; `Walk::post`, `Walk::fields_of`,
+`Walk::join_values`, `Walk::values_at_depth`, `Walk::knowledge` and
+`Walk::place_read` in `src/check/refine/targs.rs`; `Walk::join_with`; `Walk::post`, `Walk::fields_of`,
 `Walk::need` and `Walk::no_mut_borrow` in `src/check/refine.rs`;
 `t_lang::check::work` and `tests/proof_work.rs`; `Iterator::skip` in
 `core/iter.t`; `saturating_add` and `saturating_sub` in `core/num.t`.
@@ -255,6 +255,59 @@ A refined `let` still can't be borrowed `&mut` into a variable, or by a
 call that keeps the reference: nothing would check the refinement where
 that borrow ends.
 
+## Where branches meet, once (step 98)
+
+`t fmt` written in T, a port of the formatter, found the third blow-up:
+`spec_of`, of its lexer, took 28 seconds to check, and a few more nested
+`if let`s would have taken minutes. Each level doubled what was known:
+
+```rust
+fn width(s: &str, n: usize) -> Option<usize> {
+    let mut pad: Option<(Option<char>, usize)> = None;
+    if let Some(r) = s.strip_prefix('a') {
+        if r.len() > 0 {
+            pad = Some((r.chars().next(), r.len()));
+        }
+        if let Some(q) = r.strip_prefix('b') {
+            if q.len() > 1 {
+                pad = Some((q.chars().next(), q.len()));
+            }
+        }
+    }
+    let Some((_, m)) = pad else { return None };
+    if m < 100 && n < 100 { Some(m + n + 1) } else { None }
+}
+
+fn main(os: std::Os) -> Result<(), std::io::Error> {
+    let mut out = os.stdout;
+    out.line(&width("ab", 1).unwrap_or(0))?; // expect: 3
+    Ok(())
+}
+```
+
+Two things copied what was known where there's now one name for it:
+
+- **The condition of a branch.** Where branches meet, what's said of each
+  branch's values (step 60's carried refinements, the values of an
+  `Option`) is said of the value after under the condition that branch
+  was taken. That condition was everything known in the branch, copied
+  into every case; a join inside the branch was copied with it, so each
+  level of nesting doubled it. Now the join makes a variable of its own,
+  `sel`, from 0 to one less than the number of branches: branch `i`'s case
+  of the joined fact says `sel == i`, and what's said of the values is
+  said under `sel == i`, one atom (lemma J1).
+- **An enum's copies.** What's said of a joined enum at a position is said
+  of the enum and, as `assume_tree` copies it, of what's in its fields
+  where it's that variant, so that a pattern binding the field has it. Reading
+  the enum at that position read the enum's and each field's on the way
+  down: the same thing two or three times, which the next join joined
+  again. Now what's read on the way down isn't read again where it was
+  copied to (lemma J2).
+
+`dedup` in `nnf` also hashes each part in place now, rather than copying
+it first. `spec_of` checks in a quarter of a second, and the test in
+`tests/proof_work.rs` counts the work of three, five and seven levels.
+
 ## Small things
 
 - `Iterator::skip(n)`: the values after the first `n`.
@@ -299,6 +352,26 @@ that borrow ends.
   under the condition that it's that variant: each holds of the branch
   taken. A value checked against a refinement has it, as objects never
   change.
+- **Lemma J1 (which branch).** Where `n` branches meet, the joined fact
+  is the disjunction of each branch's facts, each with `sel == i` added,
+  `sel` a variable nothing else mentions. Whatever branch `i` was taken,
+  its facts held, so with `sel` being `i` the disjunction holds: adding
+  `sel` asserts nothing of what was there. In any case the facts allow,
+  `sel == i` holds only in branch `i`'s disjunct, as each says a
+  different value of `sel`; so `sel == i` implies branch `i`'s facts, as
+  the old condition (them, copied) did, and what's said under it holds of
+  branch `i`'s values. It's no weaker either: under the joined fact,
+  `sel == i` and branch `i`'s facts are equivalent where the branches'
+  facts exclude each other, which a branch's condition makes them.
+- **Lemma J2 (said once).** What `assume_tree` says of what's in an enum's
+  or a struct's fields, or what a reference points to, is what was said of
+  the whole at that position, under the variant's tag for an enum's
+  (`Disj::under`). Reading the whole's values at the position conjoins
+  what's said of the whole with what's read on the way down, each under
+  the tags on the way. So a copy met on the way down is implied by what's
+  conjoined above it: `p && (t && (t => p) && q)` is `p && t && q`.
+  Leaving it out leaves the same conjunction; and leaving out any
+  conjunct only knows less, so it can't make a proof hold that didn't.
 - **Lemma T4 (lent, proved again).** Step 30's argument: a place lent
   straight to a call-scoped `&mut` (or a lend-framed one, step 59) can't
   be read until the call's done (or the borrow ends), the callee can't
@@ -326,6 +399,12 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
 - A part of a refined `let` (a field of it, or what's in a box in it)
   still can't be lent `&mut`: the refinement would have to be proved again
   of the whole, which nothing here does yet.
+- A join still copies each branch's tree, if not its facts, into the
+  case it joins: where branches meet one after another, each setting the
+  same `Option`, what's said of the one before is in both cases, and
+  doubles each time (twelve `if let`s in a row take seconds). Saying
+  "what's known of that branch's value" by naming the value, not copying
+  it, is step 99.
 - The solver still has no learning: a conflict found in one branch of a
   split isn't remembered for the others, as a CDCL solver would.
 
@@ -337,6 +416,9 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
 - D2, the checker's speed is tested by counting its work, not timing it.
 - D3, `Iterator::skip`, `saturating_add`/`saturating_sub` and the `t fmt`
   pipe fix, from t-maze's list.
+- D4 (step 98), a join names which branch was taken with a variable of
+  its own, rather than repeating each branch's facts, and a copy of what's
+  said of an enum is read once; no language change.
 
 ## Exercises
 
@@ -355,6 +437,13 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
 5. Why can't a refined `let` be lent to `fn keep<'a>(l: &'a mut List<u8>)
    -> &'a mut List<u8>`, even if nothing is written through the result?
 
+6. In J1, why would a `sel` that two disjuncts both allowed (`sel <= 1`
+   in each) make what's said under `sel == 0` wrong? Write a program it
+   would accept.
+7. J2 leaves out a copy met on the way down. Why may it not leave out
+   what's said of the field when the field is read on its own, after a
+   pattern binds it?
+
 ## Reading
 
 - Stallman and Sussman, *Forward reasoning and dependency-directed
@@ -365,6 +454,9 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
 - Horrocks and Patel-Schneider, *Optimising description logic
   subsumption* (1999): backjumping in tableau provers, with dependency
   sets on what each branch adds.
+- Flanagan and Saxe, *Avoiding exponential explosion: generating compact
+  verification conditions* (POPL 2001): where paths meet, name what each
+  path knows rather than copy it; J1 is the smallest case of it.
 - Marques-Silva and Sakallah, *GRASP: a search algorithm for
   propositional satisfiability* (1999): conflict analysis and learning.
 - Schrijver, *Theory of Linear and Integer Programming* (1986), on

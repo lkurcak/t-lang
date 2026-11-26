@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.107.2 (2026-11-26)
+
+Step 98: joins that don't double. See
+[docs/61-proof-search.md](docs/61-proof-search.md#where-branches-meet-once-step-98).
+
+### Fixed
+
+- Checking took time exponential in how deeply `if`s and `match`es that
+  set the same variable were nested: 28 seconds for one function of
+  `t fmt` written in T, over two minutes for five nested `if let`s each
+  setting an `Option` of a pair. Where branches meet, which one was taken
+  is now a variable of its own, rather than a copy of everything known in
+  it, and what's said of an enum and copied to its fields is read once;
+  that function checks in a quarter of a second.
+
 ## 0.107.1 (2026-11-25)
 
 Step 97: retrospective 19's fixes. See

@@ -607,17 +607,26 @@ impl Walk<'_> {
         t: &Type,
         pos: &[usize],
     ) -> Vec<(Vec<Formula>, Cand)> {
-        self.values_at_depth(v, t, pos, 0)
+        self.values_at_depth(v, t, pos, &[], 0)
     }
 
+    /// As `values_at`, of `v` reached from objects that had `above` said of
+    /// them at the position read, as `assume_tree` copies it to what's in
+    /// their fields (`Disj::under` a variant's tag): said of `v` too, it's
+    /// read once, there (lemma J2 of docs/61-proof-search.md). Read again
+    /// at each object on the way, a join's copies would be joined again by
+    /// the next, more each time.
     fn values_at_depth(
         &mut self,
         v: &Val,
         t: &Type,
         pos: &[usize],
+        above: &[Disj],
         depth: usize,
     ) -> Vec<(Vec<Formula>, Cand)> {
-        let reg = self.registered(Self::obj_of(v), pos);
+        let mut reg = self.registered(Self::obj_of(v), pos);
+        reg.retain(|d| !above.contains(d));
+        let down: Vec<Disj> = reg.iter().chain(above).cloned().collect();
         let with = |cases: Vec<(Vec<Formula>, Cand)>| -> Vec<(Vec<Formula>, Cand)> {
             if reg.is_empty() {
                 return cases;
@@ -645,7 +654,7 @@ impl Walk<'_> {
                 match (vals.get(k), ts.get(k)) {
                     (Some(e), Some(et)) => {
                         let et = self.cx.solved(et);
-                        cases = self.values_at_depth(e, &et, rest, depth + 1);
+                        cases = self.values_at_depth(e, &et, rest, &down, depth + 1);
                     }
                     _ => cases.push((Vec::new(), Cand::Any)),
                 }
@@ -660,7 +669,7 @@ impl Walk<'_> {
                     };
                     let mut at = rho;
                     at.extend_from_slice(rest);
-                    cases.extend(self.values_at_depth(fv, &ft, &at, depth + 1));
+                    cases.extend(self.values_at_depth(fv, &ft, &at, &down, depth + 1));
                 }
                 false
             }
@@ -681,7 +690,8 @@ impl Walk<'_> {
                     };
                     let mut at = rho;
                     at.extend_from_slice(rest);
-                    for (mut g, c) in self.values_at_depth(&fv, &ft, &at, depth + 1) {
+                    let under: Vec<Disj> = down.iter().map(|d| d.under(&tag)).collect();
+                    for (mut g, c) in self.values_at_depth(&fv, &ft, &at, &under, depth + 1) {
                         g.insert(0, tag.clone());
                         cases.push((g, c));
                     }
@@ -690,7 +700,7 @@ impl Walk<'_> {
             }
             (Val::Ref(_, Pointee::Val(w)), Type::Ref(_, _, inner) | Type::Box(inner)) if k == 0 => {
                 let (w, inner) = ((**w).clone(), self.cx.solved(inner));
-                cases = self.values_at_depth(&w, &inner, rest, depth + 1);
+                cases = self.values_at_depth(&w, &inner, rest, &down, depth + 1);
                 false
             }
             (Val::Ref(_, Pointee::Place(p)), Type::Ref(_, _, inner) | Type::Box(inner))
@@ -698,7 +708,7 @@ impl Walk<'_> {
             {
                 let inner = self.cx.solved(inner);
                 let w = self.read_place(&p.clone());
-                cases = self.values_at_depth(&w, &inner, rest, depth + 1);
+                cases = self.values_at_depth(&w, &inner, rest, &down, depth + 1);
                 false
             }
             _ => true,
