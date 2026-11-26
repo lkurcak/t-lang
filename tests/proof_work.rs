@@ -341,3 +341,48 @@ fn disjunctions_the_goal_doesnt_need() {
     };
     bounded(&[1, 3, 5, 7], corners, limit, 3);
 }
+
+/// t-fmt's `spec_of`, of `t fmt` written in T: `k` nested `if let`s,
+/// each level setting an `Option` of a pair, read and added to after.
+/// With 0.107.1 a join copied everything known in each branch into the
+/// condition of each case it joined, and what was said of the `Option`
+/// was read again at each object in it: 28 seconds for the lexer's, over
+/// two minutes for 5. Docs/61's lemmas J1 and J2.
+fn nested(k: usize) -> String {
+    let mut body = String::new();
+    let mut ind = String::from("    ");
+    for i in 0..k {
+        body += &format!("{ind}if let Some(r{i}) = s.strip_prefix('a') {{\n");
+        ind += "    ";
+        body += &format!("{ind}if r{i}.len() > {i} {{\n");
+        body += &format!("{ind}    pad = Some((r{i}.chars().next(), r{i}.len()));\n");
+        body += &format!("{ind}}}\n");
+    }
+    for _ in 0..k {
+        ind.truncate(ind.len() - 4);
+        body += &format!("{ind}}}\n");
+    }
+    format!(
+        "fn f(s: &str, n: usize) -> Option<usize> {{
+    let mut pad: Option<(Option<char>, usize)> = None;
+{body}    let Some((c, m)) = pad else {{ return None }};
+    let _ = c;
+    if m < 100 && n < 100 {{ Some(m + n + 1) }} else {{ None }}
+}}
+
+fn main() {{
+    let _ = f(\"abc\", 1);
+}}
+"
+    )
+}
+
+#[test]
+fn nested_branches_joined() {
+    let limit = Work {
+        refutations: 100,
+        cases: 20,
+        carried: 20_000,
+    };
+    bounded(&[3, 5, 7], nested, limit, 10);
+}

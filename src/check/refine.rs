@@ -6255,13 +6255,21 @@ impl Walk<'_> {
                 }
             }
         }
-        // What's said of positions of each branch's objects is said, under
-        // the condition the branch was taken, of the one after (`targs`):
-        // of a reference, what may be written through it is whichever
-        // place's that branch's points to.
-        let guards: Vec<Formula> = reached
-            .iter()
-            .map(|o| Formula::and(o.facts.clone()))
+        // Which branch was taken, as a variable of its own, `sel`: the
+        // joined fact below says `sel == i` in branch `i`'s case and in no
+        // other, so `sel == i` implies branch `i`'s facts (lemma J1 of
+        // docs/61-proof-search.md). What's said of positions of each
+        // branch's objects is said, under that condition, of the one after
+        // (`targs`): of a reference, what may be written through it is
+        // whichever place's that branch's points to. The condition is the
+        // one atom, never a copy of the branch's facts, which nested joins
+        // would copy again at each level, doubling what's known each time.
+        let last = Lin::constant(reached.len() as i128 - 1);
+        let sel = self.fresh(Kind::Int(Lin::constant(0), last));
+        let guards: Vec<Formula> = (0..reached.len())
+            .map(|i| {
+                Formula::eq(&Lin::var(sel), &Lin::constant(i as i128)).expect("a small constant")
+            })
             .collect();
         let mut tree_joins: Vec<(Obj, Type, Vec<Option<Obj>>)> = Vec::new();
         // A place each branch left a different object at is a new one, of
@@ -6324,6 +6332,7 @@ impl Walk<'_> {
                 }
             }
             let mut parts = o.facts;
+            parts.push(guards[i].clone());
             for (result, (_, vals)) in results.iter().zip(&values) {
                 parts.extend(self.same(result, &vals[i]));
             }
