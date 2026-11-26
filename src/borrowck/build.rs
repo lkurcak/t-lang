@@ -1799,6 +1799,8 @@ impl<'a> Builder<'a> {
             else {
                 unreachable!("a temporary")
             };
+            // An alternative of an or-pattern may compare with a const.
+            self.const_values(pat);
             self.declare(pat);
             self.bind(pat, &p);
             self.end_temps(init.span);
@@ -1860,6 +1862,7 @@ impl<'a> Builder<'a> {
             _ => {
                 let p = self.place(init);
                 self.inspect(pat, &p);
+                self.const_values(pat);
                 self.declare(pat);
                 self.bind(pat, &p);
             }

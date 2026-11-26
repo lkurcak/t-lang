@@ -10,11 +10,18 @@ fn or_return(o: Option<u8>) -> u8 {
     n + 1
 }
 
+// Both branches leave: the chain is a `!`.
+fn both(o: Option<u8>) -> u8 {
+    if let Some(a) = o && a > 0 { return a } else { return 0 }
+}
+
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     out.line(&small(Some(4)))?; // expect: 4
     out.line(&small(Some(40)))?; // expect: 0
     out.line(&or_return(Some(5)))?; // expect: 5
     out.line(&or_return(None))?; // expect: 4
+    out.line(&both(Some(2)))?; // expect: 2
+    out.line(&both(Some(0)))?; // expect: 0
     Ok(())
 }

@@ -30,6 +30,14 @@ T. See [docs/100-patterns.md](docs/100-patterns.md).
 - A lifetime of a parameter whose type has several says which: "the
   lifetime `'1` in the type of `p`, `&mut Parser<'1, '_>`".
 
+### Fixed
+
+- A closure that moved a value out of a tuple or an array it took apart
+  in a `match`, `|| match t { (a, _) => take(a) }`, was taken to borrow
+  it, so the move was refused ("cannot move out of this value, which is
+  behind a reference"). It captures what it moves out of by value now, as
+  it did of a variant or a struct.
+
 ## 0.107.3 (2026-11-26)
 
 Step 99: what a path learns stays on it. See
