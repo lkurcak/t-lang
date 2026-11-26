@@ -285,10 +285,12 @@ fn main() {{}}
 
 #[test]
 fn lines_written_in_a_loop() {
+    // What's learned of a value after it's made carries the fact it's said
+    // under (step 99), a case more in each: 2870 carried at 5 before.
     let limit = Work {
         refutations: 100,
         cases: 50,
-        carried: 4000,
+        carried: 6000,
     };
     bounded(&[1, 3, 5], lines, limit, 6);
 }

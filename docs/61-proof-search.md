@@ -308,6 +308,35 @@ Two things copied what was known where there's now one name for it:
 it first. `spec_of` checks in a quarter of a second, and the test in
 `tests/proof_work.rs` counts the work of three, five and seven levels.
 
+## What a path learns stays on it (step 99)
+
+Step 61 made what's proved of a value known of it after: once a `let`
+declares a refinement of a list's elements, its value has it, so a copy
+of the variable does too. But it was said of the value's object, which
+every path has, not of the path that proved it; and a branch that can't
+be taken proves anything. So this was accepted, from 0.77.0 on, and
+`first` returned a 200 for a result that promises less than 3:
+
+```rust,error
+fn first(z: [{ v: u8 | v < 3 }; 2]) -> { v: u8 | v < 3 } { z[0] }
+
+fn f(n: u8, l: [u8; 2]) -> u8 {
+    if n > 5 && n < 3 {
+        let y: [{ v: u8 | v < 3 }; 2] = l;
+        let _ = y;
+    }
+    let z: [{ v: u8 | v < 3 }; 2] = l; // error: can't prove `v < 3` for `z`
+    first(z)
+}
+```
+
+As with the other branch, or after an `if` whose condition made it hold.
+Now what's learned of a value after it's made is said under a fact of the
+path where it's learned, a variable of its own that's 1 there (lemma K1):
+after that point on that path, it's known as before; elsewhere it must be
+proved again. Where paths meet, it's known under the case of the path
+that learned it, as everything else that path knew.
+
 ## Small things
 
 - `Iterator::skip(n)`: the values after the first `n`.
@@ -351,7 +380,7 @@ it first. `spec_of` checks in a quarter of a second, and the test in
   branch's cases, each under its branch's condition, and an enum's are
   under the condition that it's that variant: each holds of the branch
   taken. A value checked against a refinement has it, as objects never
-  change.
+  change; but only where it was checked from holds (lemma K1, step 99).
 - **Lemma J1 (which branch).** Where `n` branches meet, the joined fact
   is the disjunction of each branch's facts, each with `sel == i` added,
   `sel` a variable nothing else mentions. Whatever branch `i` was taken,
@@ -372,6 +401,23 @@ it first. `spec_of` checks in a quarter of a second, and the test in
   conjoined above it: `p && (t && (t => p) && q)` is `p && t && q`.
   Leaving it out leaves the same conjunction; and leaving out any
   conjunct only knows less, so it can't make a proof hold that didn't.
+- **Lemma K1 (learned on a path).** What's said of an object's values
+  after it's made (`Walk::assume_tree`) is said under a fact `tok == 1`
+  said at the same point, `tok` a variable nothing else mentions. Facts
+  are the path's own: a point after it on a path through it has the fact,
+  and where paths meet, each path's facts are in its case of the joined
+  one (J1), with `tok == 1` among them. A point on another path, earlier
+  on this one, or after a branch that didn't go through it, has neither
+  the fact nor a case with it, and `tok`, said nowhere else, can be 0
+  there: what's said under it is of no use. So it's used exactly where
+  what proved it held. A branch that can't be taken proves anything, and
+  its facts are contradictory: so is its case where the branches meet,
+  and what it learned is of use nowhere. Leaving out the case for
+  `tok == 0` where `tok == 1` is known (`Walk::here`) says the same there.
+- **Lemma K2 (made here).** What's said of an object where it's made, with
+  nothing in it made before (where branches meet, the joined value and its
+  parts), holds wherever it's reached: nothing reaches it but through
+  there. That's said with no condition (`assume_tree_made`).
 - **Lemma T4 (lent, proved again).** Step 30's argument: a place lent
   straight to a call-scoped `&mut` (or a lend-framed one, step 59) can't
   be read until the call's done (or the borrow ends), the callee can't
@@ -404,7 +450,7 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
   same `Option`, what's said of the one before is in both cases, and
   doubles each time (twelve `if let`s in a row take seconds). Saying
   "what's known of that branch's value" by naming the value, not copying
-  it, is step 99.
+  it, is step 100.
 - The solver still has no learning: a conflict found in one branch of a
   split isn't remembered for the others, as a CDCL solver would.
 
@@ -416,6 +462,9 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
 - D2, the checker's speed is tested by counting its work, not timing it.
 - D3, `Iterator::skip`, `saturating_add`/`saturating_sub` and the `t fmt`
   pipe fix, from t-maze's list.
+- D5 (step 99), what's learned of an object's values after it's made is
+  said under a fact of the path where it's learned, never of the object
+  alone; no language change.
 - D4 (step 98), a join names which branch was taken with a variable of
   its own, rather than repeating each branch's facts, and a copy of what's
   said of an enum is read once; no language change.
@@ -443,6 +492,9 @@ The adversarial tests are `tests/t/err_soundness_refined_*.t` and
 7. J2 leaves out a copy met on the way down. Why may it not leave out
    what's said of the field when the field is read on its own, after a
    pattern binds it?
+8. K1 says what's learned under a fact of its own, not under the facts
+   that proved it. Why would saying it under those facts be as sound but
+   slower? (Step 98 stopped doing that where branches meet.)
 
 ## Reading
 

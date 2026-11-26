@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.107.3 (2026-11-26)
+
+Step 99: what a path learns stays on it. See
+[docs/61-proof-search.md](docs/61-proof-search.md#what-a-path-learns-stays-on-it-step-99).
+
+### Fixed
+
+- A refinement of a value's elements proved in one branch was known of the
+  value everywhere after: in the other branch, after the branches met,
+  and in later iterations of a loop, though it held only where that branch
+  was taken. A branch that can't be taken proves anything, so `if n > 5 &&
+  n < 3 { let y: [{ v: u8 | v < 3 }; 2] = l; }` made `let z: [{ v: u8 | v
+  < 3 }; 2] = l` accepted after it, whatever `l` held (a hole since
+  0.77.0). What's learned of a value now holds only where it was learned,
+  and after it on the same path.
+
 ## 0.107.2 (2026-11-26)
 
 Step 98: joins that don't double. See

@@ -3765,6 +3765,9 @@ impl Checker {
             measured: HashMap::new(),
             parts: HashMap::new(),
             trees: HashMap::new(),
+            tokens: HashMap::new(),
+            unsaid: HashMap::new(),
+            learned: HashMap::new(),
             decl: HashMap::new(),
             items: HashMap::new(),
             pred_types: None,
@@ -4313,8 +4316,23 @@ struct Walk<'c> {
     /// and fields (see `Parts`).
     parts: HashMap<Obj, Parts>,
     /// What's said of the values at positions of each object: refinements
-    /// of type arguments (`targs`).
+    /// of type arguments (`targs`). Not the path's own, as facts are: what's
+    /// said here of an object made before is said under a fact of the path
+    /// (`tokens`), so it's known only where that is (lemma K1 of
+    /// docs/61-proof-search.md).
     trees: HashMap<Obj, targs::Tree>,
+    /// Each fact `tok == 1` that what's learned of an object's values is
+    /// said under (`Walk::assume_tree`), by its `tok`: where in `facts` it
+    /// was said, so whether it's known here is cheap to ask.
+    tokens: HashMap<Var, usize>,
+    /// Each token's case for where it doesn't hold, `!(tok == 1)`, as said in
+    /// a tree: so a reader where it's known can leave the case out
+    /// (`Walk::here`).
+    unsaid: HashMap<Formula, Var>,
+    /// What was learned of each object's values at each position, without
+    /// its condition, and the `tok` it's said under: so what's known here
+    /// already isn't said again.
+    learned: HashMap<(Obj, targs::Pos), Vec<(targs::Disj, Var)>>,
     /// What's declared of each local's value's positions, which each
     /// write must keep (`Walk::place_decl`).
     decl: HashMap<NodeId, targs::Tree>,
