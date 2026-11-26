@@ -101,7 +101,7 @@ impl Disj {
 
     /// It, where `g` holds: of what's there if `g` doesn't, nothing is
     /// said.
-    fn under(&self, g: &Formula) -> Disj {
+    pub(super) fn under(&self, g: &Formula) -> Disj {
         let mut d = self.clone();
         d.0.push((vec![g.clone().not()], Cand::Any));
         d
@@ -591,8 +591,35 @@ impl Walk<'_> {
         };
         (self.trees.get(&o).into_iter().flatten())
             .filter(|(p, _)| p == pos)
-            .map(|(_, d)| d.clone())
+            .map(|(_, d)| self.here(d))
             .collect()
+    }
+
+    /// `d`, without the cases for where a fact it's said under doesn't hold
+    /// (`assume_tree`), of each such fact known here: they can't be the
+    /// case here, so it says the same.
+    pub(super) fn here(&self, d: &Disj) -> Disj {
+        let off = |g: &Vec<Formula>| match &g[..] {
+            [f] => (self.unsaid.get(f)).is_some_and(|tok| self.token_known(*tok)),
+            _ => false,
+        };
+        if !d.0.iter().any(|(g, c)| matches!(c, Cand::Any) && off(g)) {
+            return d.clone();
+        }
+        Disj(
+            (d.0.iter())
+                .filter(|(g, c)| !(matches!(c, Cand::Any) && off(g)))
+                .cloned()
+                .collect(),
+        )
+    }
+
+    /// Is the fact `tok == 1`, said where something was learned, known here?
+    fn token_known(&self, tok: super::logic::Var) -> bool {
+        self.tokens.get(&tok).is_some_and(|&i| {
+            let said = Formula::eq(&Lin::var(tok), &Lin::constant(1));
+            said.is_some_and(|f| self.facts.get(i) == Some(&f))
+        })
     }
 
     /// What's known of the values at position `pos` of `v`, of type `t`:
@@ -725,8 +752,52 @@ impl Walk<'_> {
     /// Says `entries`, a tree of a value of type `t`, of `v`: of each of its
     /// objects, and of what's in its fields the walk knows, of each variant
     /// of an enum's where it's that variant; of the value itself, as a fact.
+    /// What's learned here of objects that were made before may hold only
+    /// on this path, as what proved it does (a branch that can't be taken
+    /// proves anything): so it's said under a fact `tok == 1` said here
+    /// too, a fact of this path's, known only after here on paths through
+    /// here (lemma K1). What's known here already isn't said again.
     pub(super) fn assume_tree(&mut self, v: &Val, t: &Type, entries: &Tree) {
+        let new: Tree = (entries.iter())
+            .filter(|(pos, d)| {
+                !d.is_any() && (Self::obj_of(v)).is_none_or(|o| !self.learned_here(o, pos, d))
+            })
+            .cloned()
+            .collect();
+        if new.is_empty() {
+            return;
+        }
+        let tok = self.fresh(super::logic::Kind::Bool);
+        let said = Formula::eq(&Lin::var(tok), &Lin::constant(1)).expect("a small constant");
+        self.tokens.insert(tok, self.facts.len());
+        self.unsaid.insert(said.clone().not(), tok);
+        self.fact(said.clone());
+        if let Some(o) = Self::obj_of(v) {
+            for (pos, d) in &new {
+                let at = self.learned.entry((o, pos.clone())).or_default();
+                at.push((d.clone(), tok));
+            }
+        }
+        let guarded: Tree = (new.into_iter())
+            .map(|(pos, d)| (pos, d.under(&said)))
+            .collect();
+        self.assume_tree_depth(v, t, &guarded, 0)
+    }
+
+    /// As `assume_tree`, of `v` made here, with nothing in it made before:
+    /// nothing reaches it but through here, so what's said of it here holds
+    /// wherever it's reached (lemma K2).
+    pub(super) fn assume_tree_made(&mut self, v: &Val, t: &Type, entries: &Tree) {
         self.assume_tree_depth(v, t, entries, 0)
+    }
+
+    /// Was `d` learned of object `o`'s values at `pos` under a fact that's
+    /// known here?
+    fn learned_here(&self, o: Obj, pos: &Pos, d: &Disj) -> bool {
+        let Some(at) = self.learned.get(&(o, pos.clone())) else {
+            return false;
+        };
+        at.iter().any(|(e, tok)| e == d && self.token_known(*tok))
     }
 
     fn assume_tree_depth(&mut self, v: &Val, t: &Type, entries: &Tree, depth: usize) {
@@ -737,8 +808,10 @@ impl Walk<'_> {
             if d.is_any() {
                 continue;
             }
+            // As a fact, it's the path's own: without the condition it's
+            // said under in the tree, which holds here.
             if pos.is_empty()
-                && let Some(f) = self.disj_formula(d, v, false)
+                && let Some(f) = self.disj_formula(&self.here(d), v, false)
             {
                 self.fact(f);
             }
@@ -2609,8 +2682,9 @@ impl Walk<'_> {
         }
         self.no_place_reads = was;
         match enums {
-            // Of its variants' fields too, as a pattern reads them.
-            true => self.assume_tree(&Val::Obj(o), t, &tree),
+            // Of its variants' fields too, as a pattern reads them. `o` and
+            // its parts are made where the branches meet.
+            true => self.assume_tree_made(&Val::Obj(o), t, &tree),
             false => self.trees.entry(o).or_default().extend(tree),
         }
     }
@@ -3223,7 +3297,8 @@ impl Walk<'_> {
         }
         self.no_place_reads = was;
         // Of the value, and of what's in its fields, of each variant of an
-        // enum's where it's that variant, as a pattern reads them.
-        self.assume_tree(result, ty, &tree);
+        // enum's where it's that variant, as a pattern reads them. `result`
+        // is made where the branches meet.
+        self.assume_tree_made(result, ty, &tree);
     }
 }
