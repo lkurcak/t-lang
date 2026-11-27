@@ -333,7 +333,7 @@ fn parse(seed: u64, times: usize, interpret: bool) {
         let m = (b & 0x000F_FFFF_FFFF_FFFF) | if exp > 0 { 1 << 52 } else { 0 };
         let e = if exp > 0 { exp - 1075 } else { -1074 };
         let mid = exact_decimal(2 * u128::from(m) + 1, e - 1);
-        strs.push(format!("{mid}"));
+        strs.push(mid.clone());
         strs.push(format!("{mid}00000000000000000000001"));
     }
     for _ in 0..5 * times {
