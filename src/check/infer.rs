@@ -174,9 +174,7 @@ fn mentioned(e: &Expr, out: &mut HashSet<String>) {
         }
         _ => {}
     }
-    for c in e.children() {
-        mentioned(c, out);
-    }
+    e.each_child(&mut |c| mentioned(c, out));
 }
 
 /// The strongly connected components of the graph whose edges from each

@@ -1321,9 +1321,7 @@ fn each_measure_call<'e>(
         }
         _ => {}
     }
-    for c in e.children() {
-        each_measure_call(c, post, at_return, out);
-    }
+    e.each_child(&mut |c| each_measure_call(c, post, at_return, out));
 }
 
 /// The name path `e` of a predicate is from: `s` of `s.head.len()`.
@@ -1361,9 +1359,7 @@ fn each_value_side<'e>(
         }
         _ => {}
     }
-    for c in e.children() {
-        each_value_side(c, post, at_return, values, out);
-    }
+    e.each_child(&mut |c| each_value_side(c, post, at_return, values, out));
 }
 
 /// Does `e` name `name`?

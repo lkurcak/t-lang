@@ -144,13 +144,14 @@ fn words(name: &str) -> (&str, Vec<&str>, &str) {
 /// Every name `prog` declares, in order: of types, type parameters, fields
 /// and variants, of functions and their parameters, and of the variables
 /// in them. A variable bound in every alternative of an or-pattern is
-/// declared in the first.
+/// declared in the first. Not the libraries' types and functions, which
+/// are written as they should be, and whose warnings would be dropped.
 fn decls(prog: &Program) -> Vec<Decl<'_>> {
     let mut out: Vec<Decl> = Vec::new();
     for m in &prog.mods[1..] {
         out.push(ident(&m.name, "module", Case::Snake));
     }
-    for (d, _) in prog.all_types() {
+    for (d, _) in prog.own_types() {
         out.push(ident(d.name(), "type", Case::Camel));
         params(d.generics(), &mut out);
         match d {
@@ -206,7 +207,7 @@ fn decls(prog: &Program) -> Vec<Decl<'_>> {
     for d in &prog.impls {
         params(&d.generics, &mut out);
     }
-    for (f, _, method) in prog.all_fns() {
+    for (f, _, method) in prog.own_fns() {
         match method {
             // Named by the trait: the warning is there.
             Some(MethodOf::Impl(k)) if prog.impls[k].trait_name.is_some() => {}
@@ -270,9 +271,7 @@ fn variables<'a>(e: &'a Expr, out: &mut Vec<Decl<'a>>) {
         }
         _ => {}
     }
-    for c in e.children() {
-        variables(c, out);
-    }
+    e.each_child(&mut |c| variables(c, out));
 }
 
 fn bindings<'a>(p: &'a Pattern, out: &mut Vec<Decl<'a>>) {

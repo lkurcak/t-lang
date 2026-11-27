@@ -1494,8 +1494,35 @@ impl Program {
     /// function it's nested in, if it's nested, and which impl or trait
     /// it's a method of, if it is one.
     pub fn all_fns(&self) -> Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> {
+        self.fns_of(&self.package_roots())
+    }
+
+    /// `all_fns`, but of the program's own packages alone, not of the
+    /// libraries built into the compiler: what's about the program alone
+    /// needn't go through theirs, which are the same in every program. Each
+    /// nested one comes with the index in this list of the one it's in.
+    pub fn own_fns(&self) -> Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> {
+        self.fns_of(&self.own_roots())
+    }
+
+    /// `all_types` of the program's own packages, as `own_fns` is of its
+    /// functions: each local one with the index in `own_fns` of the
+    /// function it's in.
+    pub fn own_types(&self) -> Vec<(&TypeDecl, Option<usize>)> {
+        self.types_of(&self.own_roots())
+    }
+
+    /// The program's own packages, by their root modules, in the order of
+    /// `package_roots`: all but the libraries'.
+    fn own_roots(&self) -> Vec<usize> {
+        let roots = self.package_roots().into_iter();
+        roots.filter(|r| !self.libraries.contains(r)).collect()
+    }
+
+    /// `all_fns` of the packages whose roots are `roots`, in that order.
+    fn fns_of(&self, roots: &[usize]) -> Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> {
         let mut out: Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> = Vec::new();
-        for p in self.package_roots() {
+        for &p in roots {
             let mut i = out.len();
             let fns = self.fns.iter().filter(|f| self.package_of(f.module) == p);
             out.extend(fns.map(|f| (f, None, None)));
@@ -1517,9 +1544,16 @@ impl Program {
     /// comes with the index in `all_fns` of the function it's in, if it's
     /// local.
     pub fn all_types(&self) -> Vec<(&TypeDecl, Option<usize>)> {
-        let fns = self.all_fns();
+        self.types_of(&self.package_roots())
+    }
+
+    /// `all_types` of the packages whose roots are `roots`, in that order,
+    /// each local one with the index in `fns_of(roots)` of the function
+    /// it's in.
+    fn types_of(&self, roots: &[usize]) -> Vec<(&TypeDecl, Option<usize>)> {
+        let fns = self.fns_of(roots);
         let mut out: Vec<(&TypeDecl, Option<usize>)> = Vec::new();
-        for p in self.package_roots() {
+        for &p in roots {
             let types = self
                 .types
                 .iter()
@@ -1544,9 +1578,7 @@ fn nested<'a, T>(e: &'a Expr, item: fn(&'a Stmt) -> Option<&'a T>, out: &mut Vec
     if let ExprKind::Block(stmts, _) = &e.kind {
         out.extend(stmts.iter().filter_map(item));
     }
-    for c in e.children() {
-        nested(c, item, out);
-    }
+    e.each_child(&mut |c| nested(c, item, out));
 }
 
 impl Expr {
@@ -1562,6 +1594,14 @@ impl Expr {
     /// The expressions directly inside this one, in order. Not the bodies
     /// of the functions declared in it, which are separate functions.
     pub fn children(&self) -> Vec<&Expr> {
+        let mut out = Vec::new();
+        self.each_child(&mut |c| out.push(c));
+        out
+    }
+
+    /// `f` of each of `children`, in order, without making the list: for
+    /// walks of every body, which `children`'s lists would slow.
+    pub fn each_child<'a>(&'a self, f: &mut impl FnMut(&'a Expr)) {
         match &self.kind {
             ExprKind::Int(..)
             | ExprKind::Float(..)
@@ -1571,51 +1611,76 @@ impl Expr {
             | ExprKind::ByteStr(_)
             | ExprKind::Unit
             | ExprKind::Var(..)
-            | ExprKind::Continue(_) => Vec::new(),
-            ExprKind::Format(pieces) => pieces.iter().flat_map(FmtPiece::exprs).collect(),
+            | ExprKind::Continue(_) => {}
+            ExprKind::Format(pieces) => pieces.iter().flat_map(FmtPiece::exprs).for_each(f),
             ExprKind::Unary(_, x)
             | ExprKind::As(x, _)
             | ExprKind::Where(x, _)
             | ExprKind::Field(x, _)
             | ExprKind::Loop(_, _, x)
-            | ExprKind::Unsafe(x) => vec![x],
-            ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().map(|x| &**x).collect(),
-            ExprKind::Binary(_, l, r) => vec![l, r],
-            ExprKind::Call(f, args) | ExprKind::MethodCall(f, _, _, args) => {
-                std::iter::once(&**f).chain(args).collect()
+            | ExprKind::Unsafe(x) => f(x),
+            ExprKind::Return(x) | ExprKind::Break(_, x) => x.iter().for_each(|x| f(x)),
+            ExprKind::Binary(_, l, r) => {
+                f(l);
+                f(r);
             }
-            ExprKind::If(c, then, els) => [&**c, then].into_iter().chain(els.as_deref()).collect(),
+            ExprKind::Call(callee, args) | ExprKind::MethodCall(callee, _, _, args) => {
+                f(callee);
+                args.iter().for_each(f);
+            }
+            ExprKind::If(c, then, els) => {
+                f(c);
+                f(then);
+                els.iter().for_each(|e| f(e));
+            }
             ExprKind::IfLet(c, then, els) => {
-                c.exprs().chain([&**then]).chain(els.as_deref()).collect()
+                c.exprs().for_each(&mut *f);
+                f(then);
+                els.iter().for_each(|e| f(e));
             }
-            ExprKind::WhileLet(_, c, _, body) => c.exprs().chain([&**body]).collect(),
-            ExprKind::Block(stmts, tail) => stmts
-                .iter()
-                .flat_map(|s| match s {
-                    Stmt::Let { init, els, .. } => {
-                        init.as_deref().into_iter().chain(els.as_deref()).collect()
+            ExprKind::WhileLet(_, c, _, body) => {
+                c.exprs().for_each(&mut *f);
+                f(body);
+            }
+            ExprKind::Block(stmts, tail) => {
+                for s in stmts {
+                    match s {
+                        Stmt::Let { init, els, .. } => {
+                            init.iter().for_each(|e| f(e));
+                            els.iter().for_each(|e| f(e));
+                        }
+                        Stmt::Expr(e) | Stmt::BlockLike(e) => f(e),
+                        Stmt::Fn(_) | Stmt::Type(_) => {}
                     }
-                    Stmt::Expr(e) | Stmt::BlockLike(e) => vec![e],
-                    Stmt::Fn(_) | Stmt::Type(_) => Vec::new(),
-                })
-                .chain(tail.as_deref())
-                .collect(),
-            ExprKind::StructLit(_, _, inits) => inits.iter().map(|i| &i.value).collect(),
+                }
+                tail.iter().for_each(|e| f(e));
+            }
+            ExprKind::StructLit(_, _, inits) => inits.iter().for_each(|i| f(&i.value)),
             ExprKind::Variant(_, _, _, args, ..)
             | ExprKind::Array(args)
             | ExprKind::Clauses(args)
-            | ExprKind::Tuple(args) => args.iter().collect(),
-            ExprKind::Repeat(v, n) => vec![v, n],
-            ExprKind::Match(scrutinee, arms) => std::iter::once(&**scrutinee)
-                .chain(arms.iter().map(|a| &a.body))
-                .collect(),
-            ExprKind::Lambda(l) => vec![&l.body],
+            | ExprKind::Tuple(args) => args.iter().for_each(f),
+            ExprKind::Repeat(v, n) => {
+                f(v);
+                f(n);
+            }
+            ExprKind::Match(scrutinee, arms) => {
+                f(scrutinee);
+                arms.iter().for_each(|a| f(&a.body));
+            }
+            ExprKind::Lambda(l) => f(&l.body),
             ExprKind::Assign(_, l, r)
             | ExprKind::While(_, l, _, r)
             | ExprKind::Range(l, r)
-            | ExprKind::Index(l, r, ..) => vec![l, r],
-            ExprKind::For(f) => vec![&f.iter, &f.body],
-            ExprKind::Try(e, _) => vec![e],
+            | ExprKind::Index(l, r, ..) => {
+                f(l);
+                f(r);
+            }
+            ExprKind::For(each) => {
+                f(&each.iter);
+                f(&each.body);
+            }
+            ExprKind::Try(e, _) => f(e),
         }
     }
 

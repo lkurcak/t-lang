@@ -441,9 +441,7 @@ fn shorthand_exprs(e: &Expr, out: &mut HashMap<Span, usize>) {
         }
         _ => {}
     }
-    for c in e.children() {
-        shorthand_exprs(c, out);
-    }
+    e.each_child(&mut |c| shorthand_exprs(c, out));
 }
 
 fn shorthand_pats(p: &Pattern, out: &mut HashMap<Span, usize>) {
