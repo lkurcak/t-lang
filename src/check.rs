@@ -368,6 +368,13 @@ fn check_with(
                 }
             })
             .collect();
+        // The libraries' consts are the same in every program: worked out
+        // once, with the bodies that give their values, and kept.
+        let cached = full.then(|| LIBRARY_CONSTS.lock().expect("never poisoned").clone());
+        for (symbol, value, body) in cached.flatten().unwrap_or_default() {
+            cx.info.const_values.insert(symbol.clone(), value);
+            cx.info.mir.insert(crate::mir::Key::Fn(symbol), body);
+        }
         result = loop {
             match crate::consts::evaluate(prog, &mut cx.info, &cx.adts, &consts) {
                 Ok(crate::consts::Evaluated::Done) => break Ok(()),
@@ -383,12 +390,35 @@ fn check_with(
                 Err(e) => break Err(e),
             }
         };
+        if full && result.is_ok() {
+            let mut kept = LIBRARY_CONSTS.lock().expect("never poisoned");
+            if kept.is_none() {
+                let library = (cx.fns.iter())
+                    .filter(|f| f.konst && cx.modules.in_library(f.module))
+                    .filter_map(|f| {
+                        let value = cx.info.const_values.get(&f.symbol)?.clone();
+                        let key = crate::mir::Key::Fn(f.symbol.clone());
+                        Some((f.symbol.clone(), value, cx.info.mir.get(&key)?.clone()))
+                    });
+                *kept = Some(library.collect());
+            }
+        }
     }
     cx.warnings.sort_by_key(|w| w.span.start);
     warnings.append(&mut cx.warnings);
     prog.next_id = cx.next_id;
     (cx.info, result)
 }
+
+/// The values of the libraries' consts, once a program's checking in full
+/// has worked them out, with the MIR bodies that give them (see
+/// `crate::consts`): each program's would be the same.
+type LibraryConsts = Vec<(
+    String,
+    crate::consts::Value,
+    std::sync::Arc<crate::mir::Body>,
+)>;
+static LIBRARY_CONSTS: std::sync::Mutex<Option<LibraryConsts>> = std::sync::Mutex::new(None);
 
 /// Adds to `e`, if it's that a type is unknown that a library has, a fix
 /// that imports it, into the innermost module of the program around it:

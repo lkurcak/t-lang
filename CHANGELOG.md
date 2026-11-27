@@ -25,9 +25,14 @@ Step 102: math functions. See [docs/102-math.md](docs/102-math.md).
   no type parameters isn't typed, a library's private const isn't checked,
   and the libraries' consts' values aren't worked out, as nothing of
   them reaches a program's check. So the math functions' 2,700 lines add
-  ~19 ms to checking an empty program, ~149 ms, where they'd have added
-  ~90; `t run` and `t build`, which check the libraries in full, take
-  ~0.3 s longer.
+  ~8 ms to checking an empty program (~133 ms), where they'd have added
+  ~85, and ~22 to t-chess; `t run` and `t build`, which check the
+  libraries in full, take ~0.25 s longer.
+- A program is lowered with only the library functions it reaches, as
+  generic ones always were, not every non-generic one (about a third of
+  the time, of a small program), and the libraries' consts are worked
+  out once in a process, not once a program: the tests, which check and
+  run thousands of programs in one, don't get slower with core.
 
 ### Fixed
 

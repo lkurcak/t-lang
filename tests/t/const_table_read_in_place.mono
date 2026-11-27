@@ -537,6 +537,35 @@ export fn <core::ops::Range::<usize>>::new(
     }
 }
 
+/// The value at `i`, which is less than `len()`, so there's one: `a[i]`
+/// is `*a.index(i)`.
+export fn <[u32; 2]>::index(&self, i: { i: usize | i < self.len() }) -> &u32 {
+    let _0: &u32;
+    let _1: &[u32; 2]; // self
+    let _2: usize; // i
+    let _3: &[u32]; // s
+    let _4: &[u32];
+    let _5: &[u32; 2];
+    let _6: &u32;
+    let _7: &[u32];
+    bb0: {
+        _5 = &(*_1);
+        _4 = <[u32; 2]>::as_slice(move _5);
+        _3 = copy _4;
+        dead _5;
+        dead _4;
+        _7 = &(*_3);
+        _6 = <[u32]>::index(move _7, copy _2);
+        _0 = &(*_6);
+        dead _7;
+        dead _6;
+        dead _3;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
+
 fn <core::ops::Range::<usize> as core::iter::Iterator>::next(
     &mut self,
 ) -> { v: core::option::Option::<usize> | v >= old(self.start()) && v < self.end() }
@@ -577,35 +606,6 @@ ensures
         goto bb3;
     }
     bb3: {
-        dead _2;
-        dead _1;
-        return;
-    }
-}
-
-/// The value at `i`, which is less than `len()`, so there's one: `a[i]`
-/// is `*a.index(i)`.
-export fn <[u32; 2]>::index(&self, i: { i: usize | i < self.len() }) -> &u32 {
-    let _0: &u32;
-    let _1: &[u32; 2]; // self
-    let _2: usize; // i
-    let _3: &[u32]; // s
-    let _4: &[u32];
-    let _5: &[u32; 2];
-    let _6: &u32;
-    let _7: &[u32];
-    bb0: {
-        _5 = &(*_1);
-        _4 = <[u32; 2]>::as_slice(move _5);
-        _3 = copy _4;
-        dead _5;
-        dead _4;
-        _7 = &(*_3);
-        _6 = <[u32]>::index(move _7, copy _2);
-        _0 = &(*_6);
-        dead _7;
-        dead _6;
-        dead _3;
         dead _2;
         dead _1;
         return;

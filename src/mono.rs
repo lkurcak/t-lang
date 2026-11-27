@@ -616,13 +616,19 @@ impl<'p> Mono<'p> {
     fn run(&mut self) -> Program {
         let prog = self.prog;
         // Non-generic functions and types are where it starts: each is
-        // its own one copy, and from them come all the others.
+        // its own one copy, and from them come all the others. But a
+        // library's functions are copied only where they're used, as
+        // generic ones are, in every program alike, as most use few of
+        // them (`fn_const`).
         let mut fns: HashMap<String, FnDecl> = HashMap::new();
         let rooted = self.roots.clone();
         for r in rooted.iter().flatten() {
             self.named_copy(r, Vec::new(), r.clone());
         }
-        let eager = (prog.fns.iter()).filter(|f| rooted.is_none() && f.generics.types.is_empty());
+        let library = &self.info.library_symbols;
+        let eager = (prog.fns.iter()).filter(|f| {
+            rooted.is_none() && f.generics.types.is_empty() && !library.contains(&f.name.name)
+        });
         for f in eager {
             fns.insert(
                 f.name.name.clone(),
@@ -2276,7 +2282,7 @@ impl Cx<'_, '_, '_> {
             {
                 self.m.missing.borrow_mut().insert(symbol.to_string());
             }
-            if self.m.roots.is_some() {
+            if self.m.roots.is_some() || self.m.info.library_symbols.contains(symbol) {
                 self.m.named_copy(symbol, Vec::new(), symbol.to_string());
             }
             return Const::Fn(symbol.to_string(), Vec::new());

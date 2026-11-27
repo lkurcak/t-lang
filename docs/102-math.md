@@ -141,10 +141,19 @@ see of them (`Checker::only_typed`); now it does less still:
 - Of the consts' values, a check works out only the program's, and what
   they need: a library's matter only to running, and never fail (Q3).
 
-`t check` of an empty program went from 130 ms to 149 on this machine,
-for the 2,700 lines, where it would have been 223; `t run`, which checks
-the libraries in full, from 0.6 s to 0.87, until each library's check is
-kept on disk (`BACKLOG.md`).
+Checking and running a program in full, as `t run`, `t build` and the
+tests do, does less with them too: a library's functions without type
+parameters are copied for a program where it calls them, as generic ones
+always were, rather than all of them for every program and the unused
+ones dropped again (`Mono::run`); and the libraries' consts' values,
+the same in every program, are worked out once in a process, not once a
+program (`LIBRARY_CONSTS`).
+
+`t check` of an empty program went from 125 ms to 133 on this machine,
+for the 2,700 lines, where it would have been about 210, and of t-chess
+from 468 to 490; `t run`, which checks the libraries in full first, from
+0.58 s to 0.83, until each library's check is kept on disk
+(`BACKLOG.md`).
 
 ## How it's checked
 
