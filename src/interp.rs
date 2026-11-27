@@ -51,14 +51,15 @@
 use crate::ast::*;
 use crate::error::{Error, Span};
 use crate::intrinsic::{
-    ArgsOp, ArrayOp, AtomicOp, ClockOp, EnvOp, FsOp, Intrinsic, MessageOp, Output, OutputOp,
-    RawBufOp, ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
+    ArgsOp, ArrayOp, AtomicOp, ClockOp, EnvOp, FloatOp, FsOp, Intrinsic, MessageOp, Output,
+    OutputOp, RawBufOp, ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
 };
 use crate::mono::{glue_name, is_glue};
-use crate::types::IntTy;
+use crate::types::{FloatTy, IntTy};
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 
+mod floats;
 mod threads;
 
 /// Deep enough for any reasonable recursion, shallow enough to stop runaway
@@ -84,6 +85,9 @@ pub enum Value {
     /// An integer, of its type: always one of that type's values, here on
     /// a 64-bit machine.
     Int(i128, IntTy),
+    /// A float, of its type, by its bits (see `floats`): so the same value
+    /// as another exactly when its bits are.
+    Float(u64, crate::types::FloatTy),
     Bool(bool),
     /// A character: a Unicode scalar value, as Rust's `char` is.
     Char(char),
@@ -202,6 +206,7 @@ impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Value::Int(n, _) => write!(f, "{n}"),
+            Value::Float(x, t) => f.write_str(&floats::show(*x, *t)),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Char(c) => write!(f, "{c}"),
             Value::Unit => f.write_str("()"),
@@ -372,6 +377,7 @@ impl<'p, 'o> Interp<'p, 'o> {
         use crate::consts::Value as C;
         match v {
             Value::Int(n, _) => C::Int(*n),
+            Value::Float(x, _) => C::Float(*x),
             Value::Bool(b) => C::Bool(*b),
             Value::Char(c) => C::Char(*c),
             Value::Unit => C::Unit,
@@ -577,6 +583,15 @@ fn int(v: Value) -> i128 {
     match v {
         Value::Int(n, _) => n,
         other => unsound(&format!("expected an integer, got `{other}`")),
+    }
+}
+
+/// The floating-point type written `t`, after monomorphisation.
+fn float_ty(t: &TypeExpr) -> FloatTy {
+    match &t.kind {
+        TypeExprKind::Named(name, _) => FloatTy::named(name)
+            .unwrap_or_else(|| unsound(&format!("`{name}` as a floating-point type"))),
+        _ => unsound("a floating-point type that isn't named"),
     }
 }
 
@@ -2268,6 +2283,8 @@ impl<'p> Interp<'p, '_> {
             Operand::Const(c) => match c {
                 Const::Int(n, crate::types::Type::Int(t)) => self.int_of(*n, *t),
                 Const::Int(_, t) => unsound(&format!("an integer of type `{t}`")),
+                Const::Float(x, crate::types::Type::Float(t)) => Value::Float(x.bits(*t), *t),
+                Const::Float(_, t) => unsound(&format!("a float of type `{t}`")),
                 Const::Bool(b) => Value::Bool(*b),
                 Const::Char(c) => Value::Char(*c),
                 Const::Unit => Value::Unit,
@@ -2299,6 +2316,7 @@ impl<'p> Interp<'p, '_> {
             Rvalue::Unary(op, o, id) => {
                 let v = self.operand(fr, o);
                 match op {
+                    UnOp::Neg if let Value::Float(x, t) = v => Value::Float(floats::neg(x, t), t),
                     UnOp::Neg => {
                         let zero = match v {
                             Value::Int(_, t) => Value::Int(0, t),
@@ -2330,6 +2348,11 @@ impl<'p> Interp<'p, '_> {
                 let l = self.operand(fr, l);
                 let r = self.operand(fr, r);
                 match (&l, &r) {
+                    // IEEE's, which never panics (docs/101-floats.md).
+                    (Value::Float(a, t), Value::Float(b, u)) if t == u => match op.arith() {
+                        true => Value::Float(floats::arith(*op, *a, *b, *t), *t),
+                        false => Value::Bool(floats::compare(*op, *a, *b, *t)),
+                    },
                     // Characters by their numbers, as core's `Ord` says.
                     (Value::Char(a), Value::Char(b)) => Value::Bool(match op {
                         BinOp::Lt => a < b,
@@ -2342,7 +2365,17 @@ impl<'p> Interp<'p, '_> {
                 }
             }
             Rvalue::Cast(o, t, id) => {
-                let n = match self.operand(fr, o) {
+                let v = self.operand(fr, o);
+                if matches!(v, Value::Float(..)) || matches!(t, Type::Float(_)) {
+                    return match self.float_cast(v, t) {
+                        Ok(v) => Ok(v),
+                        Err(message) => {
+                            self.not_proved(*id);
+                            Err(self.panics(span, message))
+                        }
+                    };
+                }
+                let n = match v {
                     Value::Char(c) => i128::from(u32::from(c)),
                     v => int(v),
                 };
@@ -2698,6 +2731,34 @@ impl<'p> Interp<'p, '_> {
             }
             Intrinsic::Volatile(VolatileOp::Read | VolatileOp::Write) => {
                 unsound("a volatile value the interpreter never made")
+            }
+            Intrinsic::Float(op) => {
+                let [x] = <[Value; 1]>::try_from(args).unwrap_or_else(|_| unsound("checked arity"));
+                let ret = &self.fns[copy].ret;
+                Ok(match (op, x) {
+                    (FloatOp::ToBits(wide), Value::Float(b, t)) => {
+                        let u = if wide { IntTy::U64 } else { IntTy::U32 };
+                        if (t == FloatTy::F64) != wide {
+                            unsound("`to_bits` of the other float type");
+                        }
+                        Value::Int(i128::from(b), u)
+                    }
+                    (FloatOp::FromBits(wide), Value::Int(b, _)) => {
+                        let t = if wide { FloatTy::F64 } else { FloatTy::F32 };
+                        let b = u64::try_from(b).unwrap_or_else(|_| unsound("bits"));
+                        Value::Float(b, t)
+                    }
+                    (FloatOp::Sqrt, Value::Float(b, t)) => Value::Float(floats::sqrt(b, t), t),
+                    (FloatOp::Nearest, Value::Int(n, _)) => {
+                        let t = float_ty(ret);
+                        Value::Float(floats::nearest(n, t), t)
+                    }
+                    (FloatOp::NearestF64, Value::Float(b, FloatTy::F64)) => {
+                        let t = float_ty(ret);
+                        Value::Float(floats::nearest_f64(b, t), t)
+                    }
+                    (op, x) => unsound(&format!("`{op:?}` of `{x}`")),
+                })
             }
             Intrinsic::WrappingMul => {
                 let [a, b] =
@@ -3819,10 +3880,36 @@ impl<'p> Interp<'p, '_> {
     /// it, a type's own `eq` or its glue (see `mono/glue.rs`).
     fn equal(&self, p: &Ptr, q: &Ptr) -> bool {
         match (self.memory.get(p), self.memory.get(q)) {
+            // IEEE's `==`: not the same value's (docs/101-floats.md).
+            (Value::Float(a, t), Value::Float(b, u)) if t == u => {
+                floats::compare(BinOp::Eq, *a, *b, *t)
+            }
             (a @ (Value::Int(..) | Value::Bool(_) | Value::Char(_) | Value::Unit), b) => a == b,
             (a, b) => unsound(&format!(
                 "`==` of `{a}` and `{b}`, left after monomorphising"
             )),
+        }
+    }
+
+    /// `o as t`, if a float is converted or converted to: the same number,
+    /// or the message of the panic if there's none (docs/101-floats.md).
+    fn float_cast(&self, v: Value, t: &crate::types::Type) -> Result<Value, String> {
+        use crate::types::Type;
+        match (v, t) {
+            (Value::Float(x, from), Type::Float(to)) => floats::to_float(x, from, *to)
+                .map(|y| Value::Float(y, *to))
+                .ok_or_else(|| floats::not_as(from, &to.a())),
+            (Value::Float(x, from), Type::Int(to)) => {
+                let (lo, hi) = self.range(*to);
+                match floats::to_int(x, from) {
+                    Some(n) if (lo..=hi).contains(&n) => Ok(Value::Int(n, *to)),
+                    _ => Err(floats::not_as(from, &to.a())),
+                }
+            }
+            (Value::Int(n, _), Type::Float(to)) => floats::of_int(n, *to)
+                .map(|y| Value::Float(y, *to))
+                .ok_or_else(|| format!("`as` failed: {n} isn't {} exactly", to.a())),
+            (v, t) => unsound(&format!("`{v}` as `{t}`")),
         }
     }
 

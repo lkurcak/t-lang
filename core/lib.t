@@ -1,7 +1,8 @@
 //! The core library: what every program can use. It's written in T, checked
 //! like any other code, and needs no allocation and no I/O. What the checker
 //! takes on trust is its intrinsics: `mem::swap`, `panic::panic`,
-//! `num::least`, `num::greatest`, `num::wrapping_mul`,
+//! `num::least`, `num::greatest`, `num::wrapping_mul`, a float's
+//! bits, square root and nearest values in `float`,
 //! a slice's few in `slice`, an array's three and `from_fn` in `array`, a
 //! string's two in `str`, a cell's `replace` in `cell`, an atomic's in
 //! `sync`, and a volatile value's three in `volatile`.
@@ -13,6 +14,7 @@ export mod array;
 export mod cell;
 export mod char;
 export mod cmp;
+export mod float;
 export mod fmt;
 export mod io;
 export mod iter;

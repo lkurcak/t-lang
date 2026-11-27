@@ -530,7 +530,9 @@ impl Cx<'_> {
             // Nothing is known about a type parameter's values: it could be
             // anything.
             // Nor about an opaque type's, outside the function that picks it.
+            // A float has no patterns but `_` and variables (docs/101-floats.md).
             Type::Fn(..)
+            | Type::Float(_)
             | Type::Param(_, _)
             | Type::Nat(_)
             | Type::Const(_)

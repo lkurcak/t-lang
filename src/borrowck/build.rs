@@ -471,6 +471,7 @@ impl<'a> Builder<'a> {
             // nothing but its uses: its bytes are there as long as the
             // program runs, so it may be as long as any of them needs.
             ExprKind::Int(..)
+            | ExprKind::Float(..)
             | ExprKind::Bool(_)
             | ExprKind::Char(_)
             | ExprKind::Str(_)
@@ -1319,6 +1320,7 @@ impl<'a> Builder<'a> {
         }
         match &e.kind {
             ExprKind::Int(..)
+            | ExprKind::Float(..)
             | ExprKind::Bool(_)
             | ExprKind::Char(_)
             | ExprKind::Str(_)
@@ -1518,6 +1520,9 @@ impl<'a> Builder<'a> {
     fn literal(&self, e: &Expr) -> Const {
         match &e.kind {
             ExprKind::Int(n, _) => Const::Int(i128::from(*n), self.erased_ty(e)),
+            ExprKind::Float(x, _) => {
+                Const::Float(crate::mir::FloatLit::Text(x.clone()), self.erased_ty(e))
+            }
             ExprKind::Bool(b) => Const::Bool(*b),
             ExprKind::Char(c) => Const::Char(*c),
             ExprKind::Str(s) => Const::Str(s.clone()),

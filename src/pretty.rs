@@ -1211,6 +1211,8 @@ impl Printer<'_> {
         match &e.kind {
             ExprKind::Int(n, None) => self.spelled(e.span, n.to_string()),
             ExprKind::Int(n, Some(t)) => self.spelled(e.span, format!("{n}{}", t.name())),
+            ExprKind::Float(x, None) => self.spelled(e.span, x.clone()),
+            ExprKind::Float(x, Some(t)) => self.spelled(e.span, format!("{x}{}", t.name())),
             ExprKind::Bool(b) => text(b.to_string()),
             ExprKind::Char(c) => self.spelled(e.span, crate::lexer::char_literal(*c)),
             ExprKind::Str(s) => self.spelled(e.span, crate::lexer::str_literal(s)),

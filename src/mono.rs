@@ -1605,6 +1605,7 @@ impl Cx<'_, '_, '_> {
     fn written(&mut self, t: &Type, span: Span) -> TypeExpr {
         let kind = match t {
             Type::Int(t) => TypeExprKind::Named(t.name().into(), Vec::new()),
+            Type::Float(t) => TypeExprKind::Named(t.name().into(), Vec::new()),
             Type::Bool => TypeExprKind::Named("bool".into(), Vec::new()),
             Type::Char => TypeExprKind::Named("char".into(), Vec::new()),
             Type::Str => TypeExprKind::Named("str".into(), Vec::new()),
@@ -2229,6 +2230,9 @@ impl Cx<'_, '_, '_> {
                 Operand::Const(self.fn_const(symbol, args))
             }
             Operand::Const(Const::Int(n, t)) => Operand::Const(Const::Int(*n, self.subst(t))),
+            Operand::Const(Const::Float(x, t)) => {
+                Operand::Const(Const::Float(x.clone(), self.subst(t)))
+            }
             // A static's body makes its value, which is where it is, so
             // it's needed wherever the static is.
             Operand::Const(Const::Static(symbol)) => {

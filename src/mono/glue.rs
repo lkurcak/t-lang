@@ -161,11 +161,12 @@ fn shared(t: &Type) -> Type {
 }
 
 /// Is `t` compared by the interpreter, or a machine, directly: `==` on
-/// it calls nothing?
+/// it calls nothing? Of a float, it's IEEE's `==`, which isn't `Eq`'s
+/// (docs/101-floats.md).
 pub(crate) fn scalar(t: &Type) -> bool {
     matches!(
         t,
-        Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never
+        Type::Int(_) | Type::Float(_) | Type::Bool | Type::Char | Type::Unit | Type::Never
     )
 }
 

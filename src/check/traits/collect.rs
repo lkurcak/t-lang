@@ -557,8 +557,10 @@ impl Checker {
                         ));
                     }
                 }
-                (None, Type::Slice(_) | Type::Array(..) | Type::Str | Type::Char)
-                    if self.modules.in_library(d.module) => {}
+                (
+                    None,
+                    Type::Slice(_) | Type::Array(..) | Type::Str | Type::Char | Type::Float(_),
+                ) if self.modules.in_library(d.module) => {}
                 (None, t) => {
                     return Err(Error::ty(
                         d.self_ty.span,

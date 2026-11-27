@@ -626,6 +626,9 @@ fn resolve_in(
                 None if let Some(t) = crate::types::IntTy::named(name) => {
                     (Type::Int(t), 0, Vec::new())
                 }
+                None if let Some(t) = crate::types::FloatTy::named(name) => {
+                    (Type::Float(t), 0, Vec::new())
+                }
                 None if name == "bool" => (Type::Bool, 0, Vec::new()),
                 None if name == "char" => (Type::Char, 0, Vec::new()),
                 None if name == "str" => return Err(unsized_slice(t.span, "str")),

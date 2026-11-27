@@ -31,6 +31,7 @@
 
 use crate::ast::{BinOp, FnDecl, UnOp};
 use crate::error::{Error, Span};
+use crate::intrinsic::FloatOp;
 use crate::intrinsic::{
     ArgsOp, ArrayOp, AtomicOp, ClockOp, EnvOp, FsOp, Intrinsic, IntrinsicType, MessageOp, Output,
     OutputOp, RawBufOp, ReadFileOp, SliceOp, SlotsOp, StdinOp, VolatileOp,
@@ -38,7 +39,7 @@ use crate::intrinsic::{
 use crate::mir::*;
 use crate::mono::{Executable, Shape, glue_name};
 use crate::source::Sources;
-use crate::types::{IntTy, Region, Type};
+use crate::types::{FloatTy, IntTy, Region, Type};
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
 
@@ -114,6 +115,46 @@ fn c_int(t: IntTy) -> &'static str {
     }
 }
 
+/// The C type of floating-point type `f`.
+fn c_float(f: FloatTy) -> &'static str {
+    match f {
+        FloatTy::F32 => "float",
+        FloatTy::F64 => "double",
+    }
+}
+
+/// Float `bits`, of type `f`, as a C expression that's a constant, and so
+/// may be a static's initializer: exactly that value, however C reads a
+/// literal (lemma F7 of docs/101-floats.md). A finite one as `S` times 2
+/// to the power `E`, in hexadecimal, `S` fitting in `f`'s significand, so
+/// read exactly; an infinity or NaN by the compiler's builtins, a NaN's
+/// sign, quiet bit and payload as they are.
+fn float_lit(bits: u64, f: FloatTy) -> String {
+    let (sign_bit, mant_bits, bias, suffix) = match f {
+        FloatTy::F32 => (31, 23, 127, "f"),
+        FloatTy::F64 => (63, 52, 1023, ""),
+    };
+    let sign = if bits >> sign_bit & 1 == 1 { "-" } else { "" };
+    let exp = (bits >> mant_bits) & ((1 << (sign_bit - mant_bits)) - 1);
+    let mant = bits & ((1 << mant_bits) - 1);
+    let all_ones = (1 << (sign_bit - mant_bits)) - 1;
+    if exp == all_ones {
+        let f = if suffix.is_empty() { "" } else { "f" };
+        if mant == 0 {
+            return format!("({sign}__builtin_inf{f}())");
+        }
+        let quiet = mant >> (mant_bits - 1) & 1 == 1;
+        let payload = mant & ((1 << (mant_bits - 1)) - 1);
+        let which = if quiet { "nan" } else { "nans" };
+        return format!("({sign}__builtin_{which}{f}(\"{payload:#x}\"))");
+    }
+    let (s, e) = match exp {
+        0 => (mant, 1 - bias - mant_bits as i64),
+        _ => (mant | 1 << mant_bits, exp as i64 - bias - mant_bits as i64),
+    };
+    format!("({sign}{s:#x}p{e}{suffix})")
+}
+
 /// The C type of a value of scalar type `t`, as an `extern fn` takes or
 /// gives one (lemma E3 of docs/40-extern.md).
 fn c_scalar(t: &Type) -> &'static str {
@@ -121,6 +162,7 @@ fn c_scalar(t: &Type) -> &'static str {
         Type::Int(IntTy::Isize) => "intptr_t",
         Type::Int(IntTy::Usize) => "uintptr_t",
         Type::Int(i) => c_int(*i),
+        Type::Float(f) => c_float(*f),
         Type::Bool => "bool",
         t => panic!("`{t}` isn't one of C's scalars"),
     }
@@ -359,6 +401,7 @@ impl<'e> Gen<'e> {
         let t = t.erased();
         match &t {
             Type::Int(i) => c_int(*i).to_string(),
+            Type::Float(f) => c_float(*f).to_string(),
             Type::Bool => "bool".to_string(),
             Type::Char => "uint32_t".to_string(),
             Type::Unit | Type::Never => "t_unit".to_string(),
@@ -579,7 +622,7 @@ impl<'e> Gen<'e> {
         match o {
             Operand::Copy(p) | Operand::Move(p) => self.place_ty(cx, p),
             Operand::Const(c) => match c {
-                Const::Int(_, t) => t.erased(),
+                Const::Int(_, t) | Const::Float(_, t) => t.erased(),
                 Const::Bool(_) => Type::Bool,
                 Const::Char(_) => Type::Char,
                 Const::Unit => Type::Unit,
@@ -599,6 +642,8 @@ impl<'e> Gen<'e> {
             Operand::Const(c) => match c {
                 Const::Int(n, Type::Int(t)) => int_lit(*n, *t),
                 Const::Int(_, t) => panic!("an integer of type `{t}`"),
+                Const::Float(x, Type::Float(f)) => float_lit(x.bits(*f), *f),
+                Const::Float(_, t) => panic!("a float of type `{t}`"),
                 Const::Bool(b) => b.to_string(),
                 Const::Char(c) => format!("UINT32_C({})", u32::from(*c)),
                 Const::Unit => "(t_unit){0}".to_string(),
@@ -1011,6 +1056,8 @@ impl<'e> Gen<'e> {
                 let t = self.operand_ty(cx, o);
                 let x = self.operand(cx, o);
                 match (op, &t) {
+                    // IEEE's negation, which flips the sign: C's.
+                    (UnOp::Neg, Type::Float(_)) => format!("(-{x})"),
                     (UnOp::Neg, Type::Int(i)) => match self.proved(*id) {
                         true => format!("t_wneg_{}({x})", suffix(*i)),
                         false => format!("t_neg_{}({x}, {})", suffix(*i), self.site(span)),
@@ -1152,6 +1199,11 @@ impl<'e> Gen<'e> {
                     false => format!("t_{f}_{}({a}, {b}, {})", suffix(i), self.site(span)),
                 }
             }
+            // IEEE's, which C's are (`float_lit`'s lemma).
+            (BinOp::Add, None) if matches!(t, Type::Float(_)) => format!("({a} + {b})"),
+            (BinOp::Sub, None) if matches!(t, Type::Float(_)) => format!("({a} - {b})"),
+            (BinOp::Mul, None) if matches!(t, Type::Float(_)) => format!("({a} * {b})"),
+            (BinOp::Div, None) if matches!(t, Type::Float(_)) => format!("({a} / {b})"),
             (op, _) => panic!("`{op}` of `{t}`"),
         }
     }
@@ -1167,6 +1219,9 @@ impl<'e> Gen<'e> {
     ) -> String {
         let from = self.operand_ty(cx, o);
         let x = self.operand(cx, o);
+        if let Some(c) = self.float_cast(&from, &x, to, id, span) {
+            return c;
+        }
         let (signed, lo, hi) = match &from {
             Type::Int(i) => {
                 let (lo, hi) = i.range_64();
@@ -1224,6 +1279,56 @@ impl<'e> Gen<'e> {
             }
             t => panic!("`as` to `{t}`"),
         }
+    }
+
+    /// `x as to`, of type `from`, if one of them is a float: the same
+    /// number, or a panic, which the shim's helpers check before C
+    /// converts, as C's conversion of a float out of an integer type's
+    /// range is undefined (lemma F9 of docs/101-floats.md).
+    fn float_cast(
+        &mut self,
+        from: &Type,
+        x: &str,
+        to: &Type,
+        id: crate::ast::NodeId,
+        span: Span,
+    ) -> Option<String> {
+        let proved = self.proved(id);
+        Some(match (from, to) {
+            (Type::Float(a), Type::Float(b)) if a == b => x.to_string(),
+            (Type::Float(FloatTy::F32), Type::Float(FloatTy::F64)) => format!("((double){x})"),
+            (Type::Float(FloatTy::F64), Type::Float(FloatTy::F32)) => {
+                format!("t_f64_to_f32({x}, {})", self.site(span))
+            }
+            (Type::Float(f), Type::Int(t)) => {
+                let site = self.site(span);
+                let from = c_str(format!("`{}`", f.name()).as_bytes());
+                let what = c_str(t.a().as_bytes());
+                let bits = t.bits().unwrap_or(64);
+                let c = c_int(*t);
+                match t.signed() {
+                    true => format!(
+                        "(({c})t_f_to_i((double){x}, -0x1p{}, 0x1p{}, {from}, {what}, {site}))",
+                        bits - 1,
+                        bits - 1
+                    ),
+                    false => {
+                        format!("(({c})t_f_to_u((double){x}, 0x1p{bits}, {from}, {what}, {site}))")
+                    }
+                }
+            }
+            (Type::Int(i), Type::Float(f)) => {
+                let (wide, s) = match i.signed() {
+                    true => (format!("((int64_t){x})"), "i"),
+                    false => (format!("((uint64_t){x})"), "u"),
+                };
+                match proved {
+                    true => format!("(({}){wide})", c_float(*f)),
+                    false => format!("t_{s}_to_{}({wide}, {})", f.name(), self.site(span)),
+                }
+            }
+            _ => return None,
+        })
     }
 
     /// The C call of `f` with `args`, whether it calls a
@@ -1480,10 +1585,36 @@ impl<'e> Gen<'e> {
             }
         };
         let some_none = |g: &mut Gen| (g.variant(ret, "Some"), g.variant(ret, "None"));
+        let float = |t: &Type| match t {
+            Type::Float(f) => *f,
+            t => panic!("`{copy}` of `{t}`"),
+        };
         match which {
             Intrinsic::WrappingMul => {
                 format!("    return t_wmul_{}(a0, a1);\n", suffix(int(&params[0])))
             }
+            Intrinsic::Float(op) => match op {
+                FloatOp::ToBits(true) => "    return t_f64_to_bits(a0);\n".to_string(),
+                FloatOp::ToBits(false) => "    return t_f32_to_bits(a0);\n".to_string(),
+                FloatOp::FromBits(true) => "    return t_f64_from_bits(a0);\n".to_string(),
+                FloatOp::FromBits(false) => "    return t_f32_from_bits(a0);\n".to_string(),
+                // IEEE's square root, which `-fno-math-errno` lets the
+                // compiler make the machine's instruction, never a call.
+                FloatOp::Sqrt => match float(ret) {
+                    FloatTy::F64 => "    return __builtin_sqrt(a0);\n".to_string(),
+                    FloatTy::F32 => "    return __builtin_sqrtf(a0);\n".to_string(),
+                },
+                // C's conversion of an integer, or a `double`, to a float
+                // rounds to the nearest, ties to even, as IEEE 754 does.
+                FloatOp::Nearest => {
+                    let wide = match int(&params[0]).signed() {
+                        true => "int64_t",
+                        false => "uint64_t",
+                    };
+                    format!("    return ({r})({wide})a0;\n")
+                }
+                FloatOp::NearestF64 => format!("    return ({r})a0;\n"),
+            },
             Intrinsic::Wrap => {
                 let from = int(&params[0]);
                 let wide = if from.signed() { "int64_t" } else { "uint64_t" };
@@ -2078,7 +2209,9 @@ pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<
             crate::Target::Freestanding => &["-ffreestanding", "-fno-stack-protector", "-c"],
         };
         let output = std::process::Command::new(&cc)
-            .args(["-std=c11", "-O2"])
+            // Each float operation rounded once, as IEEE 754 says, as
+            // the interpreter does (lemma F7 of docs/101-floats.md).
+            .args(["-std=c11", "-O2", "-ffp-contract=off", "-fno-math-errno"])
             .args(freestanding)
             .arg("-o")
             .arg(out)

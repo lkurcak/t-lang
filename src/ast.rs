@@ -1560,6 +1560,7 @@ impl Expr {
     pub fn children(&self) -> Vec<&Expr> {
         match &self.kind {
             ExprKind::Int(..)
+            | ExprKind::Float(..)
             | ExprKind::Bool(_)
             | ExprKind::Char(_)
             | ExprKind::Str(_)
@@ -1902,6 +1903,11 @@ pub enum ExprKind {
     /// how it's used; monomorphisation writes it here, for the interpreter.
     /// A byte literal, `b'a'`, is one too, of type `u8`.
     Int(u64, Option<crate::types::IntTy>),
+    /// A floating-point literal, `2.5e-3`: as written, without `_`s or
+    /// suffix. Its value is the nearest of its type, worked out from how
+    /// it's used, as an integer literal's is; monomorphisation writes the
+    /// type here (see docs/101-floats.md).
+    Float(String, Option<crate::types::FloatTy>),
     Bool(bool),
     /// `'a'`: a character literal.
     Char(char),
@@ -2153,6 +2159,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
     match &e.kind {
         ExprKind::Int(..)
+        | ExprKind::Float(..)
         | ExprKind::Bool(_)
         | ExprKind::Char(_)
         | ExprKind::Str(_)

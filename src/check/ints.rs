@@ -1,4 +1,5 @@
-//! Integer literals: that each fits in its type (see docs/11-integers.md).
+//! Integer literals: that each fits in its type (see docs/11-integers.md);
+//! and floating-point ones: that each is finite in its type (docs/101-floats.md).
 //!
 //! A literal's type is worked out from how it's used, so whether it fits
 //! can only be checked once that's known, at the end of the function. In
@@ -11,7 +12,7 @@
 use super::Checker;
 use crate::error::Error;
 use crate::traits::{SIGNED, UNSIGNED};
-use crate::types::{IntTy, Type};
+use crate::types::{FloatTy, IntTy, Type};
 
 /// The values every `usize` and `isize` can hold, whatever the machine: a
 /// 32-bit one's. What depends on it is a compiler's to say, not the
@@ -53,6 +54,27 @@ impl Checker {
     pub(super) fn literals(&mut self) -> Result<(), Error> {
         for l in std::mem::take(&mut self.literals) {
             self.info.literals.insert(l.node, self.solved(&l.ty));
+            if let Some(text) = &l.float {
+                // The nearest value, which must not be an infinity: of a
+                // type parameter, in `f32`, whose finite values are all
+                // `f64`'s too.
+                let t = match self.solved(&l.ty) {
+                    Type::Float(t) => t,
+                    Type::Var(_) => continue,
+                    _ => FloatTy::F32,
+                };
+                if crate::types::float_bits(text, t).is_none() {
+                    let of = match self.solved(&l.ty) {
+                        Type::Float(_) => t.a(),
+                        p => format!("`{p}`, which may be an `f32`"),
+                    };
+                    return Err(Error::ty(
+                        l.span,
+                        format!("`{text}` is too big for {of}: its nearest value is an infinity"),
+                    ));
+                }
+                continue;
+            }
             let (lo, hi) = match self.solved(&l.ty) {
                 Type::Int(t) => portable_range(t),
                 Type::Var(_) => continue,

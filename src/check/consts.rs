@@ -128,7 +128,7 @@ impl Checker {
     /// recursive one meets again.
     fn plain(&self, t: &Type, seen: &mut HashSet<Type>) -> bool {
         match t {
-            Type::Int(_) | Type::Bool | Type::Char | Type::Unit => true,
+            Type::Int(_) | Type::Float(_) | Type::Bool | Type::Char | Type::Unit => true,
             Type::Ref(_, false, to) => {
                 matches!(**to, Type::Str) || **to == Type::Slice(Box::new(Type::Int(IntTy::U8)))
             }

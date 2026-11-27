@@ -344,6 +344,116 @@ static _Noreturn void t_char_fail_u(uint64_t n, uint32_t site) {
     t_end(site);
 }
 
+/* Floats (docs/101-floats.md): C's `float` and `double`, IEEE 754's
+ * binary32 and binary64 on every machine T compiles for, each operation
+ * rounded once, as it's compiled with `-ffp-contract=off` and never
+ * fast-math. Converting between them and integers is `as`: the same
+ * number, or a panic, checked before C converts, which would be undefined
+ * of a float out of an integer type's range. No C library. */
+
+/* A float's bits, and the float of some bits. */
+static inline uint64_t t_f64_to_bits(double x) {
+    uint64_t b;
+    __builtin_memcpy(&b, &x, sizeof b);
+    return b;
+}
+
+static inline double t_f64_from_bits(uint64_t b) {
+    double x;
+    __builtin_memcpy(&x, &b, sizeof x);
+    return x;
+}
+
+static inline uint32_t t_f32_to_bits(float x) {
+    uint32_t b;
+    __builtin_memcpy(&b, &x, sizeof b);
+    return b;
+}
+
+static inline float t_f32_from_bits(uint32_t b) {
+    float x;
+    __builtin_memcpy(&x, &b, sizeof x);
+    return x;
+}
+
+static _Noreturn void t_as_fail_f(const char *from, const char *what, uint32_t site) {
+    t_begin_panic();
+    t_say("`as` failed: the ");
+    t_say(from);
+    t_say(" isn't ");
+    t_say(what);
+    t_end(site);
+}
+
+static _Noreturn void t_as_fail_if(int64_t n, const char *what, uint32_t site) {
+    t_begin_panic();
+    t_say("`as` failed: ");
+    t_say_i(n);
+    t_say(" isn't ");
+    t_say(what);
+    t_say(" exactly");
+    t_end(site);
+}
+
+static _Noreturn void t_as_fail_uf(uint64_t n, const char *what, uint32_t site) {
+    t_begin_panic();
+    t_say("`as` failed: ");
+    t_say_u(n);
+    t_say(" isn't ");
+    t_say(what);
+    t_say(" exactly");
+    t_end(site);
+}
+
+/* Float `x`, widened to a `double` exactly, as a signed integer type whose
+ * values are `lo` to just below `hi`, both powers of two, so exact too. */
+static inline int64_t t_f_to_i(double x, double lo, double hi, const char *from,
+                               const char *what, uint32_t site) {
+    if (!(x >= lo && x < hi) || (double)(int64_t)x != x) t_as_fail_f(from, what, site);
+    return (int64_t)x;
+}
+
+/* As an unsigned integer type, whose values are 0 to just below `hi`. */
+static inline uint64_t t_f_to_u(double x, double hi, const char *from, const char *what,
+                                uint32_t site) {
+    if (!(x >= 0 && x < hi) || (double)(uint64_t)x != x) t_as_fail_f(from, what, site);
+    return (uint64_t)x;
+}
+
+/* An integer, widened to 64 bits, as a float, if it's one exactly: the
+ * nearest is, and is in range to convert back (the nearest of the
+ * greatest `int64_t` is 2^63, which isn't). */
+static inline double t_i_to_f64(int64_t n, uint32_t site) {
+    double x = (double)n;
+    if (!(x < 0x1p63) || (int64_t)x != n) t_as_fail_if(n, "an `f64`", site);
+    return x;
+}
+
+static inline double t_u_to_f64(uint64_t n, uint32_t site) {
+    double x = (double)n;
+    if (!(x < 0x1p64) || (uint64_t)x != n) t_as_fail_uf(n, "an `f64`", site);
+    return x;
+}
+
+static inline float t_i_to_f32(int64_t n, uint32_t site) {
+    float x = (float)n;
+    if (!(x < 0x1p63f) || (int64_t)x != n) t_as_fail_if(n, "an `f32`", site);
+    return x;
+}
+
+static inline float t_u_to_f32(uint64_t n, uint32_t site) {
+    float x = (float)n;
+    if (!(x < 0x1p64f) || (uint64_t)x != n) t_as_fail_uf(n, "an `f32`", site);
+    return x;
+}
+
+/* An `f64` as an `f32`, if it's one: a NaN is, and an infinity. */
+static inline float t_f64_to_f32(double x, uint32_t site) {
+    float y = (float)x;
+    if (x == x && (double)y != x) t_as_fail_f("`f64`", "an `f32`", site);
+    return y;
+}
+
 static inline bool t_is_char(uint64_t n) {
     return n <= 0x10FFFF && !(n >= 0xD800 && n <= 0xDFFF);
 }

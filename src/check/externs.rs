@@ -3,7 +3,7 @@
 //! function, whose calls are `unsafe`, as what it does is C's. An *export*
 //! has one: a T function C can call.
 //!
-//! What crosses is only C's scalars (E3): the integers, `bool`, and as a
+//! What crosses is only C's scalars (E3): the integers, floats, `bool`, and as a
 //! result `()` and `!`. Every bit pattern of one of those is a value of its
 //! T type, so whatever C passes an export is one, and an import's result
 //! needs no promise beyond its C signature. Nothing else does, as T makes
@@ -88,12 +88,12 @@ impl Checker {
             if let Some(at) = self.refined_at(&p.ty).filter(|_| !ext.import) {
                 return Err(not_proved(at, ext));
             }
-            if !matches!(t, Type::Int(_) | Type::Bool) {
+            if !matches!(t, Type::Int(_) | Type::Float(_) | Type::Bool) {
                 return Err(Error::ty(
                     p.ty.span,
                     format!(
-                        "an `extern fn` takes only integers and `bool`s, which are what C's are, \
-                         not `{t}`"
+                        "an `extern fn` takes only integers, floats and `bool`s, which are what \
+                         C's are, not `{t}`"
                     ),
                 ));
             }
@@ -103,13 +103,13 @@ impl Checker {
         }
         if !matches!(
             &*sig.ret,
-            Type::Int(_) | Type::Bool | Type::Unit | Type::Never
+            Type::Int(_) | Type::Float(_) | Type::Bool | Type::Unit | Type::Never
         ) {
             return Err(Error::ty(
                 f.ret.span,
                 format!(
-                    "an `extern fn` gives back an integer, a `bool`, `()` or `!`, which are what \
-                     C's can, not `{}`",
+                    "an `extern fn` gives back an integer, a float, a `bool`, `()` or `!`, which \
+                     are what C's can, not `{}`",
                     sig.ret
                 ),
             ));

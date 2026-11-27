@@ -78,6 +78,10 @@ pub const WRITE: &str = "core::fmt::Write";
 /// `core::num::Int`: only the integer types implement it, and it says the
 /// arithmetic operators work on a type (see docs/11-integers.md).
 pub const INT: &str = "core::num::Int";
+/// `core::num::Float`: only `f32` and `f64` implement it, and it says the
+/// arithmetic operators work on a type, as IEEE 754 says (see
+/// docs/101-floats.md). Not intrinsic: core implements it, sealed.
+pub const FLOAT: &str = "core::num::Float";
 /// `core::num::Signed`, `Int`'s signed half.
 pub const SIGNED: &str = "core::num::Signed";
 /// `core::num::Unsigned`, `Int`'s unsigned half.
@@ -978,6 +982,7 @@ pub fn builtin_arm<'t>(tr: &str, ty: &'t Type) -> Option<Arm<'t>> {
         (
             DISCARD,
             Type::Int(_)
+            | Type::Float(_)
             | Type::Bool
             | Type::Char
             | Type::Unit
@@ -986,12 +991,23 @@ pub fn builtin_arm<'t>(tr: &str, ty: &'t Type) -> Option<Arm<'t>> {
             | Type::Ref(..),
         ) => Arm::Holds,
         (DISCARD, Type::Box(inner)) => Arm::Parts(vec![inner]),
-        (COPY, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never | Type::Fn(_)) => {
-            Arm::Holds
-        }
+        (
+            COPY,
+            Type::Int(_)
+            | Type::Float(_)
+            | Type::Bool
+            | Type::Char
+            | Type::Unit
+            | Type::Never
+            | Type::Fn(_),
+        ) => Arm::Holds,
         (COPY, Type::Ref(_, false, _)) => Arm::Holds,
         (COPY, Type::Ref(_, true, _) | Type::Box(_)) => Arm::Fails,
         (EQ, Type::Int(_) | Type::Bool | Type::Char | Type::Unit | Type::Never) => Arm::Holds,
+        // IEEE's `==` isn't an equivalence: NaN isn't equal to itself, so
+        // a float isn't `Eq`, and `==` of floats is IEEE's own, not `eq`
+        // (lemma F3 of docs/101-floats.md).
+        (EQ, Type::Float(_)) => Arm::Fails,
         // A string compares by its bytes, and a slice value by value,
         // if its values compare: the same length, and equal values at
         // each index.
@@ -1022,6 +1038,7 @@ pub fn builtin_arm<'t>(tr: &str, ty: &'t Type) -> Option<Arm<'t>> {
         (
             SEND | SYNC,
             Type::Int(_)
+            | Type::Float(_)
             | Type::Bool
             | Type::Char
             | Type::Unit

@@ -46,6 +46,7 @@ pub const CORE_FILES: &[(&str, &str)] = &[
     ("io.t", include_str!("../core/io.t")),
     ("iter.t", include_str!("../core/iter.t")),
     ("mem.t", include_str!("../core/mem.t")),
+    ("float.t", include_str!("../core/float.t")),
     ("num.t", include_str!("../core/num.t")),
     ("ops.t", include_str!("../core/ops.t")),
     ("option.t", include_str!("../core/option.t")),

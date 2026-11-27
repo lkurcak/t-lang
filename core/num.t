@@ -8,6 +8,8 @@
 //! `None`. These say so instead, or wrap around, as a machine's arithmetic
 //! does: modulo 2^w, for a type `w` bits wide.
 //!
+//! And two floating-point types, `f32` and `f64`, which are `Float`'s.
+//!
 //! They're written once, for every integer type, as `T: Int`. In code like
 //! that the checker knows only what holds of all of them: that the least
 //! is at most 0 and the greatest at least 127, and what `least` and
@@ -15,6 +17,7 @@
 //! can't panic (see docs/08-refinement-types.md, docs/11-integers.md and,
 //! for `checked_mul`, docs/51-products.md), so it needn't be trusted.
 
+use crate::cmp::Ordering;
 use crate::fmt::{Display, Write};
 use crate::option::Option;
 use crate::result::Result;
@@ -37,6 +40,131 @@ export sealed trait Signed: Int {}
 /// Says an integer type is unsigned: its least value is 0. Sealed too.
 #[intrinsic]
 export sealed trait Unsigned: Int {}
+
+/// Says a type is one of the two floating-point types, `f32` and `f64`:
+/// IEEE 754's binary32 and binary64. The arithmetic operators work on it,
+/// each giving the exact result rounded to the nearest value of the type,
+/// ties to even, and never panicking: what's too big is an infinity, and
+/// what has no answer, like `0.0 / 0.0`, a NaN, "not a number". Literals
+/// like `2.5` are of it, and `==` and `<` compare as IEEE 754 does: a NaN
+/// is equal to nothing, itself included, and not less or greater than
+/// anything, so a float isn't `Eq` or `Ord`, whose laws that breaks;
+/// `total_cmp` orders every value. It's sealed: code over a `F: Float` may
+/// count on what both have in common (see docs/101-floats.md).
+///
+/// A NaN in gives a NaN out, of every method too. Which NaN, its sign and
+/// the rest of its bits, isn't said when arithmetic makes one.
+export sealed trait Float: Copy {
+    /// The value nearest integer `n`, ties to even: `f32::nearest(16777217)`
+    /// is `16777216.0`, which `as` would refuse, as it's not that number.
+    fn nearest<T: Int>(n: T) -> Self;
+
+    /// The value nearest `x`, ties to even: `x` itself, of an `f64`.
+    fn nearest_f64(x: f64) -> Self;
+
+    /// Infinity, more than every other value but NaN.
+    fn infinity() -> Self;
+
+    /// A NaN, of no sign, the quiet one IEEE 754 makes by default.
+    fn nan() -> Self;
+
+    /// The greatest finite value: `3.4028235e38` of an `f32`.
+    fn greatest() -> Self;
+
+    /// The least positive value that has all of the type's precision, a
+    /// normal one: `1.1754944e-38` of an `f32`. Others below it are
+    /// subnormal.
+    fn least_positive() -> Self;
+
+    /// How far it is from 1 to the next value: 2^-23 of an `f32`, 2^-52 of
+    /// an `f64`.
+    fn epsilon() -> Self;
+
+    /// Is its sign bit set? Of `-0.0` too, and of a NaN that has it.
+    fn is_sign_negative(self) -> bool;
+
+    /// Is it a NaN? It's the only value not equal to itself.
+    fn is_nan(self) -> bool { self != self }
+
+    /// Is it infinity or minus infinity?
+    fn is_infinite(self) -> bool { !self.is_nan() && self - self != self - self }
+
+    /// Is it neither infinite nor a NaN?
+    fn is_finite(self) -> bool { self - self == self - self }
+
+    /// It without its sign: its sign bit cleared, of a NaN too.
+    fn abs(self) -> Self {
+        if self.is_sign_negative() { -self } else { self }
+    }
+
+    /// It with `sign`'s sign: its magnitude, and `sign`'s sign bit.
+    fn copysign(self, sign: Self) -> Self {
+        if self.is_sign_negative() == sign.is_sign_negative() { self } else { -self }
+    }
+
+    /// The integer nearest it, toward zero: `trunc(-2.7)` is `-2.0`.
+    fn trunc(self) -> Self;
+
+    /// The greatest integer at most it: `floor(-2.5)` is `-3.0`.
+    fn floor(self) -> Self {
+        let t = self.trunc();
+        if self < t { t - 1.0 } else { t }
+    }
+
+    /// The least integer at least it: `ceil(2.1)` is `3.0`, and `ceil(-0.5)`
+    /// is `-0.0`.
+    fn ceil(self) -> Self {
+        let t = self.trunc();
+        if self > t { t + 1.0 } else { t }
+    }
+
+    /// The integer nearest it, halfway ones away from zero: `round(2.5)` is
+    /// `3.0`, and `round(-2.5)` is `-3.0`.
+    fn round(self) -> Self {
+        let a = self.abs();
+        let t = a.trunc();
+        // `a - t` is exact: `t` is within a factor of 2 of `a`, or 0.
+        let r = if a - t >= 0.5 { t + 1.0 } else { t };
+        r.copysign(self)
+    }
+
+    /// Its square root, rounded once: a NaN below zero, but of `-0.0`,
+    /// which is `-0.0`.
+    fn sqrt(self) -> Self;
+
+    /// The lesser of it and `other`: a NaN if either is, and `-0.0` of
+    /// `0.0` and `-0.0` (IEEE 754-2019's `minimum`).
+    fn min(self, other: Self) -> Self {
+        if self.is_nan() {
+            self
+        } else if other.is_nan() || other < self {
+            other
+        } else if self < other || self.is_sign_negative() {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// The greater of it and `other`: a NaN if either is, and `0.0` of
+    /// `0.0` and `-0.0` (IEEE 754-2019's `maximum`).
+    fn max(self, other: Self) -> Self {
+        if self.is_nan() {
+            self
+        } else if other.is_nan() || other > self {
+            other
+        } else if self > other || !self.is_sign_negative() {
+            self
+        } else {
+            other
+        }
+    }
+
+    /// Where it comes in IEEE 754's total order of all values: negative
+    /// NaNs, minus infinity, the negative numbers, `-0.0`, `0.0`, the
+    /// positive numbers, infinity, positive NaNs; NaNs by their bits.
+    fn total_cmp(&self, other: &Self) -> Ordering;
+}
 
 /// The least value of integer type `T`: `least::<i8>()` is -128, and
 /// `least::<u8>()` is 0. The checker knows it is.

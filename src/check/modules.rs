@@ -3712,6 +3712,7 @@ fn plain_path(t: &TypeExpr) -> Option<Ident> {
 pub(crate) fn children_mut(e: &mut Expr) -> Vec<&mut Expr> {
     match &mut e.kind {
         ExprKind::Int(..)
+        | ExprKind::Float(..)
         | ExprKind::Bool(_)
         | ExprKind::Char(_)
         | ExprKind::Str(_)

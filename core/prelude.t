@@ -10,7 +10,7 @@ export use crate::iter::{
     Iterator,
 };
 export use crate::mem::{Copy, Discard};
-export use crate::num::{Int, Signed, Unsigned};
+export use crate::num::{Float, Int, Signed, Unsigned};
 export use crate::num::{
     checked_add,
     checked_div,

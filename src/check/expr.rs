@@ -10,7 +10,7 @@ use crate::ast::*;
 use crate::error::{Edit, Error, Fix, Span};
 use crate::exhaust::{self, Redundant};
 use crate::traits::Pred;
-use crate::traits::{EQ, FN_ONCE, INT, ORD};
+use crate::traits::{EQ, FLOAT, FN_ONCE, INT, ORD};
 use crate::types::{FnType, IntTy, Region, Type, struct_fields, variant_fields};
 
 impl Checker {
@@ -189,13 +189,81 @@ impl Checker {
         }
     }
 
+    /// Is `t` a floating-point type, or one a floating-point type must be:
+    /// a literal's, or a type parameter, opaque type or projection that's
+    /// `Float`?
+    pub(super) fn float_like(&self, t: &Type) -> bool {
+        match t {
+            Type::Float(_) => true,
+            t @ Type::Var(_) => self.float_var(t),
+            Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..) => {
+                !crate::check::unify::has_vars(t)
+                    && (self.traits)
+                        .implements(t, FLOAT, &self.adts.proj.env, &self.adts.proj.local)
+                        .is_ok()
+            }
+            _ => false,
+        }
+    }
+
     /// Is comparison `id` a call of an `Ord` method, rather than the
-    /// machine's comparison of integers? Asked before `finish_notes`.
+    /// machine's comparison of integers, characters or floats? Asked
+    /// before `finish_notes`.
     pub(super) fn is_ord_call(&self, id: NodeId) -> bool {
         (self.compares.get(&id)).is_some_and(|t| {
             let t = self.solved(t);
-            t != Type::Char && !self.int_like(&t)
+            t != Type::Char && !self.int_like(&t) && !self.float_like(&t)
         })
+    }
+
+    /// `x as ty`, where what's converted or what it's converted to is a
+    /// float (`from_float`, `to_float`), of types `from` and `to`: the
+    /// other must be an integer or floating-point type. Whether it may
+    /// panic is the refinement checker's to say, but of floats into a
+    /// type that has each of their values, which never does: `f32 as
+    /// f64`, or `F as f64` and `F as F` of a type parameter `F: Float`.
+    #[allow(clippy::too_many_arguments)]
+    fn float_cast(
+        &mut self,
+        e: &Expr,
+        x: &Expr,
+        ty: &TypeExpr,
+        from: &Type,
+        to: &Type,
+        from_float: bool,
+        to_float: bool,
+    ) -> Result<Type, Error> {
+        let not = |t: &Type, dir: &str| {
+            format!(
+                "`as` converts between integer and floating-point types and `char`, not {dir} \
+                 `{t}`"
+            )
+        };
+        if !to_float {
+            if !self.is_integer(to) {
+                return Err(Error::ty(ty.span, not(to, "to")));
+            }
+            self.integer(to, ty.span, "`as`")?;
+        }
+        if !from_float {
+            let solved = self.solved(from);
+            if !self.is_integer(&solved) && !matches!(self.shallow(from), Type::Var(_)) {
+                return Err(Error::ty(x.span, not(&solved, "from")));
+            }
+            self.integer(from, x.span, "`as`")?;
+        }
+        let from = self.solved(from);
+        let exact = from_float
+            && to_float
+            && match (&from, to) {
+                (_, Type::Float(crate::types::FloatTy::F64)) => true,
+                (Type::Float(crate::types::FloatTy::F32), Type::Float(_)) => true,
+                (a, b) => a == b,
+            };
+        if !exact {
+            self.operator(e, "`as`");
+        }
+        Ok(to.clone())
     }
 
     /// `integer`, saying that what `what` works on is `these`.
@@ -514,9 +582,35 @@ impl Checker {
                     ),
                 };
                 self.literals.push(super::Literal {
+                    float: None,
                     node: e.id,
                     span: e.span,
                     value: i128::from(*n),
+                    ty: ty.clone(),
+                });
+                Ok(ty)
+            }
+            //   τ a floating-point type
+            //  ------------------------ (T-Float)
+            //      Γ ⊢ 2.5 : τ
+            //
+            // As an integer literal: which type is worked out from how
+            // it's used, with no default. Its value is the nearest of that
+            // type, which must not be an infinity (`literals`).
+            ExprKind::Float(x, suffix) => {
+                let ty = match suffix {
+                    Some(t) => Type::Float(*t),
+                    None => self.fresh_float(
+                        e.span,
+                        "the type of this float".into(),
+                        "say which floating-point type it is, as `2.5f64` does".into(),
+                    ),
+                };
+                self.literals.push(super::Literal {
+                    float: Some(x.clone()),
+                    node: e.id,
+                    span: e.span,
+                    value: 0,
                     ty: ty.clone(),
                 });
                 Ok(ty)
@@ -653,6 +747,10 @@ impl Checker {
             // (see `refine`): `-5` can't, as `-` of a literal is a literal.
             ExprKind::Unary(UnOp::Neg, x) => {
                 let t = self.synth(x)?;
+                // Of a float, it flips the sign, which never panics.
+                if self.float_like(&self.solved(&t)) {
+                    return Ok(t);
+                }
                 if let ExprKind::Int(..) = x.kind
                     && let Some(l) = self.literals.iter_mut().find(|l| l.node == x.id)
                 {
@@ -684,11 +782,30 @@ impl Checker {
             // changes the number, so unlike Rust's `as` it never truncates.
             // A character's number is its scalar value, and a number fits
             // in a `char` if it's one: not a surrogate, nor past `10FFFF`.
+            //
+            //   Γ ⊢ e : σ   σ, τ integer or floating-point types
+            //  ----------------------------------------------- (T-AsF)
+            //               Γ ⊢ e as τ : τ
+            //
+            // Of floats too, the same number: it panics if there's none in
+            // `τ`, as for a float that's NaN, an infinity, has a fraction or
+            // is out of an integer type's range, or for an integer too big
+            // to be a `τ` exactly; unless that's proved not to happen, as it
+            // always is if every `σ` is a `τ`, `f32 as f64` or `i32 as f64`
+            // (docs/101-floats.md). Rounding is `Float::nearest`'s.
             ExprKind::As(x, ty) => {
                 let from = self.synth(x)?;
                 let to = self.resolve(ty)?;
+                let from_float = self.float_like(&self.solved(&from));
+                let to_float = self.float_like(&to);
+                if from_float || to_float {
+                    return self.float_cast(e, x, ty, &from, &to, from_float, to_float);
+                }
                 let not = |t: &Type, dir: &str| {
-                    format!("`as` converts between integer types and `char`, not {dir} `{t}`")
+                    format!(
+                        "`as` converts between integer and floating-point types and `char`, not \
+                         {dir} `{t}`"
+                    )
                 };
                 let from_char = matches!(self.shallow(&from), Type::Char);
                 if !from_char
@@ -794,6 +911,14 @@ impl Checker {
                     }
                     // As `l op r` does: `r` is a `u32` for a shift, and only
                     // `&`, `|`, `^` and `>>` can't panic.
+                    // Of a float, `+=`, `-=`, `*=` and `/=` as `+`, `-`, `*`
+                    // and `/` are.
+                    Some(op)
+                        if matches!(op, BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div)
+                            && self.float_like(&self.solved(&t)) =>
+                    {
+                        self.check(value, &t)?;
+                    }
                     Some(op) => {
                         self.integer(&t, place.span, &format!("`{op}=`"))?;
                         match op {
@@ -1112,9 +1237,20 @@ impl Checker {
             // Each may panic, if its result doesn't fit in `τ`, or `/` and
             // `%` by zero. Unless it's proved not to (see `refine`): `x / 2`
             // can't.
+            //
+            //   Γ ⊢ l : τ   Γ ⊢ r : τ   τ: Float
+            //  ---------------------------------- (T-FArith)  for + - * /
+            //          Γ ⊢ l + r : τ
+            //
+            // Of floats, the exact result rounded to the nearest `τ`, as
+            // IEEE 754 says: never a panic, but an infinity or NaN. No `%`
+            // (docs/101-floats.md).
             BinOp::Add | BinOp::Sub | BinOp::Mul | BinOp::Div | BinOp::Rem => {
                 let t = self.synth(l)?;
                 self.check(r, &t)?;
+                if *op != BinOp::Rem && self.float_like(&self.solved(&t)) {
+                    return Ok(t);
+                }
                 self.integer(&t, l.span, &format!("`{op}`"))?;
                 self.operator(e, format!("`{op}`"));
                 Ok(t)
@@ -1174,6 +1310,11 @@ impl Checker {
                 if self.solved(&t) == Type::Char {
                     return Ok(Type::Bool);
                 }
+                // IEEE's: false if either is NaN. Floats aren't `Ord`, whose
+                // laws NaN breaks (docs/101-floats.md).
+                if self.float_like(&self.solved(&t)) {
+                    return Ok(Type::Bool);
+                }
                 if self.int_like(&self.solved(&t)) {
                     self.integer(&t, l.span, &format!("`{op}`"))?;
                     return Ok(Type::Bool);
@@ -1226,10 +1367,20 @@ impl Checker {
             // monomorphisation to make the copies of the impls' `eq`s it
             // may call, and for the check against polymorphic recursion
             // to see it.
+            //
+            // Of floats, it's IEEE's `==`, not `Eq`'s: NaN isn't equal to
+            // itself, and `0.0 == -0.0`, so floats aren't `Eq`, whose `==`
+            // is an equivalence (docs/101-floats.md). If the type isn't
+            // known yet, and turns out to be a float's, the obligation is
+            // dropped (`prove_all`), and so is the use of `eq`.
             BinOp::Eq | BinOp::Ne => {
                 let t = self.synth(l)?;
                 self.check(r, &t)?;
+                if self.float_like(&self.solved(&t)) {
+                    return Ok(Type::Bool);
+                }
                 let eq = traits::trait_method_symbol(EQ, "eq");
+                self.equalities.insert(e.id, t.clone());
                 self.pending
                     .push((e.id, e.span, Instance::Fn(eq, vec![t.clone()])));
                 let pred = Pred {

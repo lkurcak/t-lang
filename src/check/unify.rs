@@ -4,7 +4,7 @@
 use super::Checker;
 use super::scope::{declared_in, source_name};
 use crate::error::{Error, Span};
-use crate::traits::INT;
+use crate::traits::{FLOAT, INT};
 use crate::types::Type;
 
 /// A type variable: a type the checker hasn't worked out yet.
@@ -21,6 +21,11 @@ pub(super) struct Var {
     /// type or projection that implements `Int`, which an obligation made
     /// with it says (`Checker::fresh_int`).
     pub(super) int: bool,
+    /// Is it the type of a floating-point literal? Then it can only be a
+    /// floating-point type, or a type parameter, opaque type or projection
+    /// that implements `Float` (`Checker::fresh_float`). Never with `int`:
+    /// no type is both (docs/101-floats.md).
+    pub(super) float: bool,
     /// May it be a slice, `str` or an `unsized` type parameter? For what an
     /// `unsized` parameter stands for (`fresh_param`), and `Self` of a path
     /// to a trait's method, `Debug::fmt(s, w)` with `s: &str`: as `s.fmt(w)`
@@ -147,6 +152,7 @@ impl Checker {
             solution: None,
             param: false,
             int: false,
+            float: false,
             unsized_ok: false,
             span,
             what,
@@ -179,11 +185,34 @@ impl Checker {
         matches!(self.shallow(t), Type::Var(v) if self.vars[v as usize].int)
     }
 
+    /// A new variable for a floating-point type, a literal's, at `span`:
+    /// whatever it turns out to be must implement `Float`, which only `f32`
+    /// and `f64` do, and type parameters bounded by it.
+    pub(super) fn fresh_float(&mut self, span: Span, what: String, hint: String) -> Type {
+        let t = self.fresh(span, what, hint);
+        let Type::Var(v) = t else {
+            unreachable!("a variable")
+        };
+        self.vars[v as usize].float = true;
+        let pred = crate::traits::Pred {
+            ty: t.clone(),
+            trait_name: FLOAT.into(),
+        };
+        let _ = self.oblige(pred, span, super::traits::Why::Float);
+        t
+    }
+
+    /// Is `t` a variable for a floating-point type, not known yet?
+    pub(super) fn float_var(&self, t: &Type) -> bool {
+        matches!(self.shallow(t), Type::Var(v) if self.vars[v as usize].float)
+    }
+
     /// `t`, with each variable for an integer type that isn't known yet
     /// shown as `{integer}`, for a message.
     pub(super) fn shown(&self, t: &Type) -> Type {
         match self.shallow(t) {
             Type::Var(v) if self.vars[v as usize].int => Type::Param("{integer}".into(), false),
+            Type::Var(v) if self.vars[v as usize].float => Type::Param("{float}".into(), false),
             t => t.map(|p| self.shown(p)),
         }
     }
@@ -378,15 +407,27 @@ impl Checker {
                     }
                     Type::Var(w) => {
                         let (param, int) = (self.vars[v as usize].param, self.vars[v as usize].int);
+                        let float = self.vars[v as usize].float;
                         let unsized_ok = self.vars[v as usize].unsized_ok;
                         let w = &mut self.vars[*w as usize];
+                        // An integer literal is never a float: no type is
+                        // both.
+                        if (int && w.float) || (float && w.int) {
+                            return Err(Clash::Mismatch);
+                        }
                         w.param |= param;
                         w.int |= int;
+                        w.float |= float;
                         w.unsized_ok &= unsized_ok;
                     }
-                    // Its obligation, `Int`, says whether these may be.
-                    Type::Int(_) | Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..) => {}
-                    _ if self.vars[v as usize].int => return Err(Clash::Mismatch),
+                    // Its obligation, `Int` or `Float`, says whether these
+                    // may be.
+                    Type::Int(_) if !self.vars[v as usize].float => {}
+                    Type::Float(_) if !self.vars[v as usize].int => {}
+                    Type::Param(_, _) | Type::Opaque(..) | Type::Proj(..) => {}
+                    _ if self.vars[v as usize].int || self.vars[v as usize].float => {
+                        return Err(Clash::Mismatch);
+                    }
                     _ => {}
                 }
                 self.vars[v as usize].solution = Some(t);
@@ -515,6 +556,7 @@ impl Checker {
             // An integer type can't be `!`: that's left to be inferred.
             if let Type::Var(v) = self.shallow(&t)
                 && !self.vars[v as usize].int
+                && !self.vars[v as usize].float
             {
                 self.unify(&t, &Type::Never)
                     .unwrap_or_else(|_| unreachable!("a variable fits anything"));
@@ -524,7 +566,7 @@ impl Checker {
         // nothing after this unifies. Say so now, as what comes next needs
         // to know which it is: a closure's captures, for one.
         for v in vars..self.vars.len() {
-            if self.int_var(&Type::Var(v as u32)) {
+            if self.int_var(&Type::Var(v as u32)) || self.float_var(&Type::Var(v as u32)) {
                 return Err(self.unsolved(v));
             }
         }

@@ -6,7 +6,7 @@
 
 use crate::ast::*;
 use crate::error::Span;
-use crate::types::IntTy;
+use crate::types::{FloatTy, IntTy};
 use std::fmt::{self, Debug};
 use std::sync::Arc;
 
@@ -37,7 +37,7 @@ macro_rules! leaves {
 }
 
 leaves!(
-    String, bool, char, u8, u64, i128, usize, IntTy, UnOp, BinOp, Lit, Capture, FmtSpec
+    String, bool, char, u8, u64, i128, usize, IntTy, FloatTy, UnOp, BinOp, Lit, Capture, FmtSpec
 );
 
 impl Describe for Span {
@@ -180,7 +180,7 @@ enums! {
         Impl(bounds), Refined(name, ty, pred),
     };
     ExprKind {
-        Int(n, ty), Bool(b), Char(c), Str(s), ByteStr(bytes), Format(pieces), Unit, Var(name, args),
+        Int(n, ty), Float(x, ty), Bool(b), Char(c), Str(s), ByteStr(bytes), Format(pieces), Unit, Var(name, args),
         Unary(op, expr), As(expr, ty), Where(pred, guard), Clauses(clauses), Binary(op, left, right), Call(callee, args),
         MethodCall(receiver, name, types, args), If(cond, then, otherwise),
         IfLet(cond, then, otherwise), Array(elems), Tuple(elems),
