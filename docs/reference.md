@@ -71,6 +71,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 | `i8`, `i16`, `i32`, `i64` | Signed integers of the stated width |
 | `u8`, `u16`, `u32`, `u64` | Unsigned integers of the stated width |
 | `isize`, `usize` | Signed and unsigned integers of the machine's width |
+| `f32`, `f64` | IEEE 754's binary32 and binary64 floating-point numbers |
 | `bool`, `char`, `()` | Booleans, Unicode scalar values, and the unit value |
 | `(A, B)`, `(A, B, C)`, .. | A tuple: two or more values of these types |
 | `&T`, `&mut T` | Shared and exclusive references |
@@ -97,6 +98,12 @@ Arithmetic operands have the same integer type; T does not widen them
 implicitly. `+`, `-`, `*`, `/`, `%`, and integer `as` conversions produce
 their mathematical result or panic if it is invalid or out of range.
 They never silently wrap. Explicit wrapping operations are in `core::num`.
+Of floats, `+`, `-`, `*` and `/` are IEEE 754's: rounded once, to the
+nearest, and never a panic; `==` and `<` are IEEE 754's too, so a NaN
+equals nothing, and floats are neither `Eq` nor `Ord`. `as` between
+integers and floats is the same number or a panic, and float literals,
+`2.5`, `1e-3`, `2.5f32`, have no default type (see
+[floats](101-floats.md)).
 Integer literals support suffixes such as `42i64`, hexadecimal `0xFF`,
 and binary `0b1010`. Text uses `"..."` and `'x'`; byte literals use
 `b"..."` and `b'x'`. Escapes are `\n`, `\r`, `\t`, `\\`, `\0`, `\'` and
@@ -104,10 +111,11 @@ and binary `0b1010`. Text uses `"..."` and `'x'`; byte literals use
 the ASCII characters. A format string, `f"x = {x}, p = {p.y:?}"`, is a
 value that's `Display`: its text, with each hole written by `Display`, or
 by `Debug` with `:?`, in hexadecimal with `:x` or `:08x`, or in decimal
-with 0s in front with `:05`. A width, `{x:<6}`, `{x:^6}` or `{x:>6}`,
+with 0s in front with `:05`, or a float with 3 digits after its point
+with `:.3`. A width, `{x:<6}`, `{x:^6}` or `{x:>6}`,
 pads it to at least that many characters, with spaces or the fill before
 the side, `{x:*>6}`; the width can be a `usize` variable's, `{x:>w$}`,
-and `?` or `x` can follow it. A hole holds an expression, which it
+and `?`, `x` or `.3` can follow it. A hole holds an expression, which it
 borrows, as `&e`; it ends at the first `}` or `:` outside brackets of its
 own, and can't hold a `"` or a comment. `{{` and `}}` are braces (see
 [format strings](43.1-formatting.md), [holes](44-runs-and-holes.md) and
@@ -119,7 +127,7 @@ machines. A literal of either type must fit on both. See
 [strings](13-strings.md), and [arrays](22-arrays.md) for the detailed rules.
 
 A `const` item names a value fixed while compiling. Its type is written,
-and is plain data: integers, `bool`, `char`, `()`, `&str`, `&[u8]`, and
+and is plain data: integers, floats, `bool`, `char`, `()`, `&str`, `&[u8]`, and
 arrays, tuples, structs and enums of those, with no `Cell` or `Atomic` in them
 (they're *frozen*). The initializer may call functions
 and loop, but may only panic: no allocation and no `unsafe`. It runs on a

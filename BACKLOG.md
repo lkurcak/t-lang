@@ -2,17 +2,19 @@
 
 ## Now
 
-1. [Floats](backlog/floats.md) (`f32`, `f64`), as a design step first. Owner to decide: `Eq`
-   and `Ord` against NaN, whether a float can be refined (not at first, is the proposal),
-   literals, formatting and parsing, the C backend.
+1. Retrospective 20, after 0.109.0: look for soundness holes in what shipped since 0.107.3
+   (patterns in 0.108.0, floats in 0.109.0), with generated tests for a fact learned on one
+   path and read on another (the hole 0.107.3 closed), and floats at every place a value can
+   be (a field, a variant, a type argument, a capture, a const) against the interpreter.
 2. Owner to decide: a generic helper that takes a closure has to spell out every effect
    (`effect e`, `F: .. with e + Discard`, then `with {alloc, panic, e}` in full). In a private
    function, either the rest is inferred beside a written `e`, or an `F: FnMut(..)` bound that
    names no effect gets an inferred one (see "Generic helpers over closures" in t-fmt's
    `FRICTION.md`).
-3. A retrospective after the next feature release: look for soundness holes in what shipped
-   since the last one, with generated tests for a fact learned on one path and read on
-   another (the hole 0.107.3 closed).
+3. Step 102, math functions in T: `exp`, `ln`, `log2`, `pow`, `sin`, `cos`, `tanh` and the
+   rest, of `F: Float`, written over IEEE 754's operations so they're the same on every
+   machine, which the C library's aren't (glibc's `cbrt(-27.0)` is `-3.0000000000000004`); then
+   the [ML and GPU path](backlog/ml-path.md).
 
 ## Later
 
@@ -34,9 +36,19 @@
 - Keywords that are ordinary words (`sealed`, `law`, `ensures`, `invariant`, `effect`,
   `with`) as names wherever they can't be read as the keyword. t-fmt's `FRICTION.md` says
   they bite constantly; step 100 only makes the message say it's a keyword.
-- [After floats](backlog/floats.md#after-floats): a matrix and small neural-network library
-  in t-libs, and an agent that learns to play a T game such as t-maze; then FFI with
-  pointers and linking shared libraries; GPU kernels later.
+- [The ML and GPU path](backlog/ml-path.md), after math functions: a matrix and small
+  neural-network library in t-libs, and an agent that learns to play a T game such as t-maze;
+  then FFI with pointers and linking shared libraries; GPU kernels later.
+- Floats, what step 101 left out (`docs/101-floats.md`): refinements of floats (measures like
+  `is_finite` first, so `{ x: f64 | x.is_finite() }`), `%` (exact, as C's `fmod`), `mul_add`,
+  hex float literals, a wrapper that's `Eq` and `Ord` by `total_cmp`, atomics of floats, and
+  faster text (Ryu to write, Eisel-Lemire to read past the fast path: today reading 17 digits
+  takes the interpreter about 160 ms). A posit type, if machines get them, would be `Eq` and
+  `Ord`, beside `Float` under a shared supertrait.
+- Checking long functions: a `main` of 4,129 lines of `show(&mut out, "..")?;` took 38 GB and
+  over five minutes before it was stopped, and an array literal's check grows faster than its
+  length (2,000 elements 0.4 s, 4,000 1 s, 11,000 16 s). Found writing step 101's generated
+  tests, which now make their values in T instead.
 - Fast floats, explicitly and the same everywhere: `mul_add` (one rounding; slow without an
   FMA unit), and sums and dot products defined in a SIMD-shaped order (eight accumulators
   joined in a fixed tree), so they vectorise without fast-math. Never "assume no NaN", which
@@ -104,6 +116,9 @@
 
 ## Done
 
+- Step 101 (0.109.0): floats, `f32` and `f64`: IEEE 754's arithmetic, literals, comparisons
+  (neither `Eq` nor `Ord`), `as` the same number or a panic, a sealed `Float`, and `Display`,
+  `Parse` and `{x:.3}` written in T on exact big numbers, the same in the interpreter and C.
 - Step 100 (0.108.0): let chains in `if` and `while`, `..` in variant, tuple and array
   patterns, consts and const parameters as patterns, and clearer messages for a keyword used
   as a name, a parameter called as a function, and which lifetime an error means; t-fmt takes

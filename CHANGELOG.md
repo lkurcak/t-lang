@@ -1,5 +1,46 @@
 # Changelog
 
+## 0.109.0 (2026-11-27)
+
+Step 101: floats. See [docs/101-floats.md](docs/101-floats.md).
+
+### Added
+
+- `f32` and `f64`, IEEE 754's binary32 and binary64. `+`, `-`, `*`, `/`
+  and unary `-` round the exact result once, to the nearest, ties to even,
+  and never panic: too big is an infinity, no answer a NaN. No `%`.
+- Float literals: `2.5`, `1e-3`, `6.02e23`, `2.5f32`, `1f64`. Their type
+  is inferred, with no default, as an integer literal's is; one that
+  rounds to an infinity is an error. `t.0.1`, `1..2` and `1.max(2)` read
+  as before.
+- `==`, `!=`, `<`, `<=`, `>` and `>=` of floats are IEEE 754's: a NaN is
+  equal to nothing, and `0.0 == -0.0`. So a float is neither `Eq` nor
+  `Ord`, and a struct holding one can't derive `Eq`; `total_cmp` orders
+  every value. A float can't be a pattern.
+- `as` between integer and float types gives the same number, or panics:
+  it can't where every value of one type is the other's (`i32 as f64`,
+  `f32 as f64`), nor where integer refinements prove the integer is a
+  float exactly. `F::nearest` and `F::nearest_f64` round.
+- `Float`, sealed, in the prelude: code over `F: Float` has operators,
+  literals and comparisons, and its methods, `abs`, `copysign`, `floor`,
+  `ceil`, `trunc`, `round`, `sqrt`, `min`, `max` (NaN in, NaN out),
+  `is_nan`, `is_finite`, `is_infinite`, `is_sign_negative`, `total_cmp`,
+  `infinity`, `nan`, `greatest`, `least_positive` and `epsilon`; each type
+  has `to_bits` and `from_bits`.
+- `Display`, `Debug` and `Parse` of floats, written in T: the fewest
+  digits that read back as the value, laid out as Rust's `{:?}` (`0.1`,
+  `1e16`, `1.5e-7`, `-0.0`, `inf`, `NaN`); reading gives the float
+  nearest the decimal. `f"{x:.3}"` writes the exact value rounded at 3
+  digits after the point, ties to even, and takes a width too.
+- Floats in `extern fn`, as C's `float` and `double`; a hosted build links
+  the C math library.
+
+### Changed
+
+- The C backend compiles with `-ffp-contract=off` and `-fno-math-errno`,
+  so each float operation is rounded once, as the interpreter does.
+- The messages of `as` and `extern fn` name floats among what they take.
+
 ## 0.108.0 (2026-11-26)
 
 Step 100: chains, `..` and consts in patterns, found by `t fmt` written in
