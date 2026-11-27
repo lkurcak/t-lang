@@ -2768,6 +2768,52 @@ mod tests {
         same(&libraries_known(&at_once, false), &known, "finished later");
     }
 
+    /// A library function whose effects are inferred is checked in full on
+    /// every `t check`, as its effects are what it's found to have
+    /// (`Checker::only_typed`). So the libraries' functions that aren't
+    /// exported say theirs, as exported ones always do:
+    /// `core::float::dec`'s, inferred, took `t check` of an empty program
+    /// from 101 ms to 180 (retrospective 20). One that must be checked in
+    /// full for another reason, a const's, a measure's, or one that gives
+    /// an opaque type, isn't counted.
+    #[test]
+    fn library_functions_say_their_effects() {
+        let (_, prog, typed) = check_libraries(true);
+        let mut inferred = Vec::new();
+        for (i, (f, parent, method)) in prog.all_fns().into_iter().enumerate() {
+            fn opaque(t: &Type) -> bool {
+                matches!(t, Type::Opaque(..)) || t.parts().any(opaque)
+            }
+            let gives_opaque = match &typed.fns[i].scheme.ty {
+                Type::Fn(sig) => opaque(&sig.ret),
+                _ => true,
+            };
+            if f.bodiless()
+                || parent.is_some()
+                || !typed.modules.in_library(f.module)
+                || f.is_const()
+                || f.measure.is_some()
+                || gives_opaque
+                || typed.typed_only.contains(&i)
+            {
+                continue;
+            }
+            let of = match method {
+                Some(MethodOf::Impl(k)) => format!("{}::", prog.impls[k].self_ty),
+                _ => String::new(),
+            };
+            let at = typed.modules.full_path(f.module);
+            inferred.push(format!("{at}::{of}{}", f.name.name));
+        }
+        assert!(
+            inferred.is_empty(),
+            "{} library functions have their effects inferred, so they're checked in full \
+             on every `t check`; say their `with`:\n{}",
+            inferred.len(),
+            inferred.join("\n")
+        );
+    }
+
     /// `check_typed` finds what `check` does, in every program of the tests:
     /// the same errors and warnings.
     #[test]

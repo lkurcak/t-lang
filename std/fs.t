@@ -105,7 +105,7 @@ impl Fs {
 
 /// `path` can be given to the operating system: it has no `\0`, which
 /// would end it there, so that another file would be the one used.
-fn checked(path: &str) -> Result<(), Error> {
+fn checked(path: &str) -> Result<(), Error> with {} {
     for b in path.as_bytes().iter() {
         if *b == 0u8 {
             return Err(Error::new(ErrorKind::InvalidInput));

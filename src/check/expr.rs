@@ -253,11 +253,14 @@ impl Checker {
             self.integer(from, x.span, "`as`")?;
         }
         let from = self.solved(from);
+        // Every `f32` is a value of each float type, a type parameter's
+        // too, as `f32` is the narrower of the two `Float` has; and every
+        // float is an `f64`.
         let exact = from_float
             && to_float
             && match (&from, to) {
                 (_, Type::Float(crate::types::FloatTy::F64)) => true,
-                (Type::Float(crate::types::FloatTy::F32), Type::Float(_)) => true,
+                (Type::Float(crate::types::FloatTy::F32), _) => true,
                 (a, b) => a == b,
             };
         if !exact {

@@ -136,7 +136,9 @@ exactly.
 and `f32` and `f64` are all there is of it, so code over a `F: Float` may
 use operators, literals and comparisons, and is written once for both. A
 literal of a `F` must be finite in an `f32`, the narrower; `as` of a `F`
-must be exact for an `f32` too.
+must be exact for an `f32` too. So `x as F` can't panic where `x` is an
+`f32`, nor `y as f64` where `y` is a `F`, and every other conversion
+between floats may.
 
 ```rust
 fn dot<F: Float>(a: &[F], b: &[F]) -> F {

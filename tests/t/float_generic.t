@@ -21,6 +21,9 @@ fn most<F: Float>(xs: &[F]) -> F {
 /// Into an `f64`, which every `F` is exactly: so it can't panic.
 fn widen<F: Float>(x: F) -> f64 with {} { x as f64 }
 
+/// Out of an `f32`, which is exactly an `F` of either type.
+fn from_narrow<F: Float>(x: f32) -> F with {} { x as F }
+
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let a: [f64; 3] = [1.0, 2.0, 3.0];
@@ -30,5 +33,9 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&most(&a))?;         // expect: 3.0
     out.line(&most::<f32>(&[]))?; // expect: -inf
     out.line(&widen(0.1f32))?;    // expect: 0.10000000149011612
+    let n: f64 = from_narrow(0.1);
+    out.line(&n)?; // expect: 0.10000000149011612
+    let m: f32 = from_narrow(0.1);
+    out.line(&m)?; // expect: 0.1
     Ok(())
 }

@@ -375,7 +375,7 @@ impl<T: Int> Display for Dec<T> {
 }
 
 /// How many digits `m` has in decimal, without its sign: 1 for 0.
-fn length<T: Int>(m: T) -> usize {
+fn length<T: Int>(m: T) -> usize with {} {
     let q = m / 10;
     // At most 39, of an `i128`'s, so adding never wraps.
     if q == 0 { 1 } else { wrapping_add(length(q), 1) }

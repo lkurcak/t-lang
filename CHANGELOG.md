@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.109.1 (2026-11-27)
+
+Retrospective 20's fixes. It found no soundness hole in 0.108.0's patterns
+or 0.109.0's floats.
+
+### Fixed
+
+- `t check` is fast again: 0.109.0 made checking `fn main() {}` take
+  ~180 ms, from ~100, and every program as much longer, as core's new
+  functions that write and read floats had their effects inferred, so
+  were checked in full every time. Each library function now says its
+  `with`, and a test says so of every one (~117 ms; the rest is typing
+  the new code).
+- A measure's `match` takes `V(..)`, as it took `V(_, _)`: `..` is the
+  `_`s it stands for, so it still says only which variant a value is.
+- `x as F`, where `x` is an `f32` and `F: Float`, can't panic, and isn't
+  said to: every `f32` is a value of either float type.
+
+### Added
+
+- Generated tests: a float of either type, every bit kept, NaNs' too,
+  through each place a value can be (a field, a variant, a type argument,
+  a capture, a box, a list, a cell, a const and more), in the interpreter
+  and natively; and what a path learns of a value, learned in the arm of
+  a const pattern, in an arm with alternatives or with `..`, or in a
+  `while`'s chain, and asked on another path.
+
 ## 0.109.0 (2026-11-27)
 
 Step 101: floats. See [docs/101-floats.md](docs/101-floats.md).
