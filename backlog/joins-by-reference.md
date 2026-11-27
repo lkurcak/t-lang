@@ -25,4 +25,4 @@ Consumers to adapt:
 - summary freshen.
 
 Tests to extend: tests/proof_work.rs `nested_branches_joined` (add a sequential shape) and
-tests/generated_joins.rs.
+tests/generated/joins.rs.

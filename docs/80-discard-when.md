@@ -276,7 +276,7 @@ a drop the checker let through wrongly stops a run there; it also
 reports a value that isn't `Discard` dropped by anything but its type's
 impl of `DiscardWhen`. The adversarial tests are
 `tests/t/err_soundness_discard_when_*.t`, and the generated family
-`tests/generated_discard_when.rs`: a list of 0 to 3 values, made and used
+`tests/generated/discard_when.rs`: a list of 0 to 3 values, made and used
 up in one function in eleven ways (a `for` to its end, one that
 `continue`s, `break`s or `return`s, `while let` and `pop`, one or two
 `pop`s, nothing, its iterator dropped, its iterator partly by `while let`

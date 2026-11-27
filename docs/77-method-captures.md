@@ -206,7 +206,7 @@ isn't a reference to a place. Otherwise, an internal error.
 
 The adversarial tests are `tests/t/err_soundness_capture_*.t` and
 `err_capture_through_box_write.t`, and the generated family in
-`tests/generated_captures.rs`, now with the root a variable, a `&mut`
+`tests/generated/captures.rs`, now with the root a variable, a `&mut`
 parameter, `self`, a parameter declared `mut`, a reference in a variable
 or a box, and structs whose refinements relate nothing, the field to its
 sibling, the field to itself alone, the places in its parent, or its

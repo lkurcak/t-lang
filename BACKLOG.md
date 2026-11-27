@@ -113,16 +113,13 @@
 - `IntoIterator` for t-libs' `Grid` and `HashMap` and std's `Args`, so `for` takes them.
 - Doctests: the code in doc comments checked and run (`README.md`, Tests, calls them the
   natural next step).
-- The test suite's speed: run the test binaries at the same time and with mimalloc
-  everywhere; profile what the compiled and golden tests spend (888 s of CPU on 4 cores);
-  then maybe tests split into those for every platform and those for the home server only
-  (a forge decision first).
+- The test suite's speed, once the libraries are shared: profile what the compiled and golden
+  tests spend (888 s of CPU on 4 cores) and the unit tests (3 minutes on Ubuntu, 6 on
+  Windows); then maybe tests split into those for every platform and those for the home
+  server only (a forge decision first). `scripts/ci_times.py` shows where a run's time goes.
 - Homebrew: `brew upgrade t` says there's no formula named `t`; check the tap's formula name.
-- A process retrospective, beside the design ones: from the evidence (CI times and failures,
-  how long PRs wait, what CI caught that a local run didn't, sessions' corrections and lost
-  context, the `FRICTION.md`s), a few changes, each landing in a `CLAUDE.md`, forge or a
-  backlog. If it pays, a practice for every project in the owner's `CLAUDE.md`, with forge
-  reporting CI times across repos.
+- A look at the process for every project, in the owner's `CLAUDE.md`, with forge reporting
+  CI times across repos, if t-lang's (each retrospective, in its `CLAUDE.md`) pays.
 - Not decided, the owner's ideas for new programs: an embedded database (a B-tree over
   pages), an HTTP server (after an `Os` networking step), a graphical game (after FFI with
   pointers), compute shaders, a progress-bar library (once a T CLI needs one).
@@ -132,6 +129,9 @@
 
 ## Done
 
+- A first look at the process: the 32 generated families in one test binary, so they run
+  side by side (575 s to 247 s on four cores), sanitizer runs that cancel older ones,
+  `scripts/ci_times.py`, and a look at the process at each retrospective.
 - Step 102 (0.110.0): math functions of `f32` and `f64`, correctly rounded and written in T:
   `exp`, `exp2`, `exp_m1`, `ln`, `log2`, `log10`, `ln_1p`, `pow`, `sin`, `cos`, `tan`, `sinh`,
   `cosh`, `tanh`, checked against MPFR on every `f32` input; consts read in place; a refined

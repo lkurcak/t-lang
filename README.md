@@ -250,7 +250,7 @@ soundness against exhaustive evaluation over 50 assignments for each of
 512 generated questions, with two fixed seeds and both small and large
 coefficients. Reversed assumptions and atoms at `i128` limits exercise
 conservative failure too; an unproved true condition is allowed.
-`cargo test --test generated_semantics` checks integer boundary guards,
+`cargo test --test generated semantics::` checks integer boundary guards,
 all 24 declaration orders of programs combining mutation, borrowing,
 closures, refinements, and early returns, and paired valid/invalid closure
 lifetime cases. Accepted programs run and match independently calculated
