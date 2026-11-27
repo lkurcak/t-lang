@@ -423,8 +423,9 @@ fn fstring_hole(src: &str, at: usize) -> Result<(FPiece, usize), Error> {
                     Span::new(i, stop),
                     "a hole in a format string can say `:?`, for `Debug`, `:x` or `:08x`, for \
                      hexadecimal, at least 8 digits, `:05`, for decimal, at least 5 characters, \
-                     and `:<8`, `:^8` or `:>8` for a width, with a fill before the side and `?` \
-                     or `x` after, as in `:*>8x`, and nothing else",
+                     `:.3`, for a float with 3 digits after its point, and `:<8`, `:^8` or `:>8` \
+                     for a width, with a fill before the side and `?`, `x` or `.3` after, as in \
+                     `:*>8x`, and nothing else",
                 ));
             };
             i = stop;
@@ -443,7 +444,7 @@ fn fstring_hole(src: &str, at: usize) -> Result<(FPiece, usize), Error> {
 
 /// The spec of a hole of a format string, written from `from` to `stop`
 /// after its `:`, in a hole that holds `named`: `[[fill] side width]
-/// [? | x]`, or `0` and a width, then `x` or nothing. A width is 1 to
+/// [? | x | .places]`, or `0` and a width, then `x` or nothing. A width is 1 to
 /// 65535, or a variable, `w$`, whose span it gives too. `None` if it's
 /// none of those.
 fn spec(
@@ -472,7 +473,27 @@ fn spec(
         (Some(s), _) if let Some(align) = side(s) => Some((None, align, 1)),
         _ => None,
     };
+    // `.3`: how many digits after a float's point, at the end.
+    let places = |w: &str, at: usize| -> Result<Option<FmtKind>, Error> {
+        let Some(n) = w.strip_prefix('.') else {
+            return Ok(None);
+        };
+        if !digits(n) {
+            return Ok(None);
+        }
+        let most = 255;
+        match n.parse::<usize>() {
+            Ok(n) if n <= most => Ok(Some(FmtKind::Fixed(n))),
+            _ => Err(Error::syntax(
+                Span::new(at, at + w.len()),
+                format!("a float is written with at most {most} digits after its point"),
+            )),
+        }
+    };
     let Some((fill, align, at)) = pad else {
+        if let Some(kind) = places(written, from)? {
+            return Ok(Some((FmtSpec { kind, pad: None }, None)));
+        }
         // `0` and a width, with `x` or not.
         if let Some(w) = written.strip_prefix('0') {
             let (w, hex) = match w.strip_suffix('x') {
@@ -540,7 +561,10 @@ fn spec(
         "" => FmtKind::Display,
         "?" => FmtKind::Debug,
         "x" => FmtKind::Hex(0),
-        _ => return Ok(None),
+        _ => match places(after, stop - after.len())? {
+            Some(kind) => kind,
+            None => return Ok(None),
+        },
     };
     let pad = Some(Box::new(FmtPad { fill, align, width }));
     Ok(Some((FmtSpec { kind, pad }, width_at)))

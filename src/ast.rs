@@ -947,6 +947,9 @@ pub enum FmtKind {
     /// `{x:05}`: an integer in decimal, in at least 5 characters, with 0s
     /// after its sign, if it has one.
     Dec(usize),
+    /// `{x:.3}`: a float with 3 digits after the point, of its exact value
+    /// rounded there (docs/101-floats.md).
+    Fixed(usize),
 }
 
 /// A hole's width, `{x:*^8}`: its fill, if it's written, a space if not;
@@ -1005,6 +1008,7 @@ impl FmtSpec {
             FmtKind::Hex(0) => out.push('x'),
             FmtKind::Hex(n) => out.push_str(&format!("0{n}x")),
             FmtKind::Dec(n) => out.push_str(&format!("0{n}")),
+            FmtKind::Fixed(n) => out.push_str(&format!(".{n}")),
         }
         match out.is_empty() {
             true => out,

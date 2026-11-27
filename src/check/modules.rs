@@ -2447,6 +2447,11 @@ impl Rewrite<'_> {
                             let n = usize(self, n);
                             call(self, "dec", vec![borrow, n], span)
                         }
+                        // `core::fmt::fixed(&x, 3usize)`.
+                        FmtKind::Fixed(n) => {
+                            let n = usize(self, n);
+                            call(self, "fixed", vec![borrow, n], span)
+                        }
                     };
                     // `core::fmt::pad(inner, 8usize, ' ', core::fmt::Align::Right)`,
                     // its width a variable's for `{x:>w$}`.

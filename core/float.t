@@ -213,6 +213,13 @@ fn of_parts_f32(parts: dec::Parts) -> f32 {
     }
 }
 
+/// Writes `x` with `places` digits after its point: `{x:.3}` (see
+/// `fmt::Fixed`).
+#[blame_caller]
+pub fn write_fixed<W: Write>(x: f64, places: usize, w: &mut W) -> Result<(), W::Error> with W::e {
+    dec::write_fixed(parts_f64(x), places, w)
+}
+
 /// The fewest digits that read back as it, and of those the nearest: `0.1`,
 /// `1.0`, `-0.0`, `1e16`, `1.5e-7`, `inf`, `NaN`. In decimal, with at least
 /// one digit after the point, from `0.0001` up to, not including, `1e16`;

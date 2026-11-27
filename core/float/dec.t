@@ -429,10 +429,11 @@ fn shortest(m: u64, e: { e: i32 | e >= -1100 && e <= 1000 }, f: Format) -> Digit
         }
         let up = if low && high {
             let twice = sum(&r, &r);
+            // Halfway between two of the fewest digits, either reads back
+            // as it: the greater, as Rust writes it.
             match twice.cmp(&s) {
                 Ordering::Less => false,
-                Ordering::Greater => true,
-                Ordering::Equal => digit % 2 == 1,
+                _ => true,
             }
         } else {
             high
