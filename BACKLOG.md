@@ -131,7 +131,7 @@
 - Step 102 (0.110.0): math functions of `f32` and `f64`, correctly rounded and written in T:
   `exp`, `exp2`, `exp_m1`, `ln`, `log2`, `log10`, `ln_1p`, `pow`, `sin`, `cos`, `tan`, `sinh`,
   `cosh`, `tanh`, checked against MPFR on every `f32` input; consts read in place; a refined
-  `let` kept after a loop's `break`.
+  `let` kept after a loop's `break`; `t check` types less of the libraries (#161).
 - Retrospective 20 (0.109.1): no soundness hole in 0.108.0's patterns or 0.109.0's floats;
   `t check` of an empty program back to 117 ms from 180, as library functions say their
   effects; `..` in a measure's `match`, and `f32 as F`, accepted; generated tests for floats in
