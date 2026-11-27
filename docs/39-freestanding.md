@@ -98,7 +98,8 @@ void t_platform_free(void *p, size_t size, size_t align);
 A program that doesn't allocate never calls the last three, and links
 without them. As with any C compiled freestanding, the platform also
 provides `memcpy`, `memmove`, `memset` and `memcmp`, which C compilers
-call on their own, and its compiler's support library (`libgcc`,
+call on their own (Apple's clang calls `bzero` to zero memory, as others
+do `memset`), and its compiler's support library (`libgcc`,
 `compiler-rt`) if the machine needs one.
 
 The hosted target is the same runtime with these five written over the
