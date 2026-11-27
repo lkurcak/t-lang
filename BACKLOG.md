@@ -36,9 +36,10 @@
 - Keywords that are ordinary words (`sealed`, `law`, `ensures`, `invariant`, `effect`,
   `with`) as names wherever they can't be read as the keyword. t-fmt's `FRICTION.md` says
   they bite constantly; step 100 only makes the message say it's a keyword.
-- [The ML and GPU path](backlog/ml-path.md), after math functions: a matrix and small
-  neural-network library in t-libs, and an agent that learns to play a T game such as t-maze;
-  then FFI with pointers and linking shared libraries; GPU kernels later.
+- [The ML and GPU path](backlog/ml-path.md), after math functions: CPU float speed measured
+  against Rust and C and then tuned; a matrix and neural-network library in t-libs, tested on
+  MNIST from a linear model to a small residual net; an agent that learns to play a T game
+  such as t-maze; then FFI with pointers and linking shared libraries; GPU kernels later.
 - Floats, what step 101 left out (`docs/101-floats.md`): refinements of floats (measures like
   `is_finite` first, so `{ x: f64 | x.is_finite() }`), `%` (exact, as C's `fmod`), `mul_add`,
   hex float literals, a wrapper that's `Eq` and `Ord` by `total_cmp`, atomics of floats, and
