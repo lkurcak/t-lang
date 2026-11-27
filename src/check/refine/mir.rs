@@ -1239,6 +1239,11 @@ impl Walk<'_> {
             Rvalue::Unary(UnOp::Neg, o, site) => {
                 let v = self.operand(fr, o, span)?;
                 let ty = self.mir_ty(fr, dest);
+                // A float's: never a panic, and not in the logic
+                // (docs/101-floats.md).
+                if self.cx.float_like(&ty) {
+                    return Ok(Val::Other);
+                }
                 let Some(neg) = (match v {
                     Val::Int(a) => a.scale(-1),
                     _ => None,
@@ -1278,6 +1283,15 @@ impl Walk<'_> {
             Rvalue::Binary(op, l, r, site) => {
                 let a = self.operand(fr, l, span)?;
                 let b = self.operand(fr, r, span)?;
+                // Of floats: IEEE's arithmetic, which never panics, and
+                // comparisons, which say nothing the logic knows of: floats
+                // aren't in it (lemma F3 of docs/101-floats.md).
+                if self.cx.float_like(&self.operand_ty(fr, l)) {
+                    return Ok(match op.arith() {
+                        true => Val::Other,
+                        false => self.unknown(&Type::Bool),
+                    });
+                }
                 Ok(match (op, a, b) {
                     _ if self.cx.is_ord_call(*site) => self.unknown(&Type::Bool),
                     (op, a, b) if op.arith() || op.bitwise() => {
@@ -1303,6 +1317,34 @@ impl Walk<'_> {
             Rvalue::Cast(o, ty, site) => {
                 let v = self.operand(fr, o, span)?;
                 let ty = self.cx.solved(ty);
+                // To a float, from an integer: it's that number exactly if
+                // it's at most 2^p either way, `p` the bits of the float's
+                // significand, of `f32` for a type parameter, as every such
+                // integer is a float (lemma F5 of docs/101-floats.md). A
+                // float, converted, isn't in the logic, so neither is what
+                // it's converted to, nor ever proved to be.
+                if self.cx.float_like(&ty) {
+                    if let Val::Int(a) = v {
+                        let p = match ty {
+                            Type::Float(t) => t.precision(),
+                            _ => crate::types::FloatTy::F32.precision(),
+                        };
+                        let max = Lin::constant(1i128 << p);
+                        let goal = (|| {
+                            Some(Formula::and([
+                                Formula::le(&max.scale(-1)?, &a)?,
+                                Formula::le(&a, &max)?,
+                            ]))
+                        })();
+                        self.operator_proof(
+                            *site,
+                            goal,
+                            Failure::ArithmeticLimit,
+                            &format!("the converted value must be exactly a `{ty}`"),
+                        );
+                    }
+                    return Ok(Val::Other);
+                }
                 let Val::Int(a) = v else {
                     return Ok(self.unknown(&ty));
                 };
@@ -2599,7 +2641,8 @@ impl Walk<'_> {
             Const::Int(n, _) => Val::Int(Lin::constant(*n)),
             Const::Bool(b) => Val::Bool(if *b { Formula::True } else { Formula::False }),
             Const::Char(c) => Val::Int(Lin::constant(i128::from(u32::from(*c)))),
-            Const::Unit | Const::Bytes(_) | Const::Receiver(_) => Val::Other,
+            // Not in the logic (docs/101-floats.md).
+            Const::Float(..) | Const::Unit | Const::Bytes(_) | Const::Receiver(_) => Val::Other,
             // A string literal: a reference no one else has, as long as its
             // text is.
             Const::Str(text) => {
@@ -2630,7 +2673,7 @@ impl Walk<'_> {
         match o {
             Operand::Copy(p) | Operand::Move(p) => self.mir_ty(fr, p),
             Operand::Const(c) => match c {
-                Const::Int(_, t) => self.cx.solved(t),
+                Const::Int(_, t) | Const::Float(_, t) => self.cx.solved(t),
                 Const::Bool(_) => Type::Bool,
                 Const::Char(_) => Type::Char,
                 Const::Param(_) => Type::Int(IntTy::Usize),

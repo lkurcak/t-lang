@@ -40,6 +40,8 @@ pub enum Intrinsic {
     Least,
     /// `core::num::greatest`.
     Greatest,
+    /// A floating-point intrinsic (docs/101-floats.md).
+    Float(FloatOp),
     /// `core::slice::empty`, and `empty_mut`: a slice of nothing.
     EmptySlice { mutable: bool },
     /// `core::str::from_utf8_unchecked`.
@@ -83,6 +85,22 @@ pub enum Intrinsic {
     /// `std::thread::Threads::os_available`: how many threads the machine
     /// runs at once, for the program.
     ThreadsAvailable,
+}
+
+/// A floating-point intrinsic: what IEEE 754 says exactly, which T can't
+/// say in floats' own operators (docs/101-floats.md).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FloatOp {
+    /// `f32::to_bits` (`false`) or `f64::to_bits` (`true`).
+    ToBits(bool),
+    /// `f32::from_bits` or `f64::from_bits`.
+    FromBits(bool),
+    /// `core::float::sqrt`: the square root, rounded once.
+    Sqrt,
+    /// `core::float::nearest`: the float nearest an integer.
+    Nearest,
+    /// `core::float::nearest_f64`: the float nearest an `f64`.
+    NearestF64,
 }
 
 /// A method of `core::sync::Atomic`, each one sequentially consistent step.
@@ -255,6 +273,13 @@ impl Intrinsic {
             Wrap,
             Least,
             Greatest,
+            Float(FloatOp::ToBits(false)),
+            Float(FloatOp::ToBits(true)),
+            Float(FloatOp::FromBits(false)),
+            Float(FloatOp::FromBits(true)),
+            Float(FloatOp::Sqrt),
+            Float(FloatOp::Nearest),
+            Float(FloatOp::NearestF64),
             EmptySlice { mutable: false },
             EmptySlice { mutable: true },
             FromUtf8Unchecked,
@@ -354,6 +379,15 @@ impl Intrinsic {
             Wrap => "core::num::wrap",
             Least => "core::num::least",
             Greatest => "core::num::greatest",
+            Float(op) => match op {
+                FloatOp::ToBits(false) => "f32::to_bits",
+                FloatOp::ToBits(true) => "f64::to_bits",
+                FloatOp::FromBits(false) => "f32::from_bits",
+                FloatOp::FromBits(true) => "f64::from_bits",
+                FloatOp::Sqrt => "core::float::sqrt",
+                FloatOp::Nearest => "core::float::nearest",
+                FloatOp::NearestF64 => "core::float::nearest_f64",
+            },
             EmptySlice { mutable: false } => "core::slice::empty",
             EmptySlice { mutable: true } => "core::slice::empty_mut",
             FromUtf8Unchecked => "core::str::from_utf8_unchecked",

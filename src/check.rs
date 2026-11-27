@@ -672,6 +672,10 @@ pub(crate) struct Checker {
     /// checked, by node, with the type of what they compare: `Ord` calls,
     /// unless that turns out to be an integer type.
     compares: HashMap<NodeId, Type>,
+    /// The comparisons `==` and `!=`, by node, with the type of what they
+    /// compare: `Eq` calls, unless that turns out to be a floating-point
+    /// type, which IEEE's `==` compares (docs/101-floats.md).
+    equalities: HashMap<NodeId, Type>,
     /// Where each use in `info.instances` is, by its node: what function
     /// it's in is worked out from that (`no_polymorphic_recursion`).
     instance_at: HashMap<NodeId, Span>,
@@ -940,13 +944,15 @@ pub(super) struct Goal {
 
 /// An integer literal, `value`, written at `span`, of type `ty`: in an
 /// expression or a pattern. `-` of one is one too, so that the least `i8`
-/// can be written `-128`.
+/// can be written `-128`. Or a floating-point one, if `float` holds its
+/// text: then it's checked to be finite in its type (docs/101-floats.md).
 #[derive(Clone)]
 pub(super) struct Literal {
     node: NodeId,
     span: Span,
     value: i128,
     ty: Type,
+    float: Option<String>,
 }
 
 /// The symbol of the std library's `Os`, which `main` can take.
@@ -1192,6 +1198,7 @@ impl Checker {
             info: Info::default(),
             pending: Vec::new(),
             compares: HashMap::new(),
+            equalities: HashMap::new(),
             instance_at: HashMap::new(),
             ret: None,
             loops: Vec::new(),

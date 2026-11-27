@@ -2,13 +2,17 @@
 
 use crate::ast::{FmtAlign, FmtKind, FmtPad, FmtSpec, FmtWidth};
 use crate::error::{Edit, Error, Fix, Span};
-use crate::types::IntTy;
+use crate::types::{FloatTy, IntTy};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Tok {
     /// An integer literal: its value, and the type its suffix says, as
     /// in `255u8`, if it has one.
     Int(u64, Option<IntTy>),
+    /// A floating-point literal, `2.5e-3`: as written, without its `_`s
+    /// or suffix, and the type its suffix says, as in `2.5f32`, if it has
+    /// one (see docs/101-floats.md).
+    Float(String, Option<FloatTy>),
     /// `b'a'`: a byte literal, a `u8`.
     Byte(u8),
     /// `'a'`: a character literal.
@@ -137,6 +141,8 @@ impl Tok {
         let s = match self {
             Tok::Int(n, None) => return format!("`{n}`"),
             Tok::Int(n, Some(t)) => return format!("`{n}{}`", t.name()),
+            Tok::Float(x, None) => return format!("`{x}`"),
+            Tok::Float(x, Some(t)) => return format!("`{x}{}`", t.name()),
             Tok::Byte(b) => return format!("`{}`", byte_literal(*b)),
             Tok::Char(c) => return format!("`{}`", char_literal(*c)),
             Tok::Str(_) => return "a string literal".to_string(),
@@ -417,8 +423,9 @@ fn fstring_hole(src: &str, at: usize) -> Result<(FPiece, usize), Error> {
                     Span::new(i, stop),
                     "a hole in a format string can say `:?`, for `Debug`, `:x` or `:08x`, for \
                      hexadecimal, at least 8 digits, `:05`, for decimal, at least 5 characters, \
-                     and `:<8`, `:^8` or `:>8` for a width, with a fill before the side and `?` \
-                     or `x` after, as in `:*>8x`, and nothing else",
+                     `:.3`, for a float with 3 digits after its point, and `:<8`, `:^8` or `:>8` \
+                     for a width, with a fill before the side and `?`, `x` or `.3` after, as in \
+                     `:*>8x`, and nothing else",
                 ));
             };
             i = stop;
@@ -437,7 +444,7 @@ fn fstring_hole(src: &str, at: usize) -> Result<(FPiece, usize), Error> {
 
 /// The spec of a hole of a format string, written from `from` to `stop`
 /// after its `:`, in a hole that holds `named`: `[[fill] side width]
-/// [? | x]`, or `0` and a width, then `x` or nothing. A width is 1 to
+/// [? | x | .places]`, or `0` and a width, then `x` or nothing. A width is 1 to
 /// 65535, or a variable, `w$`, whose span it gives too. `None` if it's
 /// none of those.
 fn spec(
@@ -466,7 +473,27 @@ fn spec(
         (Some(s), _) if let Some(align) = side(s) => Some((None, align, 1)),
         _ => None,
     };
+    // `.3`: how many digits after a float's point, at the end.
+    let places = |w: &str, at: usize| -> Result<Option<FmtKind>, Error> {
+        let Some(n) = w.strip_prefix('.') else {
+            return Ok(None);
+        };
+        if !digits(n) {
+            return Ok(None);
+        }
+        let most = 255;
+        match n.parse::<usize>() {
+            Ok(n) if n <= most => Ok(Some(FmtKind::Fixed(n))),
+            _ => Err(Error::syntax(
+                Span::new(at, at + w.len()),
+                format!("a float is written with at most {most} digits after its point"),
+            )),
+        }
+    };
     let Some((fill, align, at)) = pad else {
+        if let Some(kind) = places(written, from)? {
+            return Ok(Some((FmtSpec { kind, pad: None }, None)));
+        }
         // `0` and a width, with `x` or not.
         if let Some(w) = written.strip_prefix('0') {
             let (w, hex) = match w.strip_suffix('x') {
@@ -534,7 +561,10 @@ fn spec(
         "" => FmtKind::Display,
         "?" => FmtKind::Debug,
         "x" => FmtKind::Hex(0),
-        _ => return Ok(None),
+        _ => match places(after, stop - after.len())? {
+            Some(kind) => kind,
+            None => return Ok(None),
+        },
     };
     let pad = Some(Box::new(FmtPad { fill, align, width }));
     Ok(Some((FmtSpec { kind, pad }, width_at)))
@@ -566,6 +596,80 @@ impl Quote {
     fn one(self) -> bool {
         matches!(self, Quote::Char | Quote::Byte)
     }
+}
+
+/// A floating-point literal at `at`, if there's one there (see
+/// docs/101-floats.md): decimal digits, then a fraction, `.` and digits,
+/// or an exponent, `e`, a sign or not, and digits, or both, and then a
+/// suffix, `f32` or `f64`, or not; or digits and a suffix alone, `1f64`.
+/// Its text, without `_`s, the type its suffix says, and where it ends.
+///
+/// A `.` right after a `.` is a tuple's field, so `t.0.1` is two fields,
+/// not `t` and `0.1`; and a `.` not followed by a digit isn't a fraction,
+/// so `1..2` is a range and `1.max(2)` a method call.
+fn float_literal(
+    src: &str,
+    at: usize,
+    before: Option<&Token>,
+) -> Result<Option<(String, Option<FloatTy>, usize)>, Error> {
+    let bytes = src.as_bytes();
+    let digits = |mut i: usize| {
+        while i < bytes.len() && (bytes[i].is_ascii_digit() || bytes[i] == b'_') {
+            i += 1;
+        }
+        i
+    };
+    if before.is_some_and(|t| t.tok == Tok::Dot) {
+        return Ok(None);
+    }
+    let mut i = digits(at);
+    let mut float = false;
+    if bytes.get(i) == Some(&b'.') && bytes.get(i + 1).is_some_and(u8::is_ascii_digit) {
+        i = digits(i + 1);
+        float = true;
+    }
+    let exponent = |i: usize| match (bytes.get(i), bytes.get(i + 1), bytes.get(i + 2)) {
+        (Some(b'e' | b'E'), Some(d), _) if d.is_ascii_digit() => Some(i + 1),
+        (Some(b'e' | b'E'), Some(b'+' | b'-'), Some(d)) if d.is_ascii_digit() => Some(i + 2),
+        _ => None,
+    };
+    if let Some(e) = exponent(i) {
+        if bytes[i] == b'E' {
+            let span = Span::new(i, i + 1);
+            return Err(Error::syntax(span, "write the exponent's `e` in lowercase")
+                .with_fix(Fix::new("write `e`", vec![Edit::replace(span, "e")])));
+        }
+        i = digits(e);
+        float = true;
+    }
+    let end_of_word = |i: usize| {
+        let mut j = i;
+        while j < bytes.len() && (bytes[j].is_ascii_alphanumeric() || bytes[j] == b'_') {
+            j += 1;
+        }
+        j
+    };
+    let word_end = end_of_word(i);
+    let suffix = match &src[i..word_end] {
+        "" => None,
+        s if FloatTy::named(s).is_some() => FloatTy::named(s),
+        // `5u8`, and `0x`, `5_000`: an integer's.
+        _ if !float => return Ok(None),
+        s => {
+            return Err(Error::syntax(
+                Span::new(i, word_end),
+                format!(
+                    "`{s}` isn't a floating-point type, so it can't be a float literal's \
+                     suffix, as `f32` is in `2.5f32`"
+                ),
+            ));
+        }
+    };
+    if !float && suffix.is_none() {
+        return Ok(None);
+    }
+    let text: String = src[at..i].chars().filter(|&c| c != '_').collect();
+    Ok(Some((text, suffix, word_end)))
 }
 
 /// Does the `'` at `at` start a character literal, rather than a
@@ -900,6 +1004,16 @@ fn lex_between(src: &str, from: usize, to: usize) -> Result<(Vec<Token>, Vec<Com
             };
             if radix != 10 {
                 i += 2;
+            }
+            if radix == 10
+                && let Some((text, suffix, end)) = float_literal(src, i, toks.last())?
+            {
+                i = end;
+                toks.push(Token {
+                    tok: Tok::Float(text, suffix),
+                    span: Span::new(start, end),
+                });
+                continue;
             }
             // Its digits: hexadecimal ones for any radix, so that `0b102`
             // says `2` isn't a binary digit rather than that `2` isn't a

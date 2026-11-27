@@ -355,13 +355,20 @@ has to fit that:
 - **The core library is written in T.** `Option`, `Result`, `Iterator` and
   the rest are checked like any program; all the checker takes on trust is
   its intrinsics, `swap`, `panic`, `least`, `greatest`, a
-  slice's few and a string's length, and the arithmetic operators. See
+  slice's few and a string's length, a float's bits, square root and
+  nearest values, and the arithmetic operators. See
   [docs/06e-core.md](docs/06e-core.md).
 - **Integers say how big they are.** `i8` to `i64`, `u8` to `u64`, `isize`
   and `usize`, and no `int`: an operator gives the number it does in ℤ, or
   panics, and never wraps; `x as u8` is the same number or a panic. What the
   checker proves of `usize` holds on 32- and 64-bit machines alike. See
   [docs/11-integers.md](docs/11-integers.md).
+- **Floats are IEEE 754's, the same everywhere.** `f32` and `f64` round
+  each operation once, in the interpreter, at compile time and in C alike,
+  and never panic; `==` and `<` are IEEE 754's, so floats are neither
+  `Eq` nor `Ord`, and `as` gives the same number or panics. They print the
+  fewest digits that read back, by code in T. See
+  [docs/101-floats.md](docs/101-floats.md).
 - **Unsafe code is marked, and small.** What the checker can't check, like
   which slots of a raw buffer hold values, is `unsafe`, an effect only an
   `unsafe` block takes away, so the trust is exactly those blocks. The
@@ -501,6 +508,7 @@ combine features in ways nobody planned for.
 | 98 | Joins that don't double: where branches meet, which one was taken is a variable of its own, `sel == i`, not a copy of everything known in it, which nested joins copied again at each level; what's said of an enum and copied to its fields is read once on the way down, where the next join read it again at each object. Found by `t fmt` written in T (28 seconds for one function, now a quarter of a second). Work counted for three, five and seven nested `if let`s | which branch was taken, named, implies what that branch knew and asserts nothing new (J1); a copy implied by what's conjoined above it leaves the same conjunction (J2) | [docs/61-proof-search.md](docs/61-proof-search.md#why-its-sound) |
 | 99 | What a path learns stays on it (a hole since 0.77.0): a refinement proved of a value in one branch was said of the value's object, which every path has, so the other branch, the code after the branches met and later iterations knew it too, and a branch that can't be taken proved anything; what's learned of a value after it's made is now said under a fact of the path that learned it. Generated: how it's learned (a `let`, an argument, an assignment, a struct's field) × where (a branch that makes it hold, one that can't be taken, an arm, an iteration, a closure) × where it's asked again (after, the other branch, later on the same path) | what's learned is said under a fact said where it's learned, known exactly after there on paths through there (K1); what's said where an object's made holds wherever it's reached (K2); T3 restated | [docs/61-proof-search.md](docs/61-proof-search.md#why-its-sound) |
 | 100 | Chains, `..` and consts in patterns: the condition of an `if` or a `while` is conditions joined by `&&`, `let`s and `bool`s, `if let Some(x) = a && x > 3 && let Some(y) = f(x) { .. } else { .. }`, each worked out only where the ones before held, what a `let` binds there in the ones after and in the block; `..` among a variant's, a tuple's or an array's values stands for the ones the others don't name, `ExprKind::If(..)`, `(a, .., z)`, `[first, ..]`; a const or a const parameter of an integer type, `bool`, `char` or `&str` in a pattern matches the value equal to it, `Some((_, CMP_PREC))`; a keyword where a name would be says it's a keyword, a parameter called as a function says it's a parameter, and a lifetime of a parameter with several says which. Found by `t fmt` written in T | a chain is the `match`es and `if`s it nests, its `else` written once, after them (L3); `..` is the `_`s it stands for, placed by one function everywhere (P1); a const covers no value, as its value isn't known while bodies are checked (P2), and the arm knows the value is the const's, as the comparison that runs decides (P3) | [docs/100-patterns.md](docs/100-patterns.md) |
+| 101 | Floats: `f32` and `f64`, IEEE 754's binary32 and binary64, each operation rounded once and none panicking; literals `2.5`, `1e-3`, `2.5f32`, inferred, with no default; `==` and `<` IEEE 754's, so a float is neither `Eq` nor `Ord`, and `total_cmp` orders them all; `as` between integers and floats the same number or a panic, proved where every value fits; a sealed `Float`, for code over both, with `floor`, `round`, `sqrt`, `min`, `max` and the rest; `Display` and `Parse` in T, on exact big numbers, the shortest digits that read back and the nearest float, and `f"{x:.3}"`; floats in `extern fn`. Not in the refinement logic | a float is its bits, so the same value as another exactly when they are (F1); IEEE 754's operations are total (F2); floats claim no law of `Eq` or `Ord`, and the logic learns nothing of them (F3, F4); `as` is proved only where every integer in range is a float exactly, and checked before C converts (F5); text in a `Big` of 4096 bits, past what any conversion makes (F6); every operation rounded once, in the interpreter, const eval and C (F7) | [docs/101-floats.md](docs/101-floats.md) |
 
 ## License
 

@@ -244,6 +244,7 @@ fn find(cx: &Checker, t: &Type, z: &str, site: Site, out: &mut Vec<Occ>) {
             Type::Effects(_) => {}
             Type::Param(..)
             | Type::Int(_)
+            | Type::Float(_)
             | Type::Nat(_)
             | Type::Const(_)
             | Type::Bool

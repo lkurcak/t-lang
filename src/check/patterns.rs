@@ -539,6 +539,7 @@ impl Checker {
         })?;
         for &value in values {
             self.literals.push(super::Literal {
+                float: None,
                 node: p.id,
                 span: p.span,
                 value,

@@ -706,6 +706,7 @@ module.exports = grammar({
 
     _expression: $ => choice(
       $.integer_literal,
+      $.float_literal,
       $.char_literal,
       $.byte_literal,
       $.string_literal,
@@ -752,6 +753,16 @@ module.exports = grammar({
       optional(/(i8|i16|i32|i64|isize|u8|u16|u32|u64|usize)/),
     )),
 
+    // `2.5`, `1e-3`, `6.02e23`, `2.5f32` or `1f64`: digits with a
+    // fraction, an exponent or both, or a float type's suffix. Not `1.`
+    // or `.5`, so `1..2` is a range; after a `.`, a tuple's field is an
+    // integer, as the lexer is told only what may come next.
+    float_literal: _ => token(choice(
+      seq(/[0-9][0-9_]*/, '.', /[0-9][0-9_]*/, optional(/e[+-]?[0-9][0-9_]*/), optional(/f32|f64/)),
+      seq(/[0-9][0-9_]*/, /e[+-]?[0-9][0-9_]*/, optional(/f32|f64/)),
+      seq(/[0-9][0-9_]*/, /f32|f64/),
+    )),
+
     // `'a'`, `'\n'`, `'\x7F'`, `'\u{20AC}'`: one character; `\x` only
     // for ASCII. Longer than a lifetime, `'a`, so the lexer takes it where
     // both could start.
@@ -793,13 +804,14 @@ module.exports = grammar({
 
     // `{p.x}`, `{n + 1}`, `{f(x):?}`, `{n:08x}` or `{s:>8}` in a format
     // string: an expression, with `:?` after it for `Debug`, `:x` or
-    // `:08x` for hexadecimal, `:05` for zeros in front, or a width, with
-    // a fill before its side and `?` or `x` after it.
+    // `:08x` for hexadecimal, `:05` for zeros in front, `:.3` for a
+    // float's digits after its point, or a width, with a fill before its
+    // side and `?`, `x` or `.3` after it.
     format_hole: $ => seq(
       token.immediate('{'),
       field('value', $._expression),
       optional(alias(
-        token(prec(1, /:([^{}"\\]?[<^>]([1-9][0-9]*|[a-zA-Z_][a-zA-Z0-9_]*\$)(\?|x)?|\?|x|0[0-9]+x?)/)),
+        token(prec(1, /:([^{}"\\]?[<^>]([1-9][0-9]*|[a-zA-Z_][a-zA-Z0-9_]*\$)(\?|x|\.[0-9]+)?|\?|x|0[0-9]+x?|\.[0-9]+)/)),
         $.format_spec,
       )),
       '}',

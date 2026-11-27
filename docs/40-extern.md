@@ -107,14 +107,14 @@ extern fn on_interrupt() {
 
 ## What crosses
 
-Only C's scalars: the integer types, `bool`, and as a result `()`
+Only C's scalars: the integer types, `f32` and `f64` (C's `float` and `double`), `bool`, and as a result `()`
 (C's `void`) and `!` (a `_Noreturn` function). `usize` and `isize` are
 `uintptr_t` and `intptr_t`, so an address crosses as a `usize`. A
 reference, a struct, an enum, a `char` can't:
 
 ```rust,error
 extern fn put(s: &str);
-// error: an `extern fn` takes only integers and `bool`s, which are what C's are, not `&str`
+// error: an `extern fn` takes only integers, floats and `bool`s, which are what C's are, not `&str`
 ```
 
 T doesn't say how it lays out anything else (docs/33-c-backend.md), and

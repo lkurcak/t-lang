@@ -479,10 +479,16 @@ impl Checker {
             // a call.
             if let Some(t) = self.compares.remove(&id) {
                 let t = self.solved(&t);
-                if t == Type::Char || self.int_like(&t) {
+                if t == Type::Char || self.int_like(&t) || self.float_like(&t) {
                     continue;
                 }
                 self.info.ord_calls.insert(id);
+            }
+            // So is `==` of floats, IEEE's.
+            if let Some(t) = self.equalities.remove(&id)
+                && self.float_like(&self.solved(&t))
+            {
+                continue;
             }
             let instance = match instance {
                 Instance::Fn(name, args) => {
@@ -953,6 +959,7 @@ fn each_annotation<'e>(e: &'e Expr, f: &mut impl FnMut(&TypeExpr), heads: &mut V
             unreachable!("rewritten when paths are resolved")
         }
         ExprKind::Int(..)
+        | ExprKind::Float(..)
         | ExprKind::Bool(_)
         | ExprKind::Char(_)
         | ExprKind::Str(_)

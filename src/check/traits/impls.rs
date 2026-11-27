@@ -33,6 +33,7 @@ impl Checker {
         };
         let reference = |m| Type::Ref(Region::Static, m, Box::new(Type::Int(IntTy::I64)));
         let witnesses: Vec<Type> = (IntTy::ALL.iter().map(|&t| Type::Int(t)))
+            .chain(crate::types::FloatTy::ALL.iter().map(|&t| Type::Float(t)))
             .chain([Type::Bool, Type::Char, Type::Unit, Type::Never, Type::Str])
             .chain([reference(false), reference(true)])
             .chain([Type::Box(Box::new(Type::Int(IntTy::I64)))])
@@ -153,8 +154,9 @@ impl Checker {
                         return Err(Error::ty(
                             def.span,
                             format!(
-                                "`{}` can't be `{tr}`: its {what} holds a `{t}`, which isn't",
-                                def.self_ty
+                                "`{}` can't be `{tr}`: its {what} holds {}, which isn't",
+                                def.self_ty,
+                                crate::types::a_value_of(&t)
                             ),
                         ));
                     }

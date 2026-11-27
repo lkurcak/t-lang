@@ -947,6 +947,9 @@ pub enum FmtKind {
     /// `{x:05}`: an integer in decimal, in at least 5 characters, with 0s
     /// after its sign, if it has one.
     Dec(usize),
+    /// `{x:.3}`: a float with 3 digits after the point, of its exact value
+    /// rounded there (docs/101-floats.md).
+    Fixed(usize),
 }
 
 /// A hole's width, `{x:*^8}`: its fill, if it's written, a space if not;
@@ -1005,6 +1008,7 @@ impl FmtSpec {
             FmtKind::Hex(0) => out.push('x'),
             FmtKind::Hex(n) => out.push_str(&format!("0{n}x")),
             FmtKind::Dec(n) => out.push_str(&format!("0{n}")),
+            FmtKind::Fixed(n) => out.push_str(&format!(".{n}")),
         }
         match out.is_empty() {
             true => out,
@@ -1560,6 +1564,7 @@ impl Expr {
     pub fn children(&self) -> Vec<&Expr> {
         match &self.kind {
             ExprKind::Int(..)
+            | ExprKind::Float(..)
             | ExprKind::Bool(_)
             | ExprKind::Char(_)
             | ExprKind::Str(_)
@@ -1902,6 +1907,11 @@ pub enum ExprKind {
     /// how it's used; monomorphisation writes it here, for the interpreter.
     /// A byte literal, `b'a'`, is one too, of type `u8`.
     Int(u64, Option<crate::types::IntTy>),
+    /// A floating-point literal, `2.5e-3`: as written, without `_`s or
+    /// suffix. Its value is the nearest of its type, worked out from how
+    /// it's used, as an integer literal's is; monomorphisation writes the
+    /// type here (see docs/101-floats.md).
+    Float(String, Option<crate::types::FloatTy>),
     Bool(bool),
     /// `'a'`: a character literal.
     Char(char),
@@ -2153,6 +2163,7 @@ fn free_vars(e: &Expr, bound: &mut Vec<String>, out: &mut Vec<String>) {
     let mut go = |e: &Expr, bound: &mut Vec<String>| free_vars(e, bound, out);
     match &e.kind {
         ExprKind::Int(..)
+        | ExprKind::Float(..)
         | ExprKind::Bool(_)
         | ExprKind::Char(_)
         | ExprKind::Str(_)

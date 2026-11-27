@@ -2479,6 +2479,13 @@ impl Checker {
         };
         match &e.kind {
             ExprKind::Int(..) => Ok(Sort::Int),
+            ExprKind::Float(..) => Err(Error::ty(
+                e.span,
+                format!(
+                    "{} can't have a float in it: floats aren't in its logic",
+                    self.pred_a()
+                ),
+            )),
             ExprKind::Bool(_) => Ok(Sort::Bool),
             // An invariant's clauses, each a `bool`.
             ExprKind::Clauses(clauses) => {
@@ -2805,6 +2812,9 @@ impl Checker {
         match &e.kind {
             ExprKind::Var(name, targs) if targs.is_empty() => {
                 match self.pred_name(e, name, scope) {
+                    Some(Named::Value(t, ..)) if self.float_like(&self.solved(&t)) => {
+                        Err(self.not_in_logic(e, name, &self.solved(&t)))
+                    }
                     Some(Named::Value(t, ..)) if self.scalar_sort(&t).is_none() => {
                         let at = self.pred_place(e, scope)?;
                         Ok(Operand::Value(self.solved(&at.ty)))
@@ -2838,6 +2848,9 @@ impl Checker {
     ) -> Result<Operand, Error> {
         let at = self.pred_place(e, scope)?;
         let t = self.solved(&at.ty);
+        if self.float_like(&t) {
+            return Err(self.not_in_logic(e, &crate::pretty::expr_text(e), &t));
+        }
         let got = match self.scalar_sort(&t) {
             Some(sort) => Operand::Sort(sort),
             None if whole => Operand::Value(t),
@@ -2875,7 +2888,24 @@ impl Checker {
 
     /// The error for `e`, written `text`, of type `t`, which isn't an
     /// integer or a `bool`, named whole in a predicate.
+    /// That `text`, a float, of type `t`, can't be named in a predicate:
+    /// floats aren't in the logic, not even whole, whose `==` would be
+    /// "the same bits", which isn't the program's `==` (lemma F4 of
+    /// docs/101-floats.md).
+    fn not_in_logic(&self, e: &Expr, text: &str, t: &Type) -> Error {
+        Error::ty(
+            e.span,
+            format!(
+                "{} can't name `{text}`, of type `{t}`: floats aren't in its logic",
+                self.pred_a()
+            ),
+        )
+    }
+
     fn not_scalar(&self, e: &Expr, text: &str, t: &Type) -> Error {
+        if self.float_like(t) {
+            return self.not_in_logic(e, text, t);
+        }
         let mut peeled = t;
         while let Type::Ref(_, _, inner) | Type::Box(inner) = peeled {
             peeled = inner;

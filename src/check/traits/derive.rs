@@ -171,8 +171,9 @@ impl Checker {
                         return Err(Error::ty(
                             derived.iter().find(|x| x.0 == k).expect("it").2,
                             format!(
-                                "`{}` can't be `{tr}`: its {what} holds a `{t}`, which isn't{why}",
-                                d.name().name
+                                "`{}` can't be `{tr}`: its {what} holds {}, which isn't{why}",
+                                d.name().name,
+                                crate::types::a_value_of(&t)
                             ),
                         ));
                     }

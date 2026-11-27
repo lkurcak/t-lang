@@ -415,6 +415,9 @@ pub(crate) enum Const {
     /// An integer, of its type: an integer type, or in generic code,
     /// maybe one that's a type parameter's.
     Int(i128, Type),
+    /// A floating-point value, of its type: a float type, or in generic
+    /// code, a type parameter's that's `Float`.
+    Float(FloatLit, Type),
     Bool(bool),
     Char(char),
     Unit,
@@ -434,6 +437,38 @@ pub(crate) enum Const {
     /// closure, or what a bound says can be called, by `&` for `Fn`, `&mut`
     /// for `FnMut`, or by value for `FnOnce`.
     Receiver(FnKind),
+}
+
+/// What a `Const::Float` is.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum FloatLit {
+    /// A literal, as written: its value is the nearest of its type
+    /// (`types::float_bits`), worked out where the type is known, so never
+    /// rounded twice.
+    Text(String),
+    /// A const's value, by its bits, of a type that's known.
+    Bits(u64),
+}
+
+impl FloatLit {
+    /// Its bits, as a `t`.
+    pub(crate) fn bits(&self, t: crate::types::FloatTy) -> u64 {
+        match self {
+            FloatLit::Text(x) => {
+                crate::types::float_bits(x, t).expect("the checker says it's finite")
+            }
+            FloatLit::Bits(b) => *b,
+        }
+    }
+}
+
+impl std::fmt::Display for FloatLit {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            FloatLit::Text(x) => f.write_str(x),
+            FloatLit::Bits(b) => write!(f, "{b:#x}"),
+        }
+    }
 }
 
 impl Operand {
@@ -477,7 +512,7 @@ impl Body {
     pub(crate) fn map_types(&mut self, f: &mut impl FnMut(&Type) -> Type) {
         fn operand(o: &mut Operand, f: &mut impl FnMut(&Type) -> Type) {
             match o {
-                Operand::Const(Const::Int(_, t)) => *t = f(t),
+                Operand::Const(Const::Int(_, t) | Const::Float(_, t)) => *t = f(t),
                 Operand::Const(Const::Fn(_, args)) => args.iter_mut().for_each(|t| *t = f(t)),
                 _ => {}
             }
@@ -729,6 +764,7 @@ fn show_op(o: &Operand) -> String {
         Operand::Move(p) => format!("move {}", show_place(p)),
         Operand::Const(c) => match c {
             Const::Int(n, t) => format!("{n}_{t}"),
+            Const::Float(x, t) => format!("{x}_{t}"),
             Const::Bool(b) => b.to_string(),
             Const::Char(c) => format!("{c:?}"),
             Const::Unit => "()".to_string(),

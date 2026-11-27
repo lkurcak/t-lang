@@ -264,6 +264,7 @@ fn vary(
             }
         }
         Type::Int(_)
+        | Type::Float(_)
         | Type::Nat(_)
         | Type::Const(_)
         | Type::Char
@@ -338,6 +339,7 @@ fn wf_into(t: &Type, adts: &Adts, outlives: &HashMap<String, Vec<Bound>>, out: &
         | Type::Unsafe
         | Type::Inferred(..)
         | Type::Int(_)
+        | Type::Float(_)
         | Type::Nat(_)
         | Type::Const(_)
         | Type::Char
@@ -398,6 +400,7 @@ pub(crate) fn type_outlives(t: &Type, r: &Region, out: &mut Vec<Bound>) {
         | Type::Unsafe
         | Type::Inferred(..)
         | Type::Int(_)
+        | Type::Float(_)
         | Type::Nat(_)
         | Type::Const(_)
         | Type::Char
@@ -680,6 +683,7 @@ impl Regions {
             }
             // No regions to relate. A `!` goes anywhere, having no values.
             (Type::Int(_), Type::Int(_))
+            | (Type::Float(_), Type::Float(_))
             | (Type::Bool, Type::Bool)
             | (Type::Char, Type::Char)
             | (Type::Str, Type::Str)

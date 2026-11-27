@@ -85,7 +85,14 @@ pub fn link_with(
                 true => name.strip_prefix('_').unwrap_or(name),
                 false => name,
             };
-            if !name.is_empty() && !NEEDS.contains(&name) && !imports.iter().any(|i| i == name) {
+            // Apple's clang zeroes memory by calling `bzero`, as others
+            // call `memset`.
+            let apple = cfg!(target_os = "macos") && name == "bzero";
+            if !name.is_empty()
+                && !NEEDS.contains(&name)
+                && !apple
+                && !imports.iter().any(|i| i == name)
+            {
                 return Err(format!(
                     "the object needs `{name}`, which isn't the platform's"
                 ));

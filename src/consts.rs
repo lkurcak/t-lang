@@ -34,6 +34,8 @@ pub(crate) const BUDGET: u64 = 1_000_000;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum Value {
     Int(i128),
+    /// A float, by its bits.
+    Float(u64),
     Bool(bool),
     Char(char),
     Unit,
@@ -54,6 +56,7 @@ impl fmt::Display for Value {
         };
         match self {
             Value::Int(n) => write!(f, "{n}"),
+            Value::Float(x) => write!(f, "{x:#x}"),
             Value::Bool(b) => write!(f, "{b}"),
             Value::Char(c) => write!(f, "{c:?}"),
             Value::Unit => f.write_str("()"),
@@ -342,6 +345,9 @@ impl Builder<'_> {
     ) -> Operand {
         let c = match (v, ty) {
             (Value::Int(n), Type::Int(t)) => mir::Const::Int(*n, Type::Int(*t)),
+            (Value::Float(x), Type::Float(t)) => {
+                mir::Const::Float(mir::FloatLit::Bits(*x), Type::Float(*t))
+            }
             (Value::Bool(b), _) => mir::Const::Bool(*b),
             (Value::Char(c), _) => mir::Const::Char(*c),
             (Value::Unit, _) => mir::Const::Unit,

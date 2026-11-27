@@ -20,6 +20,7 @@
 //! None of it is in the prelude: a module that writes or implements them
 //! says `use core::fmt::{Display, Write};`.
 
+use crate::float::write_fixed;
 use crate::num::{greatest, least, wrap, wrapping_add};
 use crate::result::Result;
 use crate::slice::Iter;
@@ -324,6 +325,25 @@ fn hex_digits<W: Write>(m: u64, width: usize, w: &mut W) -> Result<(), W::Error>
     let d = (m % 16) as u32;
     let c = if d < 10 { d + 0x30 } else { d + 0x57 };
     w.write_char(c as char)
+}
+
+/// A float written with `places` digits after its point, of its exact
+/// value rounded there, ties to even: a `{x:.3}` of an `f".."`, made with
+/// `fixed`. `{x:.2}` of `0.125` is `0.12`, of `2.675`, a little under
+/// that, `2.67`, and of `-0.001`, `-0.00`. No point if `places` is 0; at
+/// most 255 of them. An `f32`'s value is an `f64`'s, so it holds that.
+#[derive(Copy, Discard)]
+export struct Fixed { x: f64, places: usize }
+
+/// `x`, to be written with `places` digits after its point.
+export fn fixed<'a, F: Float>(x: &'a F, places: usize) -> Fixed { Fixed { x: *x as f64, places } }
+
+/// Its digits, rounded at `places` after the point.
+impl Display for Fixed {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        write_fixed(self.x, self.places, w)
+    }
 }
 
 /// An integer written in decimal, in at least `width` characters, with 0s

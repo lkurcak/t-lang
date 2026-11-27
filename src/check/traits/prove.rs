@@ -267,6 +267,11 @@ impl Checker {
                 "`{ty}` doesn't implement `{tr}`, so it isn't an integer type, which this needs{}",
                 fix(&bad)
             ),
+            Why::Float => format!(
+                "`{ty}` doesn't implement `{tr}`, so it isn't a floating-point type, which this \
+                 needs{}",
+                fix(&bad)
+            ),
             Why::TryBranch => format!(
                 "`?` needs a `Result`, an `Option` or another type that implements `{tr}`, and \
                  `{ty}` doesn't{needs}{}",
@@ -333,6 +338,14 @@ impl Checker {
             }
             // If it's still not fully known, that's reported later.
             if crate::check::unify::has_vars(&o.pred.ty) {
+                continue;
+            }
+            // A comparison of floats is IEEE's, needing neither `Eq` nor
+            // `Ord` (docs/101-floats.md): its type wasn't known when it
+            // was checked.
+            if let Why::Compare(_) = o.why
+                && self.float_like(&o.pred.ty)
+            {
                 continue;
             }
             if let Err(e) = self.prove(&o) {
@@ -426,6 +439,8 @@ pub(in crate::check) enum Why {
     Returns(String),
     /// It's an integer literal's type, or an operator's operands'.
     Integer,
+    /// What a floating-point literal is must be `Float`.
+    Float,
     /// What a `?` is of.
     TryBranch,
     /// What `.0`, a function or closure, returns, which a `?` in it

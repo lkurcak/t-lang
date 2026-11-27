@@ -2952,6 +2952,7 @@ impl Parser {
         let span = self.span();
         let kind = match self.peek().clone() {
             Tok::Int(n, suffix) => ExprKind::Int(n, suffix),
+            Tok::Float(x, suffix) => ExprKind::Float(x, suffix),
             Tok::Byte(b) => ExprKind::Int(u64::from(b), Some(crate::types::IntTy::U8)),
             Tok::Char(c) => ExprKind::Char(c),
             Tok::Str(s) => ExprKind::Str(s),
@@ -3505,6 +3506,7 @@ impl Parser {
                     "a byte string literal can't be a pattern yet; compare with `==`",
                 ));
             }
+            Tok::Float(..) => return Err(float_pattern(start)),
             Tok::Int(..) | Tok::Minus | Tok::Byte(_) | Tok::Char(_) => {
                 let (lo, a, mut end) = self.pat_int()?;
                 let kind = match self.peek() {
@@ -3696,6 +3698,9 @@ impl Parser {
             _ => {}
         }
         let neg = self.eat(&Tok::Minus);
+        if let Tok::Float(..) = self.peek() {
+            return Err(float_pattern(start));
+        }
         let Tok::Int(n, suffix) = *self.peek() else {
             return Err(self.unexpected("an integer"));
         };
@@ -3842,10 +3847,22 @@ fn no_chain(e: &Expr, what: &str) -> Result<(), Error> {
     Ok(())
 }
 
+/// That a float, at `span`, can't be a pattern: a pattern matches a value
+/// that's equal to it, and of floats `==` isn't an equivalence, as NaN
+/// isn't equal to itself (docs/101-floats.md).
+fn float_pattern(span: Span) -> Error {
+    Error::syntax(
+        span,
+        "a float can't be a pattern, as `==` of floats isn't an equivalence; bind it and compare \
+         with `if x == 1.5`",
+    )
+}
+
 fn starts_expr(tok: &Tok) -> bool {
     matches!(
         tok,
         Tok::Int(..)
+            | Tok::Float(..)
             | Tok::Byte(_)
             | Tok::Char(_)
             | Tok::Str(_)

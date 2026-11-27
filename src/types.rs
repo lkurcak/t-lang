@@ -12,6 +12,9 @@ pub enum Type {
     /// An integer type: `i8` to `i64`, `u8` to `u64`, `isize` or `usize`
     /// (see docs/11-integers.md).
     Int(IntTy),
+    /// A floating-point type, `f32` or `f64`: IEEE 754's binary32 and
+    /// binary64 (see docs/101-floats.md). Not in the refinement logic.
+    Float(FloatTy),
     Bool,
     /// A *character*: a Unicode scalar value, a number in 0 to `D7FF` or
     /// `E000` to `10FFFF` (see docs/13-strings.md). Not an integer: it has
@@ -604,6 +607,7 @@ impl Type {
             }
             Type::Array(t, n) => (&[], Some(&**t), Some(&**n)),
             Type::Int(_)
+            | Type::Float(_)
             | Type::Nat(_)
             | Type::Const(_)
             | Type::Bool
@@ -686,6 +690,7 @@ impl Type {
             Type::Tuple(ts) => Type::Tuple(ts.iter().map(f).collect()),
             Type::Proj(t, tr, name) => Type::Proj(Box::new(f(t)), tr.clone(), name.clone()),
             Type::Int(_)
+            | Type::Float(_)
             | Type::Nat(_)
             | Type::Const(_)
             | Type::Bool
@@ -939,16 +944,22 @@ impl IntTy {
         self < IntTy::U8
     }
 
-    /// Its least and greatest values, unless it's `isize` or `usize`, whose
+    /// How many bits wide it is, unless it's `isize` or `usize`, whose
     /// size depends on the machine.
-    pub fn range(self) -> Option<(i128, i128)> {
-        let bits = match self {
+    pub fn bits(self) -> Option<u32> {
+        Some(match self {
             IntTy::I8 | IntTy::U8 => 8,
             IntTy::I16 | IntTy::U16 => 16,
             IntTy::I32 | IntTy::U32 => 32,
             IntTy::I64 | IntTy::U64 => 64,
             IntTy::Isize | IntTy::Usize => return None,
-        };
+        })
+    }
+
+    /// Its least and greatest values, unless it's `isize` or `usize`, whose
+    /// size depends on the machine.
+    pub fn range(self) -> Option<(i128, i128)> {
+        let bits = self.bits()?;
         Some(match self.signed() {
             true => (-(1i128 << (bits - 1)), (1i128 << (bits - 1)) - 1),
             false => (0, (1i128 << bits) - 1),
@@ -981,10 +992,62 @@ impl IntTy {
     }
 }
 
-/// Is `name` a built-in type's: an integer type's, `bool`, `char` or
-/// `str`?
+/// A floating-point type: IEEE 754's binary32, `f32`, or binary64, `f64`.
+/// Every operator rounds its exact result to the nearest value of the
+/// type, ties to even, and none panics (see docs/101-floats.md).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum FloatTy {
+    F32,
+    F64,
+}
+
+impl FloatTy {
+    pub const ALL: [FloatTy; 2] = [FloatTy::F32, FloatTy::F64];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            FloatTy::F32 => "f32",
+            FloatTy::F64 => "f64",
+        }
+    }
+
+    /// The floating-point type called `name`, if there's one.
+    pub fn named(name: &str) -> Option<FloatTy> {
+        FloatTy::ALL.into_iter().find(|t| t.name() == name)
+    }
+
+    /// How many bits of its significand there are, the leading one
+    /// included: every integer of at most this many bits is one of its
+    /// values.
+    pub fn precision(self) -> u32 {
+        match self {
+            FloatTy::F32 => 24,
+            FloatTy::F64 => 53,
+        }
+    }
+
+    /// "an `f32`".
+    pub fn a(self) -> String {
+        format!("an `{}`", self.name())
+    }
+}
+
+/// Is `name` a built-in type's: an integer or floating-point type's,
+/// `bool`, `char` or `str`?
 pub fn is_builtin_type(name: &str) -> bool {
-    IntTy::named(name).is_some() || matches!(name, "bool" | "char" | "str")
+    IntTy::named(name).is_some()
+        || FloatTy::named(name).is_some()
+        || matches!(name, "bool" | "char" | "str")
+}
+
+/// "a `T`", or "an `i8`", "an `f64`": what a message says of a value of
+/// type `t`.
+pub fn a_value_of(t: &Type) -> String {
+    match t {
+        Type::Int(i) => i.a(),
+        Type::Float(f) => f.a(),
+        t => format!("a `{t}`"),
+    }
 }
 
 /// `a, b, c`
@@ -997,6 +1060,7 @@ impl fmt::Display for Type {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
             Type::Int(t) => f.write_str(t.name()),
+            Type::Float(t) => f.write_str(t.name()),
             Type::Bool => f.write_str("bool"),
             Type::Char => f.write_str("char"),
             Type::Str => f.write_str("str"),
@@ -1290,6 +1354,23 @@ impl Scheme {
             eqs: Vec::new(),
             effect_bounds: Vec::new(),
             ty,
+        }
+    }
+}
+
+/// The bits of the value of type `t` nearest to literal `text` (as the
+/// lexer keeps it: digits, a fraction, an exponent), ties to even: IEEE
+/// 754's rounding of a decimal, done once, from the decimal to `t`, never
+/// through another type. `None` if that's an infinity: too big for `t`.
+pub fn float_bits(text: &str, t: FloatTy) -> Option<u64> {
+    match t {
+        FloatTy::F32 => {
+            let x: f32 = text.parse().expect("a float literal");
+            x.is_finite().then(|| u64::from(x.to_bits()))
+        }
+        FloatTy::F64 => {
+            let x: f64 = text.parse().expect("a float literal");
+            x.is_finite().then(|| x.to_bits())
         }
     }
 }
