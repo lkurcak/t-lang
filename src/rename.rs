@@ -359,7 +359,7 @@ fn valid(new: &str, is_type: bool) -> Result<(), String> {
                 Err(format!("`{name}` is a built-in type"))
             }
             Tok::Ident(_) => Ok(()),
-            Tok::Int(..) => Err(format!("`{new}` isn't a name")),
+            Tok::Int(..) | Tok::Float(..) => Err(format!("`{new}` isn't a name")),
             _ if new.chars().all(|c| c.is_ascii_alphabetic()) => {
                 Err(format!("`{new}` is a keyword"))
             }
