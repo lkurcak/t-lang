@@ -154,8 +154,9 @@ impl Checker {
                         return Err(Error::ty(
                             def.span,
                             format!(
-                                "`{}` can't be `{tr}`: its {what} holds a `{t}`, which isn't",
-                                def.self_ty
+                                "`{}` can't be `{tr}`: its {what} holds {}, which isn't",
+                                def.self_ty,
+                                crate::types::a_value_of(&t)
                             ),
                         ));
                     }

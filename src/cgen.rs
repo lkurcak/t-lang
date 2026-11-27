@@ -2216,6 +2216,12 @@ pub fn compile(c: &str, out: &std::path::Path, target: crate::Target) -> Result<
             .arg("-o")
             .arg(out)
             .arg(&file)
+            // The C math library, after the program, which may import its
+            // functions (docs/40-extern.md); T's floats need none of it.
+            .args(match target {
+                crate::Target::Hosted => &["-lm"][..],
+                crate::Target::Freestanding => &[],
+            })
             .args(extra.split_whitespace())
             .output()
             .map_err(|e| match e.kind() {

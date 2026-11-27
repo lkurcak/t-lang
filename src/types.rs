@@ -1040,6 +1040,16 @@ pub fn is_builtin_type(name: &str) -> bool {
         || matches!(name, "bool" | "char" | "str")
 }
 
+/// "a `T`", or "an `i8`", "an `f64`": what a message says of a value of
+/// type `t`.
+pub fn a_value_of(t: &Type) -> String {
+    match t {
+        Type::Int(i) => i.a(),
+        Type::Float(f) => f.a(),
+        t => format!("a `{t}`"),
+    }
+}
+
 /// `a, b, c`
 pub fn comma_list<T: fmt::Display>(items: &[T]) -> String {
     let items: Vec<String> = items.iter().map(T::to_string).collect();
