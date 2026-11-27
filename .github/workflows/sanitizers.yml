@@ -1,12 +1,17 @@
 name: Sanitizers
 
 # Kept out of ci.yml, which holds the shared rust-ci call alone (forge checks
-# this); forge-config lists this file in t-lang's own_workflows.
+# this); forge-config lists this file in t-lang's own_workflows. It isn't a
+# required check, so `paths-ignore` can skip it on a change to the backlog
+# alone, which no test reads; the shared CI skips its checks on the same
+# changes from inside, since `ci / ok` is required.
 
 on:
   pull_request:
+    paths-ignore: [BACKLOG.md, "backlog/**"]
   push:
     branches: [main]
+    paths-ignore: [BACKLOG.md, "backlog/**"]
   schedule:
     - cron: "0 6 * * 1"
   workflow_dispatch:
