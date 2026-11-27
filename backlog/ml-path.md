@@ -13,12 +13,34 @@ writes are a typing rule.
 1. Floats: done, 0.109.0.
 2. Math functions in T (`exp`, `ln`, `pow`, `sin`, `cos`, `tanh`), the same on every
    machine, which libm isn't.
-3. A small CPU matrix/MLP library in t-libs, and an RL agent that learns a T game
-   (t-maze, for example) as dogfood.
-4. FFI with pointers, plus linking shared libraries (also unlocks graphics, windowing and
+3. CPU float speed, measured before it's tuned: n-body, spectral-norm, mandelbrot, a dot
+   product, and a naive and a tiled matrix multiply, in T, Rust and C on this machine; then
+   fix what the numbers show. Rust has T's float rules (no fast-math, no fusing), so it's the
+   fair comparison. Likely fixes: a target CPU option (`-O2` with no `-march` is SSE2 on
+   x86-64, so no AVX and no FMA); a proved index's check given to the C compiler as an
+   assumption, not a branch, so loops vectorise; `mul_add`, and sums in a fixed SIMD-shaped
+   order ("Fast floats" in `BACKLOG.md`). Never fast-math.
+4. MNIST: a matrix and neural-network library in t-libs, tested on MNIST, for numbers to
+   compare with others: test accuracy and seconds per epoch, beside PyTorch on one CPU
+   thread (library against library) and the same algorithm in plain Rust (language against
+   language). Each model in turn is a check of what breaks: a linear model (about 92%), an
+   MLP 784–128–10 (about 98%), a LeNet-style CNN (about 99%), a small residual net (skip
+   connections); then Fashion-MNIST, the same format and harder. Supervised and seeded, so
+   a wrong gradient shows as a wrong accuracy, unlike RL's noisy rewards.
+   - Data: a script downloads and unzips it (T has no HTTP or gzip); T reads the IDX files.
+   - Expected friction: backward passes by hand, or a small tape of operations; index
+     proofs in convolutions over shapes known only at run time (`(c * h + y) * w + x` isn't
+     linear) against fixed-size arrays, whose indices prove easily; a normal distribution
+     for initial weights (Box–Muller needs `ln` and `cos`); `f32` throughout.
+5. An RL agent that learns a T game (t-maze, for example), on the same library.
+6. FFI with pointers, plus linking shared libraries (also unlocks graphics, windowing and
    sqlite).
-5. `std::gpu` over the CUDA driver API (libcuda: `cuMemAlloc`, `cuModuleLoadData`,
+7. `std::gpu` over the CUDA driver API (libcuda: `cuMemAlloc`, `cuModuleLoadData`,
    `cuLaunchKernel`).
-6. `#[kernel]` fns compiled by the C backend to CUDA C, then NVRTC, then PTX.
+8. `#[kernel]` fns compiled by the C backend to CUDA C, then NVRTC, then PTX, with the same
+   rules as on the CPU: `--fmad=false` (CUDA fuses `a * b + c` by default) and T's own math
+   functions rather than CUDA's approximate ones. Tensor cores (bf16 and fp16; NVIDIA doesn't
+   fully say how they round or in what order they add) only through a named operation that
+   promises a bound on its error, not exact bits.
 
-The GPU comes later, once the CPU version of the RL agent is the bottleneck.
+The GPU comes later, once the CPU versions are the bottleneck.
