@@ -31,7 +31,7 @@ fn power_of_two_i(k: i64) -> f64 with {} {
         return 0.0;
     }
     let e = if k > 1023 { 1023 } else { k };
-    f64::from_bits(((e + 1023) as u64) << 52)
+    f64::from_bits((e + 1023) as u64 << 52)
 }
 
 /// `2^k`, of a `k` below 32.
@@ -45,7 +45,7 @@ fn pow2(k: { k: u32 | k < 32 }) -> u32 with {} {
 
 impl Fix {
     /// 0, of `n` limbs.
-    pub fn zero(n: { n: usize | n >= 2 && n <= 40 }) -> Fix with {} { Fix { d: [0; 40], n: n } }
+    pub fn zero(n: { n: usize | n >= 2 && n <= 40 }) -> Fix with {} { Fix { d: [0; 40], n } }
 
     /// The integer `v`.
     pub fn int(n: { n: usize | n >= 2 && n <= 40 }, v: i32) -> Fix with {} {
@@ -72,7 +72,7 @@ impl Fix {
         let mut r = *self;
         let mut carry: u32 = 1;
         for i in 0..self.n {
-            let t = (!self.d[i]) as u64 + carry as u64;
+            let t = !self.d[i] as u64 + carry as u64;
             r.d[i] = wrap(t);
             carry = (t >> 32) as u32;
         }
@@ -196,7 +196,7 @@ impl Fix {
         for i in 0..self.n {
             let lo = if i + limbs < self.n { self.d[i + limbs] } else { fill };
             let hi = if i + limbs + 1 < self.n { self.d[i + limbs + 1] } else { fill };
-            let both = ((hi as u64) << 32) | lo as u64;
+            let both = (hi as u64 << 32) | lo as u64;
             r.d[i] = wrap(both >> bits);
         }
         r
@@ -226,7 +226,11 @@ impl Fix {
         let b = x.to_bits();
         let exp = ((b >> 52) & 0x7FF) as i64;
         let frac = b & 0x000F_FFFF_FFFF_FFFF;
-        let (m, e) = if exp == 0 { (frac, -1074i64) } else { (frac | 0x0010_0000_0000_0000, exp - 1075) };
+        let (m, e) = if exp == 0 {
+            (frac, -1074i64)
+        } else {
+            (frac | 0x0010_0000_0000_0000, exp - 1075)
+        };
         let mut r = Fix::zero(n);
         let at = e + 32 * (n as i64 - 1);
         if exp >= 1023 + 31 || m == 0 {
@@ -235,7 +239,7 @@ impl Fix {
         if at < 0 {
             let s = -at;
             if s < 64 {
-                let v = m >> (s as u32);
+                let v = m >> s as u32;
                 r.d[0] = wrap(v);
                 r.d[1] = wrap(v >> 32);
             }
@@ -284,7 +288,10 @@ impl Fix {
     }
 
     /// `2^-k`, of a `k` from 0 to its bits of fraction, else 0.
-    pub fn unit_at(n: { n: usize | n >= 2 && n <= 40 }, k: { k: i64 | k >= -5000 && k <= 5000 }) -> Fix with {} {
+    pub fn unit_at(
+        n: { n: usize | n >= 2 && n <= 40 },
+        k: { k: i64 | k >= -5000 && k <= 5000 },
+    ) -> Fix with {} {
         let mut r = Fix::zero(n);
         let at = 32 * (n as i64 - 1) - k;
         if at >= 0 && at < 32 * n as i64 {
@@ -302,11 +309,7 @@ impl Fix {
             return 0;
         }
         let limb = (i / 32) as usize;
-        if limb < self.n {
-            ((self.d[limb] >> ((i % 32) as u32)) & 1) as u64
-        } else {
-            0
-        }
+        if limb < self.n { ((self.d[limb] >> (i % 32) as u32) & 1) as u64 } else { 0 }
     }
 
     /// Where its highest 1 is, of a number above 0; -1 of 0.
@@ -333,7 +336,11 @@ impl Fix {
                 return false;
             }
             let x = self.d[i];
-            let mask: u32 = if s - lowest >= 32 { 0xFFFF_FFFF } else { wrapping_sub(pow2((s - lowest) as u32), 1) };
+            let mask: u32 = if s - lowest >= 32 {
+                0xFFFF_FFFF
+            } else {
+                wrapping_sub(pow2((s - lowest) as u32), 1)
+            };
             if x & mask != 0 {
                 return true;
             }
@@ -343,7 +350,9 @@ impl Fix {
 }
 
 /// Bits `s` to `s + count` of `x`'s integer, of a `count` of at most 60.
-fn bits(x: &Fix, s: { s: i64 | s >= -20000 && s <= 20000 }, count: { c: u32 | c <= 60 }) -> u64 with {} {
+fn bits(x: &Fix, s: { s: i64 | s >= -20000 && s <= 20000 }, count: { c: u32 | c <= 60 }) -> u64
+with {}
+{
     let mut q: u64 = 0;
     for j in 0..count {
         q = wrapping_mul(q, 2) | x.bit(s + count as i64 - 1 - j as i64);
@@ -430,8 +439,12 @@ pub fn decide(
 /// `x` rounded as `decide` would if it could, of the value at the
 /// highest precision: what a slow path gives where even that can't tell,
 /// which no known input of any function needs (lemma M3).
-pub fn nearest(x: &Fix, k: { k: i64 | k >= -5000 && k <= 5000 }, negative: bool, f: Format) -> u64 with {} {
-    let a = if x.is_negative() { 0 } else {
+pub fn nearest(x: &Fix, k: { k: i64 | k >= -5000 && k <= 5000 }, negative: bool, f: Format) -> u64
+with {}
+{
+    let a = if x.is_negative() {
+        0
+    } else {
         match round(x, k, f) {
             Option::Some(a) => a,
             Option::None => 0,
@@ -512,7 +525,7 @@ pub fn clamp(k: i32, most: { m: i32 | m >= 0 }) -> { v: i32 | v >= -most && v <=
 
 /// `|k|`.
 fn abs32(k: i32) -> { v: u32 | v == k || v == -k } with {} {
-    if k < 0 { (-(k as i64)) as u32 } else { k as u32 }
+    if k < 0 { -(k as i64) as u32 } else { k as u32 }
 }
 
 /// The integer nearest `x`, ties to even, of an `|x|` below 2^31, else
@@ -524,12 +537,9 @@ pub fn nearest_int(x: f64) -> i32 with {} {
 }
 
 /// As `decide`, of a value `v` of either sign.
-fn decide_signed(
-    v: &Fix,
-    e: u32,
-    k: { k: i64 | k >= -5000 && k <= 5000 },
-    f: Format,
-) -> Option<u64> with {} {
+fn decide_signed(v: &Fix, e: u32, k: { k: i64 | k >= -5000 && k <= 5000 }, f: Format) -> Option<u64>
+with {}
+{
     if v.is_negative() { decide(&v.neg(), e, k, true, f) } else { decide(v, e, k, false, f) }
 }
 
@@ -540,7 +550,11 @@ fn nearest_signed(v: &Fix, k: { k: i64 | k >= -5000 && k <= 5000 }, f: Format) -
 
 /// `n / d`, of integers with `n` below `d`, as a `Fix` of `m` limbs: bit by
 /// bit, long division, so exact but for the bits past its last, dropped.
-fn ratio(n: u64, d: { d: u64 | d > 0 && d < 4611686018427387904 }, m: { m: usize | m >= 2 && m <= 40 }) -> Fix with {} {
+fn ratio(
+    n: u64,
+    d: { d: u64 | d > 0 && d < 4611686018427387904 },
+    m: { m: usize | m >= 2 && m <= 40 },
+) -> Fix with {} {
     let mut rem: { r: u64 | r < d } = n % d;
     let mut r = Fix::zero(m);
     let frac = 32 * (m - 1);
@@ -559,7 +573,9 @@ fn ratio(n: u64, d: { d: u64 | d > 0 && d < 4611686018427387904 }, m: { m: usize
 
 /// `x` as `m · 2^e`, `m` an integer of 53 bits, its top one set, and `e`,
 /// of a positive finite `x`.
-fn significand(x: f64) -> ({ m: u64 | m < 9007199254740992 }, { e: i64 | e >= -1200 && e <= 1000 }) with {} {
+fn significand(x: f64) -> ({ m: u64 | m < 9007199254740992 }, { e: i64 | e >= -1200 && e <= 1000 })
+with {}
+{
     let b = x.to_bits();
     let exp = ((b >> 52) % 2048) as i64;
     let frac = b % 0x0010_0000_0000_0000;
@@ -573,7 +589,7 @@ fn significand(x: f64) -> ({ m: u64 | m < 9007199254740992 }, { e: i64 | e >= -1
         if m >= 0x0010_0000_0000_0000 || m == 0 {
             break;
         }
-        m = (m % 0x0010_0000_0000_0000) * 2;
+        m = m % 0x0010_0000_0000_0000 * 2;
         e = if e > -1127 { e - 1 } else { e };
     }
     (m % 9007199254740992, e)
@@ -589,7 +605,11 @@ fn ln_fix(x: f64, n: { n: usize | n >= 2 && n <= 36 }) -> (Fix, { e: u32 | e <= 
     let (m, e0) = significand(x);
     // `m / 2^52`, or `m / 2^53` where that's above sqrt 2.
     let high = m >= 6369051672525773;
-    let d: { d: u64 | d > 0 && d <= 9007199254740992 } = if high { 9007199254740992 } else { 4503599627370496 };
+    let d: { d: u64 | d > 0 && d <= 9007199254740992 } = if high {
+        9007199254740992
+    } else {
+        4503599627370496
+    };
     let e = if high { e0 + 53 } else { e0 + 52 };
     let z = if m >= d { ratio(m - d, m + d, n) } else { ratio(d - m, m + d, n).neg() };
     let z2 = z.mul(&z);
@@ -605,7 +625,7 @@ fn ln_fix(x: f64, n: { n: usize | n >= 2 && n <= 36 }) -> (Fix, { e: u32 | e <= 
         terms = i + 1;
     }
     let ln_m = sum.mul_small(2);
-    let ea = if e < 0 { (-e) as u32 } else { e as u32 };
+    let ea = if e < 0 { -e as u32 } else { e as u32 };
     let el = ln2(n).mul_small(ea);
     let v = if e < 0 { ln_m.sub(&el) } else { ln_m.add(&el) };
     (v, 8 * terms + 2 * ea + 64)
@@ -697,7 +717,7 @@ fn ln1p_series(d: &Fix) -> (Fix, { e: u32 | e <= 2000 }) with {} {
 pub fn ln_1p(x: f64, f: Format) -> u64 with {} {
     let s = 1.0 + x;
     let bb = s - 1.0;
-    let se = (1.0 - (s - bb)) + (x - bb);
+    let se = 1.0 - (s - bb) + (x - bb);
     let mut v = Fix::zero(LOW);
     for step in 0..2u32 {
         let n = if step == 0 { LOW } else { HIGH };
@@ -762,7 +782,10 @@ pub fn exp_m1(x: f64, f: Format) -> u64 with {} {
 
 /// `e^v`, of a `Fix` `v` below 750 either way, `err` units off, as `m · 2^k`
 /// and how many units `m` is off: as `exp` of an `f64`.
-fn exp_of(v: &Fix, err: { e: u32 | e <= 200000 }) -> (Fix, { k: i32 | k >= -2000 && k <= 2000 }, { e: u32 | e <= 1000000 }) with {} {
+fn exp_of(
+    v: &Fix,
+    err: { e: u32 | e <= 200000 },
+) -> (Fix, { k: i32 | k >= -2000 && k <= 2000 }, { e: u32 | e <= 1000000 }) with {} {
     let n = v.n;
     let k = clamp(nearest_int(v.to_f64() * 1.4426950408889634), 1100);
     let ka = abs32(k);
@@ -800,7 +823,7 @@ pub fn pow(x: f64, y: f64, negative: bool, f: Format) -> u64 with {} {
         let shifted = if ey >= 0 {
             mul_u53(&l, if ey < 11 { pow2(ey as u32) as u64 } else { 1 })
         } else if ey > -2000 {
-            l.shr((-ey) as u32)
+            l.shr(-ey as u32)
         } else {
             Fix::zero(n + 2)
         };
@@ -844,9 +867,30 @@ fn isqrt(x: u64) -> { r: u64 | r < 4294967296 } with {} {
 /// so `n ≤ 34`, as `r ≥ 3`, and `2^g ≤ 32`, as `r^(2^g) < 2^53`.
 pub fn pow_exact(x: f64, y: f64, negative: bool, f: Format) -> Option<u64> with {} {
     let (m0, e0) = significand(x);
-    // `mx` odd: its trailing zeros moved into the exponent.
-    let mut mx: { m: u64 | m < 9007199254740992 } = m0;
-    let mut ex: { e: i64 | e >= -1200 && e <= 1100 } = e0;
+    let (mx, ex) = odd(m0, e0);
+    let exact = if mx == 1 { power_of_two_exp(ex, y) } else { odd_power(mx, ex, y, f) };
+    match exact {
+        Option::Some((r, e)) => {
+            // `r · 2^e`, exact: `r · 2^-64` in a `Fix`, the two limbs below
+            // its integer part.
+            let mut v = Fix::zero(LOW);
+            v.d[LOW - 3] = wrap(r);
+            v.d[LOW - 2] = wrap(r >> 32);
+            let k = if e < -4900 { -4900 } else if e > 4900 { 4900 } else { e };
+            Option::Some(nearest(&v, k + 64, negative, f))
+        },
+        Option::None => Option::None,
+    }
+}
+
+/// `m · 2^e` as `mx · 2^ex`, `mx` odd: `m`'s trailing zeros moved into the
+/// exponent.
+fn odd(
+    m: { m: u64 | m < 9007199254740992 },
+    e: { e: i64 | e >= -1200 && e <= 1000 },
+) -> ({ m: u64 | m < 9007199254740992 }, { e: i64 | e >= -1200 && e <= 1100 }) with {} {
+    let mut mx: { m: u64 | m < 9007199254740992 } = m;
+    let mut ex: { e: i64 | e >= -1200 && e <= 1100 } = e;
     for _ in 0..53u32 {
         if mx % 2 == 1 || mx == 0 {
             break;
@@ -854,87 +898,123 @@ pub fn pow_exact(x: f64, y: f64, negative: bool, f: Format) -> Option<u64> with 
         mx = mx / 2;
         ex = if ex < 1100 { ex + 1 } else { ex };
     }
-    let (r, e) = if mx == 1 && ex == 0 {
-        // `x` is -1, of which `|x|^y` is 1.
-        (1u64, 0i64)
-    } else if mx == 1 {
-        // `ex · y`, exactly, if it's an integer: `y` an integer, or below
-        // 2^20 with `y · 1024` one, as `ex` has at most 11 bits.
-        if y == y.trunc() && !(y > -1048576.0 && y < 1048576.0) {
-            (1u64, if (y > 0.0) == (ex > 0) { 4900i64 } else { -4900 })
-        } else if !(y > -1048576.0 && y < 1048576.0) || y * 1024.0 != (y * 1024.0).trunc() {
-            return Option::None;
-        } else {
-            let n = nearest_int(y * 1024.0) as i64;
-            let t = ex * n;
-            if t % 1024 != 0 {
-                return Option::None;
-            }
-            (1, t / 1024)
-        }
-    } else {
-        if !(y > 0.0 && y <= 64.0) || y * 32.0 != (y * 32.0).trunc() {
-            return Option::None;
-        }
-        let n0 = clamp(nearest_int(y * 32.0), 2048) as i64;
-        let mut n: { n: i64 | n >= 0 && n <= 2048 } = if n0 < 0 { 0 } else { n0 };
-        let mut g: { g: u32 | g <= 5 } = 5;
-        for _ in 0..5u32 {
-            if g == 0 || n % 2 == 1 || n == 0 {
-                break;
-            }
-            n = n / 2;
-            g = g - 1;
-        }
-        let div: { d: i64 | d >= 1 && d <= 32 } = if g == 0 {
-            1
-        } else if g == 1 {
-            2
-        } else if g == 2 {
-            4
-        } else if g == 3 {
-            8
-        } else if g == 4 {
-            16
-        } else {
-            32
-        };
-        let mut root = mx;
-        for _ in 0..g {
-            let s = isqrt(root);
-            if s * s != root {
-                return Option::None;
-            }
-            root = s;
-        }
-        let t = ex * n;
-        if t % div != 0 {
-            return Option::None;
-        }
-        // `r^n`, while it's at most `2^(p + 1)`.
-        let limit = 2 * f.high;
-        let mut big: { b: u64 | b <= 18014398509481984 } = 1;
-        for _ in 0..n {
-            if root == 0 || big > limit / root {
-                return Option::None;
-            }
-            big = big * root;
-        }
-        (big, t / div)
+    (mx, ex)
+}
+
+/// `(2^ex)^y = 2^(ex · y)`, as `(1, ex · y)`, if `ex · y` is an integer:
+/// `y` an integer, or below 2^20 with `y · 1024` one, as `ex` has at most
+/// 11 bits; else it's irrational, and `None`. Of `x = -1`, `ex = 0`, it's 1.
+fn power_of_two_exp(ex: { e: i64 | e >= -1200 && e <= 1100 }, y: f64) -> Option<(u64, i64)>
+with {}
+{
+    if ex == 0 {
+        return Option::Some((1, 0));
+    }
+    let small = y > -1048576.0 && y < 1048576.0;
+    if !small {
+        // An integer, as every float that big is: so big a power is past
+        // every float either way.
+        return Option::Some((1, if (y > 0.0) == (ex > 0) { 4900 } else { -4900 }));
+    }
+    if y * 1024.0 != (y * 1024.0).trunc() {
+        return Option::None;
+    }
+    let t = ex * clamp(nearest_int(y * 1024.0), 1073741824) as i64;
+    if t % 1024 != 0 { Option::None } else { Option::Some((1, t / 1024)) }
+}
+
+/// `(mx · 2^ex)^y` of an odd `mx` above 1, as `(r^n, ex · y)`, where it's a
+/// float or halfway between two (lemma M4): `y = n / 2^g` from 1/32 to 64,
+/// `mx = r^(2^g)`, `ex · y` an integer and `r^n` at most `2^(p+1)`.
+fn odd_power(
+    mx: u64,
+    ex: { e: i64 | e >= -1200 && e <= 1100 },
+    y: f64,
+    f: Format,
+) -> Option<(u64, i64)> with {} {
+    if !(y > 0.0 && y <= 64.0) || y * 32.0 != (y * 32.0).trunc() {
+        return Option::None;
+    }
+    let (n, g) = dyadic(y);
+    let root = match root_of(mx, g) {
+        Option::Some(r) => r,
+        Option::None => return Option::None,
     };
-    // `r · 2^e`, exact: `r · 2^-64` in a `Fix`, the two limbs below its
-    // integer part.
-    let mut v = Fix::zero(LOW);
-    v.d[LOW - 3] = wrap(r);
-    v.d[LOW - 2] = wrap(r >> 32);
-    let k = if e < -4900 { -4900 } else if e > 4900 { 4900 } else { e };
-    Option::Some(nearest(&v, k + 64, negative, f))
+    let t = ex * n;
+    let div = two_to_the(g);
+    if t % div != 0 {
+        return Option::None;
+    }
+    match power_within(root, n, 2 * f.high) {
+        Option::Some(big) => Option::Some((big, t / div)),
+        Option::None => Option::None,
+    }
+}
+
+/// `y`, a multiple of 1/32 from 1/32 to 64, as `n / 2^g`, `n` odd or `g` 0.
+fn dyadic(y: f64) -> ({ n: i64 | n >= 0 && n <= 2048 }, { g: u32 | g <= 5 }) with {} {
+    let n0 = clamp(nearest_int(y * 32.0), 2048) as i64;
+    let mut n: { n: i64 | n >= 0 && n <= 2048 } = if n0 < 0 { 0 } else { n0 };
+    let mut g: { g: u32 | g <= 5 } = 5;
+    for _ in 0..5u32 {
+        if g == 0 || n % 2 == 1 || n == 0 {
+            break;
+        }
+        n = n / 2;
+        g = g - 1;
+    }
+    (n, g)
+}
+
+/// `2^g`, of a `g` at most 5.
+fn two_to_the(g: { g: u32 | g <= 5 }) -> { d: i64 | d >= 1 && d <= 32 } with {} {
+    if g == 0 {
+        1
+    } else if g == 1 {
+        2
+    } else if g == 2 {
+        4
+    } else if g == 3 {
+        8
+    } else if g == 4 {
+        16
+    } else {
+        32
+    }
+}
+
+/// The `r` whose `2^g`-th power `m` is, if there's one.
+fn root_of(m: u64, g: { g: u32 | g <= 5 }) -> Option<u64> with {} {
+    let mut root = m;
+    for _ in 0..g {
+        let s = isqrt(root);
+        if s * s != root {
+            return Option::None;
+        }
+        root = s;
+    }
+    Option::Some(root)
+}
+
+/// `r^n`, if it's at most `limit`.
+fn power_within(r: u64, n: { n: i64 | n >= 0 && n <= 2048 }, limit: u64) -> Option<u64> with {} {
+    let mut big: u64 = 1;
+    for _ in 0..n {
+        if r == 0 || big > limit / r {
+            return Option::None;
+        }
+        big = big * r;
+    }
+    Option::Some(big)
 }
 
 /// `e^a` and `e^-a`, of an `a` from 2^-26 to 711, as `e^r · 2^k` and `e^-r ·
 /// 2^-k`, each within `err` units: `e^-r` is `1 / e^r`, 8 units off, and
 /// more by what `e^r` is, relatively.
-fn exp_both(a: f64, n: { n: usize | n >= 2 && n <= 34 }) -> (Fix, Fix, { k: i32 | k >= -2000 && k <= 2000 }, { e: u32 | e <= 4000000 }) with {} {
+fn exp_both(
+    a: f64,
+    n: { n: usize | n >= 2 && n <= 34 },
+) -> (Fix, Fix, { k: i32 | k >= -2000 && k <= 2000 }, { e: u32 | e <= 4000000 }) with {} {
     let (e, k, err) = exp_of(&Fix::of(n, a), 2);
     (e, recip(&e), k, 2 * err + 16)
 }
@@ -1001,28 +1081,118 @@ pub fn tanh(a: f64, negative: bool, f: Format) -> u64 with {} {
 /// the first (scripts/math/tables.c `bits 2/pi 72`): 2304 of them, more
 /// than `reduce` reads of any `f64`, 971 + 1120 + 31.
 const TWO_OVER_PI: [u32; 72] = [
-    0xA2F9836E, 0x4E441529, 0xFC2757D1, 0xF534DDC0, 0xDB629599, 0x3C439041,
-    0xFE5163AB, 0xDEBBC561, 0xB7246E3A, 0x424DD2E0, 0x06492EEA, 0x09D1921C,
-    0xFE1DEB1C, 0xB129A73E, 0xE88235F5, 0x2EBB4484, 0xE99C7026, 0xB45F7E41,
-    0x3991D639, 0x835339F4, 0x9C845F8B, 0xBDF9283B, 0x1FF897FF, 0xDE05980F,
-    0xEF2F118B, 0x5A0A6D1F, 0x6D367ECF, 0x27CB09B7, 0x4F463F66, 0x9E5FEA2D,
-    0x7527BAC7, 0xEBE5F17B, 0x3D0739F7, 0x8A5292EA, 0x6BFB5FB1, 0x1F8D5D08,
-    0x56033046, 0xFC7B6BAB, 0xF0CFBC20, 0x9AF4361D, 0xA9E39161, 0x5EE61B08,
-    0x6599855F, 0x14A06840, 0x8DFFD880, 0x4D732731, 0x06061556, 0xCA73A8C9,
-    0x60E27BC0, 0x8C6B47C4, 0x19C367CD, 0xDCE8092A, 0x8359C476, 0x8B961CA6,
-    0xDDAF44D1, 0x5719053E, 0xA5FF0705, 0x3F7E33E8, 0x32C2DE4F, 0x98327DBB,
-    0xC33D26EF, 0x6B1E5EF8, 0x9F3A1F35, 0xCAF27F1D, 0x87F12190, 0x7C7C246A,
-    0xFA6ED577, 0x2D30433B, 0x15C614B5, 0x9D19C3C2, 0xC4AD414D, 0x2C5D000C,
+    0xA2F9836E,
+    0x4E441529,
+    0xFC2757D1,
+    0xF534DDC0,
+    0xDB629599,
+    0x3C439041,
+    0xFE5163AB,
+    0xDEBBC561,
+    0xB7246E3A,
+    0x424DD2E0,
+    0x06492EEA,
+    0x09D1921C,
+    0xFE1DEB1C,
+    0xB129A73E,
+    0xE88235F5,
+    0x2EBB4484,
+    0xE99C7026,
+    0xB45F7E41,
+    0x3991D639,
+    0x835339F4,
+    0x9C845F8B,
+    0xBDF9283B,
+    0x1FF897FF,
+    0xDE05980F,
+    0xEF2F118B,
+    0x5A0A6D1F,
+    0x6D367ECF,
+    0x27CB09B7,
+    0x4F463F66,
+    0x9E5FEA2D,
+    0x7527BAC7,
+    0xEBE5F17B,
+    0x3D0739F7,
+    0x8A5292EA,
+    0x6BFB5FB1,
+    0x1F8D5D08,
+    0x56033046,
+    0xFC7B6BAB,
+    0xF0CFBC20,
+    0x9AF4361D,
+    0xA9E39161,
+    0x5EE61B08,
+    0x6599855F,
+    0x14A06840,
+    0x8DFFD880,
+    0x4D732731,
+    0x06061556,
+    0xCA73A8C9,
+    0x60E27BC0,
+    0x8C6B47C4,
+    0x19C367CD,
+    0xDCE8092A,
+    0x8359C476,
+    0x8B961CA6,
+    0xDDAF44D1,
+    0x5719053E,
+    0xA5FF0705,
+    0x3F7E33E8,
+    0x32C2DE4F,
+    0x98327DBB,
+    0xC33D26EF,
+    0x6B1E5EF8,
+    0x9F3A1F35,
+    0xCAF27F1D,
+    0x87F12190,
+    0x7C7C246A,
+    0xFA6ED577,
+    0x2D30433B,
+    0x15C614B5,
+    0x9D19C3C2,
+    0xC4AD414D,
+    0x2C5D000C,
 ];
 
 /// The bits of π/2 after its point (`bits pi/2 37`): it's 1 and these.
 const HALF_PI: [u32; 37] = [
-    0x921FB544, 0x42D18469, 0x898CC517, 0x01B839A2, 0x52049C11, 0x14CF98E8,
-    0x04177D4C, 0x76273644, 0xA29410F3, 0x1C6809BB, 0xDF2A3367, 0x9A748636,
-    0x605614DB, 0xE4BE286E, 0x9FC26ADA, 0xDAA3848B, 0xC90B6AEC, 0xC4BCFD8D,
-    0xE89885D3, 0x4C6FDAD6, 0x17FEB96D, 0xE80D6FDB, 0xDC70D7F6, 0xB5133F4B,
-    0x5D3E4822, 0xF8963FCC, 0x9250CCA3, 0xD9C8B67B, 0x8400F971, 0x42C77E0B,
-    0x31B4906C, 0x38ABA734, 0xD22C7F51, 0xFA499EBF, 0x06CABA47, 0xB9475B2C,
+    0x921FB544,
+    0x42D18469,
+    0x898CC517,
+    0x01B839A2,
+    0x52049C11,
+    0x14CF98E8,
+    0x04177D4C,
+    0x76273644,
+    0xA29410F3,
+    0x1C6809BB,
+    0xDF2A3367,
+    0x9A748636,
+    0x605614DB,
+    0xE4BE286E,
+    0x9FC26ADA,
+    0xDAA3848B,
+    0xC90B6AEC,
+    0xC4BCFD8D,
+    0xE89885D3,
+    0x4C6FDAD6,
+    0x17FEB96D,
+    0xE80D6FDB,
+    0xDC70D7F6,
+    0xB5133F4B,
+    0x5D3E4822,
+    0xF8963FCC,
+    0x9250CCA3,
+    0xD9C8B67B,
+    0x8400F971,
+    0x42C77E0B,
+    0x31B4906C,
+    0x38ABA734,
+    0xD22C7F51,
+    0xFA499EBF,
+    0x06CABA47,
+    0xB9475B2C,
     0x38C5E6AC,
 ];
 
@@ -1042,13 +1212,13 @@ fn two_over_pi(i: { i: i64 | i >= -10000 && i <= 10000 }) -> u32 with {} {
     if i < 1 {
         // The window starts before the point: what's after it, moved down.
         let shift = 1 - i;
-        return if shift >= 32 { 0 } else { wrap(two_over_pi(1) as u64 >> (shift as u32)) };
+        return if shift >= 32 { 0 } else { wrap(two_over_pi(1) as u64 >> shift as u32) };
     }
     let w = ((i - 1) / 32) as usize;
     let o = ((i - 1) % 32) as u32;
     let hi = if w < 72 { TWO_OVER_PI[w] } else { 0 };
     let lo = if w + 1 < 72 { TWO_OVER_PI[w + 1] } else { 0 };
-    wrap((((hi as u64) << 32) | lo as u64) >> (32 - o))
+    wrap(((hi as u64 << 32) | lo as u64) >> (32 - o))
 }
 
 /// `x` less the nearest multiple of π/2, of a positive finite `x`: `r`, at
@@ -1119,7 +1289,15 @@ fn normalized(v: &Fix) -> (Fix, { s: u32 | s <= 64 }) with {} {
     let a = v.abs();
     let frac = 32 * (a.n as i64 - 1);
     let top = a.top();
-    let s = if top < 0 { 64 } else if frac - 1 - top > 64 { 64 } else if frac - 1 - top < 0 { 0 } else { (frac - 1 - top) as u32 };
+    let s = if top < 0 {
+        64
+    } else if frac - 1 - top > 64 {
+        64
+    } else if frac - 1 - top < 0 {
+        0
+    } else {
+        (frac - 1 - top) as u32
+    };
     let r = a.shl(s);
     (if v.is_negative() { r.neg() } else { r }, s)
 }
