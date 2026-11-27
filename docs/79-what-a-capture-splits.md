@@ -216,7 +216,7 @@ too, when a closure writing a value of `R` counts as a source of them.
 The adversarial tests are `tests/t/err_soundness_capture_*.t`
 (`tuple_element`, `generic_field`, `carried_loop`, `carried_autoref`,
 `bindings`, `closure_param_field`, `closure_param_tuple`), and the
-generated family in `tests/generated_origins.rs`: each origin above
+generated family in `tests/generated/origins.rs`: each origin above
 (with a refined variable, parameter, `&mut` parameter, struct field,
 related fields, tuple element, generic field, nested generic field,
 closure parameter, `for`, `match`, destructuring and copy) × each way to

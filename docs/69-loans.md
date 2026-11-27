@@ -270,7 +270,7 @@ nothing doesn't.
   docs/52-loop-frames.md over the runs of the closure rather than the
   times round a loop; the borrow checker gives the "nothing else changes
   it" that a loop gets from seeing all its body.
-- `tests/generated_loans.rs` tries each loan (an explicit `&mut`, a call,
+- `tests/generated/loans.rs` tries each loan (an explicit `&mut`, a call,
   a capture by `&mut`, by `move`, given to a function, nested, a
   pattern's binding of a field, a variant's field or an array's element,
   and a closure that keeps `n()` but writes it too) at each site

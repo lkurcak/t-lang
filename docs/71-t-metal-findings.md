@@ -118,7 +118,7 @@ extern fn on_interrupt(b: u8) {
 It's refused however the body gets `alloc`: itself, through a function,
 one whose effects are inferred, a closure, a generic function, a method,
 or a trait's method whose associated effect says so
-(`tests/generated_exports.rs`). Freeing is no effect, but an export
+(`tests/generated/exports.rs`). Freeing is no effect, but an export
 frees nothing either: it's given only scalars, and a static holds only
 plain data, never a box or a list, so it owns nothing on the heap.
 
@@ -212,7 +212,7 @@ calls. An editor's rename refuses it now, as it refuses `main`.
   a string with `\x00`–`\x7F` in it is still UTF-8, and a character one
   is a Unicode scalar value, as each literal's type promises.
 
-The adversarial tests are `tests/generated_exports.rs` (64 programs:
+The adversarial tests are `tests/generated/exports.rs` (64 programs:
 an export or the platform's write, × an effect, × a way to get it, each
 checked for both targets, which must agree), `tests/t/err_extern_hook_run_hosted.t`,
 `tests/t/err_str_escape_x.t` and `err_char_escape_x.t`, and

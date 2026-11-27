@@ -296,7 +296,7 @@ fn main() with panic {
 
 The adversarial tests are `tests/t/err_soundness_callable_*.t` (and
 `err_soundness_closure_result_other_value.t`, the program above), and the
-generated family `tests/generated_summaries.rs`: one program written in
+generated family `tests/generated/summaries.rs`: one program written in
 eleven forms (a closure written in the call, made before it, moved, captured
 by another, kept in a field, a literal, either of two returns; a function by
 name, through a variable, a method), given to `call`, `twice` and

@@ -95,7 +95,7 @@ projection of it. Each rule is then a question about those places:
   isn't one: a closure given a `&mut` to what's declared of a refined type
   argument must be walked keeping it (W7), which refuses one made before.
 
-The holes, each refused now (`tests/generated_sources.rs` has them all,
+The holes, each refused now (`tests/generated/sources.rs` has them all,
 with ways that must still be accepted):
 
 - a closure that can write back where the callee looks: `&mut X`, `&mut

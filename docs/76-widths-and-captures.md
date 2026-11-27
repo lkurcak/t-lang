@@ -263,7 +263,7 @@ fn main() {
 
 The adversarial tests are `tests/t/err_soundness_capture_*.t`,
 `err_capture_*.t` and the generated family in
-`tests/generated_captures.rs`: a closure reading, changing, copying or
+`tests/generated/captures.rs`: a closure reading, changing, copying or
 moving a field of a variable, of what a `&mut` points to, or of what a
 box holds, while the function uses the field next to it, the same one,
 one further off, or the struct it's in. Each program that clashes is

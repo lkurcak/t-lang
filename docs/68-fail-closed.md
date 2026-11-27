@@ -6,7 +6,7 @@ Code: the mutability check in `src/borrowck/moves.rs`;
 `writable_inside`, `Inst::changed`, `Walk::agree_inv`,
 `Walk::check_behind`, `Walk::opaque_result` and `Walk::followed`; in
 `src/check/refine/mir.rs` `Walk::bind_ref` and `Walk::mir_drop`; and the
-generated family in `tests/generated_soundness.rs`.
+generated family in `tests/generated/soundness.rs`.
 
 Retrospective 7 found three ways to break a refinement that `t check`
 accepted, and planning this step found three more, one of them in the
@@ -227,7 +227,7 @@ where the checker can't tell, it refuses:
 Every hole of retrospectives 6 and 7 was in a product of two features,
 each tested on its own: `Cell` and pattern bindings, consumers and
 `&mut` instantiations, opaque results and refined lists. The generated
-family in `tests/generated_soundness.rs` builds each product of
+family in `tests/generated/soundness.rs` builds each product of
 
 - a position: a refined list's element given `&mut`, or a refined `Cell`
   given `&`;

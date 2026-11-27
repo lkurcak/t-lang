@@ -278,7 +278,7 @@ The adversarial tests are `tests/t/err_soundness_element_*.t`,
 `err_soundness_adapter_makes.t`, `err_soundness_item_equality_bound.t`,
 `err_soundness_closure_values.t`, `err_soundness_receiver_element.t` and
 `err_soundness_temporary_field_lent.t`, and the generated family
-`generated_writes_through_refined_places` in `tests/generated_semantics.rs`:
+`generated_writes_through_refined_places` in `tests/generated/semantics.rs`:
 six places a type argument refines, twenty ways of getting a `&mut` to
 one, each written through six ways that must keep the refinement (good)
 or be refused (bad), and given four ways to code that may write anything.

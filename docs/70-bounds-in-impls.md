@@ -2,7 +2,7 @@
 
 Code: `same_signature`, `bound_text` and `differs` in
 `src/check/traits/impls.rs`; the generated family in
-`tests/generated_bounds.rs`.
+`tests/generated/bounds.rs`.
 
 Retrospective 8 found that an impl's method could say more of its type
 parameters than its trait's method did, as long as what it said was an
@@ -203,7 +203,7 @@ unchanged: they assumed what lemma I1 now makes true.
 
 ## Tested
 
-`tests/generated_bounds.rs` builds the product of four kinds of bound (a
+`tests/generated/bounds.rs` builds the product of four kinds of bound (a
 trait, an equality, an associated effect, a closure's effects), eight
 positions (a function's own, a trait's method's and its impl's alike, an
 impl's method stronger than its trait's, or weaker, an impl's `where`, an

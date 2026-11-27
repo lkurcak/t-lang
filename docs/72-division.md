@@ -198,7 +198,7 @@ predicate, whose sums can be beyond every type's
 least `x` panics, and on the path where it didn't, `-x` is what the logic
 says it is: no fact is false there.
 
-`tests/generated_division.rs` checks quotients and remainders of values
+`tests/generated/division.rs` checks quotients and remainders of values
 from the least `i64` to the greatest by divisors of either sign against
 the host's arithmetic, that a claim one off is refused, and that what a
 remainder and a range assume pins a value down exactly when one integer

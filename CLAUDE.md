@@ -47,3 +47,17 @@ random inputs, which a fast path rounds right even with its rounding test turned
 input of each `f32` function it touches, `scripts/math/check.sh <fn> f32 all`, and millions
 of `f64` ones, `... f64 bits N` and `range`. Regenerate `tests/math/vectors.txt` with
 `scripts/math/vectors.c` if a function's inputs or answers change.
+
+## Tests
+
+A new generated family is a module of `tests/generated/` (see its `main.rs`), not a test
+binary of its own: cargo runs test binaries one after another, and a family alone in one
+leaves all but a core or two idle while it runs.
+
+## The process, at each retrospective
+
+Each retrospective looks at how the work goes as well as at the design: CI's times
+(`scripts/ci_times.py` for the trend of the test jobs, `scripts/ci_times.py RUN_ID` for where
+one run's time went), how long the last few pull requests waited and how many rounds of CI
+they took, and what CI caught that a local run didn't. A change or two comes of it, each
+landing here, in forge or on the backlog.

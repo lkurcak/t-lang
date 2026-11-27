@@ -1,4 +1,4 @@
-/* Writes the inputs tests/generated_math.rs checks, with MPFR's answers
+/* Writes the inputs tests/generated/math.rs checks, with MPFR's answers
  * (docs/102-math.md):
  *
  *     cc -O2 -pthread -Iscripts/math -o vectors scripts/math/vectors.c -lmpfr -lgmp

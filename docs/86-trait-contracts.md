@@ -261,7 +261,7 @@ file's check what the operating system says (which keeps it), as an
   (`err_soundness_trait_mut_*.t`). B1 needs both: what the impl's body
   promised at `X` is what a call learned at `T` only if the predicates
   mean the same in both, the measures the same and the names the same
-  values. `tests/generated_inherit.rs` varies what an impl may write
+  values. `tests/generated/inherit.rs` varies what an impl may write
   differently from its trait's, with the interpreter as the oracle.
 
 ## What it doesn't do
