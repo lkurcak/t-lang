@@ -3837,6 +3837,7 @@ impl Checker {
             slots: HashMap::new(),
             pinned: Vec::new(),
             deferred: HashMap::new(),
+            unset: HashSet::new(),
             returns: Vec::new(),
             call_summaries: HashMap::new(),
             callables: HashMap::new(),
@@ -4410,6 +4411,10 @@ struct Walk<'c> {
     module: usize,
     /// The refinement of each refined local, with its name.
     invariants: HashMap<NodeId, (Refinement, String)>,
+    /// The refined locals declared with no value, `let x;`: until they're
+    /// given one, nothing has their refinement, so where paths meet
+    /// (`join_with`) it isn't said of them.
+    unset: HashSet<NodeId>,
     /// What each local bound to a `&` of a place points to: `*r` is that
     /// place, which can't change while `r` can be used.
     alias: HashMap<NodeId, Place>,
@@ -6308,6 +6313,20 @@ impl Walk<'_> {
                     let had = vars.iter().flatten().next().expect("in one");
                     let n = self.fresh(self.kinds[*had as usize].clone());
                     cur.insert(p.clone(), n);
+                    // A branch that never read the local, since a loop's
+                    // head forgot it, says nothing of the value after; but
+                    // every value it's had has its refinement, which each
+                    // write proved, so the one after does too, on every
+                    // branch (lemma J2 of docs/61-proof-search.md). Not of a
+                    // local declared with no value: on a branch where it
+                    // still has none, nothing has its refinement.
+                    if vars.iter().any(Option::is_none)
+                        && p.path.is_empty()
+                        && !self.unset.contains(&p.root)
+                    {
+                        let now = self.var(n);
+                        self.assume_invariant(p.root, &now);
+                    }
                     new.push((n, vars));
                 }
             }

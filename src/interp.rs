@@ -3169,7 +3169,11 @@ impl<'p> Interp<'p, '_> {
     /// Where static `symbol` is, used, as it is, by a function that says
     /// `with global`, as must all those running.
     fn static_place(&mut self, symbol: &str) -> Ptr {
-        self.effect("global");
+        // A const's value, promoted to the one copy there is of it
+        // (`mono::promote`), is no global: it never changes.
+        if self.fns.get(symbol).is_none_or(|f| f.is_static()) {
+            self.effect("global");
+        }
         if let Some(p) = self.statics.get(symbol) {
             return p.clone();
         }

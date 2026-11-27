@@ -132,6 +132,59 @@ export sealed trait Float: Copy {
     /// which is `-0.0`.
     fn sqrt(self) -> Self;
 
+    /// e^x. Each of the math functions below gives the float nearest the
+    /// exact value, ties to even, for every input: the same bits on every
+    /// machine, and of any correct implementation (docs/102-math.md). 1 of
+    /// 0, infinity past about 709.78 (88.72 of an `f32`), 0 of minus
+    /// infinity and below about -745.13 (-103.97).
+    fn exp(self) -> Self;
+
+    /// 2^x: exactly that power of two of an integer.
+    fn exp2(self) -> Self;
+
+    /// e^x - 1, precise where `x` is near 0, where `x.exp() - 1.0` isn't.
+    fn exp_m1(self) -> Self;
+
+    /// The natural logarithm, ln x: minus infinity of `±0.0`, a NaN below
+    /// 0, 0 of 1.
+    fn ln(self) -> Self;
+
+    /// log2 x: exactly `k` of 2^k.
+    fn log2(self) -> Self;
+
+    /// log10 x: exactly `k` of 10^k.
+    fn log10(self) -> Self;
+
+    /// ln(1 + x), precise where `x` is near 0: minus infinity of -1, a NaN
+    /// below it.
+    fn ln_1p(self) -> Self;
+
+    /// x^y, as IEEE 754's `pow`, which is C's: 1 of `y = ±0` and of `x =
+    /// 1`, even where the other is a NaN; a NaN of a negative `x` and a `y`
+    /// that isn't an integer; of a negative `x` and an integer `y`, negative
+    /// where `y` is odd; exact where `x^y` is a float, and halfway ones to
+    /// even.
+    fn pow(self, y: Self) -> Self;
+
+    /// The sine, of `x` in radians, however big: a NaN of an infinity.
+    fn sin(self) -> Self;
+
+    /// The cosine, of `x` in radians.
+    fn cos(self) -> Self;
+
+    /// The tangent, of `x` in radians: never infinite, as no float is a
+    /// multiple of π/2.
+    fn tan(self) -> Self;
+
+    /// The hyperbolic sine.
+    fn sinh(self) -> Self;
+
+    /// The hyperbolic cosine.
+    fn cosh(self) -> Self;
+
+    /// The hyperbolic tangent: ±1 past about 19.1 (9.1 of an `f32`).
+    fn tanh(self) -> Self;
+
     /// The lesser of it and `other`: a NaN if either is, and `-0.0` of
     /// `0.0` and `-0.0` (IEEE 754-2019's `minimum`).
     fn min(self, other: Self) -> Self {

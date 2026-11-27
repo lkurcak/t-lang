@@ -60,6 +60,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 mod glue;
+mod promote;
 pub(crate) use glue::{glue_name, is_glue};
 
 /// A lifted, monomorphised program, ready for the interpreter.
@@ -287,6 +288,13 @@ pub fn monomorphise(prog: crate::lift::Lifted<'_>) -> Executable {
             "`{f}` was only typed, not checked in full: a program to lower is checked with \
              `check::check`, whose libraries are"
         );
+    }
+    let consts: HashSet<&str> = (program.fns.iter())
+        .filter(|f| f.is_const() && !f.is_static())
+        .map(|f| f.name.name.as_str())
+        .collect();
+    for body in mono.bodies.values_mut() {
+        promote::promote(body, &|f| consts.contains(f));
     }
     let shapes = mono.shapes();
     Executable {
