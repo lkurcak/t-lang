@@ -111,7 +111,7 @@ static uint64_t oracle(int f, int type, uint64_t xb, uint64_t yb) {
 
 /* How hard `f(x)` is to round to nearest: how many bits after the
  * rounding bit are all the opposite of it, of the exact value worked out
- * to 400 bits (0 to about 300). An exact value that close to halfway
+ * to 192 bits (0 to about 130). An exact value that close to halfway
  * between two floats needs that many more bits than the format has to
  * round. A value close to a float is easy: it rounds to that float from
  * either side. 300 of an exact halfway value, -1 of infinities, NaNs and
@@ -124,8 +124,8 @@ static int hardness(int f, int type, uint64_t xb, uint64_t yb) {
     mpfr_t x, y, r, d;
     mpfr_init2(x, prec);
     mpfr_init2(y, prec);
-    mpfr_init2(r, 400);
-    mpfr_init2(d, 400);
+    mpfr_init2(r, 192);
+    mpfr_init2(d, 192);
     if (type == F64) {
         mpfr_set_d(x, of_bits64(xb), MPFR_RNDN);
         mpfr_set_d(y, of_bits64(yb), MPFR_RNDN);

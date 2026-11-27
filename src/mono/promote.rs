@@ -8,8 +8,9 @@
 //! at every `TABLE[i]`, and the C compiler can't tell it needn't be. A
 //! const's value is plain data, which has no `Cell` (docs/36-consts.md,
 //! C4): so a body that never writes the local holding it, nor borrows it
-//! `&mut`, can't tell the value it reads from the static's, which is the
-//! same value, for the whole run (lemma P1 of docs/102-math.md).
+//! `&mut`, nor moves out of it, can't tell the value it reads from the
+//! static's, which is the same value, for the whole run (lemma P1 of
+//! docs/102-math.md).
 
 use crate::mir::{
     Body, Const, Local, LocalDecl, LocalKind, Operand, Place, Proj, Rvalue, StmtKind,
@@ -34,6 +35,8 @@ pub(super) fn promote(body: &mut Body, is_const: &dyn Fn(&str) -> bool) {
     let mut sources: Vec<Option<Source>> = vec![None; n];
     let mut assigned = vec![0usize; n];
     let mut barred = vec![false; n];
+    // Each move of all of a local into another: `.0 = move .1`.
+    let mut moves: Vec<(usize, usize)> = Vec::new();
     // Only temporaries, which hold a use's value, are promoted: not
     // parameters, the result, a closure's environment, nor variables,
     // which loop invariants may name. And only aggregates: a scalar is a
@@ -67,6 +70,22 @@ pub(super) fn promote(body: &mut Body, is_const: &dyn Fn(&str) -> bool) {
                     if let Rvalue::Ref(_, true, p) = value {
                         barred[p.local.0] = true;
                     }
+                    // A move out of it uses its value up, which a static
+                    // can't have done to it: only a move of all of it into
+                    // another temporary, which is promoted with it, keeps it
+                    // a candidate. (A copy is a read, of a `Copy` part.)
+                    let chain = place.proj.is_empty()
+                        && matches!(value, Rvalue::Use(Operand::Move(p)) if p.proj.is_empty());
+                    if chain && let Rvalue::Use(Operand::Move(p)) = value {
+                        moves.push((place.local.0, p.local.0));
+                    }
+                    if !chain {
+                        for o in value.operands() {
+                            if let Operand::Move(p) = o {
+                                barred[p.local.0] = true;
+                            }
+                        }
+                    }
                 }
                 // A pattern using it up, a refinement it must keep, and
                 // what drops it are about a value of its own.
@@ -82,25 +101,40 @@ pub(super) fn promote(body: &mut Body, is_const: &dyn Fn(&str) -> bool) {
         }
     }
     // Which const each local's value is, if it's promoted: given once, by
-    // the const or by another that's promoted, and never written after.
-    let mut of: Vec<Option<String>> = vec![None; n];
+    // the const or by another that's promoted, and never written after;
+    // and if it's moved into another, that one is promoted too, as else
+    // the move would use the static's value up.
+    let mut of: Vec<Option<String>>;
     loop {
-        let mut changed = false;
-        for i in 0..n {
-            if of[i].is_some() || barred[i] || assigned[i] != 1 {
-                continue;
+        of = vec![None; n];
+        loop {
+            let mut changed = false;
+            for i in 0..n {
+                if of[i].is_some() || barred[i] || assigned[i] != 1 {
+                    continue;
+                }
+                let c = match &sources[i] {
+                    Some(Source::Const(c)) => Some(c.clone()),
+                    Some(Source::Local(l)) => of[l.0].clone(),
+                    None => None,
+                };
+                if c.is_some() {
+                    of[i] = c;
+                    changed = true;
+                }
             }
-            let c = match &sources[i] {
-                Some(Source::Const(c)) => Some(c.clone()),
-                Some(Source::Local(l)) => of[l.0].clone(),
-                None => None,
-            };
-            if c.is_some() {
-                of[i] = c;
-                changed = true;
+            if !changed {
+                break;
             }
         }
-        if !changed {
+        let mut spoilt = false;
+        for &(to, from) in &moves {
+            if of[from].is_some() && of[to].is_none() {
+                barred[from] = true;
+                spoilt = true;
+            }
+        }
+        if !spoilt {
             break;
         }
     }
@@ -138,12 +172,11 @@ pub(super) fn promote(body: &mut Body, is_const: &dyn Fn(&str) -> bool) {
             None => p.clone(),
         }
     };
-    // A move out of the static is a copy: the value is plain data, and
-    // the static keeps it.
+    // No promoted local is moved out of, but into the next of a chain,
+    // which its own definition rewrites.
     let operand = |o: &Operand| -> Operand {
         match o {
             Operand::Copy(p) => Operand::Copy(place(p)),
-            Operand::Move(p) if refs.contains_key(&p.local.0) => Operand::Copy(place(p)),
             Operand::Move(p) => Operand::Move(place(p)),
             Operand::Const(c) => Operand::Const(c.clone()),
         }

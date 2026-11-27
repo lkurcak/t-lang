@@ -221,49 +221,17 @@ impl Fix {
     /// The value of `x`, exactly where it has no bits below `2^-F`, else
     /// its magnitude rounded down; of an `x` less than `2^31` either way,
     /// else 0. `x` is `m · 2^e`: its significand `m`, of 53 bits, put at
-    /// bit `e + F` of the integer.
+    /// bit `e + F` of the integer (`place`).
     pub fn of(n: { n: usize | n >= 2 && n <= 40 }, x: f64) -> Fix with {} {
-        let b = x.to_bits();
-        let exp = ((b >> 52) & 0x7FF) as i64;
-        let frac = b & 0x000F_FFFF_FFFF_FFFF;
-        let (m, e) = if exp == 0 {
-            (frac, -1074i64)
-        } else {
-            (frac | 0x0010_0000_0000_0000, exp - 1075)
-        };
+        let negative = x < 0.0;
+        let a = if negative { -x } else { x };
         let mut r = Fix::zero(n);
-        let at = e + 32 * (n as i64 - 1);
-        if exp >= 1023 + 31 || m == 0 {
+        if !(a < 2147483648.0) || a == 0.0 {
             return r;
         }
-        if at < 0 {
-            let s = -at;
-            if s < 64 {
-                let v = m >> s as u32;
-                r.d[0] = wrap(v);
-                r.d[1] = wrap(v >> 32);
-            }
-        } else {
-            let limb = (at / 32) as usize;
-            let bit = (at % 32) as u32;
-            let lo = (m & 0xFFFF_FFFF) * pow2(bit) as u64;
-            let hi = (m >> 32) * pow2(bit) as u64;
-            // `m · 2^bit` is `lo + hi · 2^32`: three limbs, from `limb` up.
-            let w0: u32 = wrap(lo);
-            let mid = (lo >> 32) + (hi & 0xFFFF_FFFF);
-            let w1: u32 = wrap(mid);
-            let w2: u32 = wrap((hi >> 32) + (mid >> 32));
-            if limb < n {
-                r.d[limb] = w0;
-            }
-            if limb + 1 < n {
-                r.d[limb + 1] = w1;
-            }
-            if limb + 2 < n {
-                r.d[limb + 2] = w2;
-            }
-        }
-        if b >= 0x8000_0000_0000_0000 { r.neg() } else { r }
+        let (m, e) = significand(a);
+        place(&mut r, m, e + 32 * (n as i64 - 1));
+        if negative { r.neg() } else { r }
     }
 
     /// About its value, as an `f64`, to 2^-60 of it: its three limbs from
@@ -346,6 +314,41 @@ impl Fix {
             }
         }
         false
+    }
+}
+
+/// `m`, of 53 bits at most, put at bit `at` of `r`'s integer, which is 0:
+/// what's below bit 0 dropped. `m · 2^bit`, `bit` below 32, is `lo + hi ·
+/// 2^32`, three limbs from `at / 32` up.
+fn place(
+    r: &mut Fix,
+    m: { m: u64 | m < 9007199254740992 },
+    at: { a: i64 | a >= -5000 && a <= 5000 },
+) with {} {
+    let n = r.n;
+    if at < 0 {
+        let s = -at;
+        if s < 64 {
+            let v = m >> s as u32;
+            r.d[0] = wrap(v);
+            r.d[1] = wrap(v >> 32);
+        }
+        return;
+    }
+    if at >= 32 * n as i64 {
+        return;
+    }
+    let limb = (at / 32) as usize;
+    let bit = (at % 32) as u32;
+    let lo = m % 0x1_0000_0000 * pow2(bit) as u64;
+    let hi = m / 0x1_0000_0000 * pow2(bit) as u64;
+    let mid = (lo >> 32) + hi % 0x1_0000_0000;
+    r.d[limb] = wrap(lo);
+    if limb + 1 < n {
+        r.d[limb + 1] = wrap(mid);
+    }
+    if limb + 2 < n {
+        r.d[limb + 2] = wrap((hi >> 32) + (mid >> 32));
     }
 }
 

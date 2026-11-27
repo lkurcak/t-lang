@@ -1,5 +1,6 @@
 /* Prints the constants and tables of core's math functions, as T, worked
- * out by MPFR at 400 bits and rounded once (docs/102-math.md):
+ * out by MPFR at 400 bits and rounded once (docs/102-math.md); a table's
+ * `f64`s as their bits, which are quicker to check than float literals:
  *
  *     cc -O2 -o tables scripts/math/tables.c -lmpfr -lgmp && ./tables <name>
  *
@@ -8,6 +9,7 @@
  * written with 17 significant digits, which read back as that `f64`. */
 #include <mpfr.h>
 #include <stdio.h>
+#include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 
@@ -23,11 +25,11 @@ static const char *lit(double x) {
     return b;
 }
 
-static void dd(const char *indent) {
-    double hi = mpfr_get_d(v, MPFR_RNDN);
-    mpfr_sub_d(w, v, hi, MPFR_RNDN);
-    double lo = mpfr_get_d(w, MPFR_RNDN);
-    printf("%s(%s, %s),\n", indent, lit(hi), lit(lo));
+/* `x`'s bits, as T writes a `u64` literal. */
+static void hex(double x) {
+    uint64_t b;
+    memcpy(&b, &x, 8);
+    printf("0x%016llX, ", (unsigned long long)b);
 }
 
 static void one(const char *name) {
@@ -46,7 +48,12 @@ int main(int argc, char **argv) {
             mpfr_set_si(v, j, MPFR_RNDN);
             mpfr_div_ui(v, v, 64, MPFR_RNDN);
             mpfr_exp2(v, v, MPFR_RNDN);
-            dd("    ");
+            double hi = mpfr_get_d(v, MPFR_RNDN);
+            mpfr_sub_d(w, v, hi, MPFR_RNDN);
+            printf("    ");
+            hex(hi);
+            hex(mpfr_get_d(w, MPFR_RNDN));
+            printf("\n");
         }
     } else if (strcmp(t, "ln1") == 0) {
         /* ln's first table, by the top 7 bits of the significand, `i`:
@@ -72,26 +79,32 @@ int main(int argc, char **argv) {
             mpfr_neg(v, v, MPFR_RNDN);
             double h = mpfr_get_d(v, MPFR_RNDN);
             mpfr_sub_d(w, v, h, MPFR_RNDN);
-            printf("    (%s, %s, %s),\n", lit(mpfr_get_d(c, MPFR_RNDN)), lit(h),
-                   lit(mpfr_get_d(w, MPFR_RNDN)));
+            printf("    ");
+            hex(mpfr_get_d(c, MPFR_RNDN));
+            hex(h);
+            hex(mpfr_get_d(w, MPFR_RNDN));
+            printf("\n");
             mpfr_clear(c);
         }
     } else if (strcmp(t, "ln2t") == 0) {
-        /* ln's second table, by j from -128 to 128, of u near 1 + j/2^14:
-         * c, the f64 nearest 1/(1 + j/2^14), and -ln(c). */
-        for (int j = -128; j <= 128; j++) {
+        /* ln's second table, by j from -40 to 72, of u near 1 + j/2^13:
+         * c, the f64 nearest 1/(1 + j/2^13), and -ln(c). */
+        for (int j = -40; j <= 72; j++) {
             mpfr_t c;
             mpfr_init2(c, 53);
             mpfr_set_si(v, j, MPFR_RNDN);
-            mpfr_div_2ui(v, v, 14, MPFR_RNDN);
+            mpfr_div_2ui(v, v, 13, MPFR_RNDN);
             mpfr_add_ui(v, v, 1, MPFR_RNDN);
             mpfr_ui_div(c, 1, v, MPFR_RNDN);
             mpfr_log(v, c, MPFR_RNDN);
             mpfr_neg(v, v, MPFR_RNDN);
             double h = mpfr_get_d(v, MPFR_RNDN);
             mpfr_sub_d(w, v, h, MPFR_RNDN);
-            printf("    (%s, %s, %s),\n", lit(mpfr_get_d(c, MPFR_RNDN)), lit(h),
-                   lit(mpfr_get_d(w, MPFR_RNDN)));
+            printf("    ");
+            hex(mpfr_get_d(c, MPFR_RNDN));
+            hex(h);
+            hex(mpfr_get_d(w, MPFR_RNDN));
+            printf("\n");
             mpfr_clear(c);
         }
     } else if (strcmp(t, "sincos") == 0) {
@@ -106,8 +119,12 @@ int main(int argc, char **argv) {
             mpfr_sub_d(s, s, sh, MPFR_RNDN);
             double ch = mpfr_get_d(c, MPFR_RNDN);
             mpfr_sub_d(c, c, ch, MPFR_RNDN);
-            printf("    (%s, %s, %s, %s),\n", lit(sh), lit(mpfr_get_d(s, MPFR_RNDN)), lit(ch),
-                   lit(mpfr_get_d(c, MPFR_RNDN)));
+            printf("    ");
+            hex(sh);
+            hex(mpfr_get_d(s, MPFR_RNDN));
+            hex(ch);
+            hex(mpfr_get_d(c, MPFR_RNDN));
+            printf("\n");
             mpfr_clears(s, c, a, (mpfr_ptr)0);
         }
     } else if (strcmp(t, "bits") == 0 && argc > 3) {

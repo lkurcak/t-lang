@@ -7,10 +7,10 @@
    full). In a private function, either the rest is inferred beside a written `e`, or an `F:
    FnMut(..)` bound that names no effect gets an inferred one (see "Generic helpers over
    closures" in t-fmt's `FRICTION.md`).
-1. Step 102, math functions in T: `exp`, `ln`, `log2`, `pow`, `sin`, `cos`, `tanh` and the
-   rest, of `F: Float`, written over IEEE 754's operations so they're the same on every
-   machine, which the C library's aren't (glibc's `cbrt(-27.0)` is `-3.0000000000000004`); then
-   the [ML and GPU path](backlog/ml-path.md).
+1. Step 103, the rest of the math functions, correctly rounded on step 102's machinery
+   (`docs/102-math.md`): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`
+   (glibc's `cbrt(-27.0)` is `-3.0000000000000004`) and `hypot`, then `sin_pi` and `cos_pi`;
+   then the [ML and GPU path](backlog/ml-path.md).
 
 ## Later
 
@@ -43,6 +43,9 @@
   faster text (Ryu to write, Eisel-Lemire to read past the fast path: today reading 17 digits
   takes the interpreter about 160 ms). A posit type, if machines get them, would be `Eq` and
   `Ord`, beside `Float` under a shared supertrait.
+- The logic can't bound `2 * i * (2 * i + 1)` from `i < 1000`, a product of two linear terms
+  in one variable, though it bounds `i * i`; and the message's "known here" leaves out the
+  range it did know. Found in step 102 (`sincos` in `core/float/fix.t` works around it).
 - Checking long functions: a `main` of 4,129 lines of `show(&mut out, "..")?;` took 38 GB and
   over five minutes before it was stopped, and an array literal's check grows faster than its
   length (2,000 elements 0.4 s, 4,000 1 s, 11,000 16 s). Found writing step 101's generated
@@ -125,6 +128,10 @@
 
 ## Done
 
+- Step 102 (0.110.0): math functions of `f32` and `f64`, correctly rounded and written in T:
+  `exp`, `exp2`, `exp_m1`, `ln`, `log2`, `log10`, `ln_1p`, `pow`, `sin`, `cos`, `tan`, `sinh`,
+  `cosh`, `tanh`, checked against MPFR on every `f32` input; consts read in place; a refined
+  `let` kept after a loop's `break`.
 - Retrospective 20 (0.109.1): no soundness hole in 0.108.0's patterns or 0.109.0's floats;
   `t check` of an empty program back to 117 ms from 180, as library functions say their
   effects; `..` in a measure's `match`, and `f32 as F`, accepted; generated tests for floats in
@@ -144,5 +151,3 @@
   and `match`es. A function of t-fmt took 28 seconds to check, now a quarter of one.
 - Step 97 (0.107.1, #149): a bound an associated effect hangs on is decided with every impl,
   derived ones too, the same in every package (a hole since 0.107.0); three crashes fixed.
-- Step 96 (0.107.0, #148): an impl's associated effect can hang on a bound, so `enumerate` of
-  a bounded iterator can't panic.

@@ -348,10 +348,13 @@ fn check_with(
     cx.info.lengths = (cx.modules.lengths.iter())
         .filter_map(|(&id, &(i, _))| Some((id, cx.fn_symbols.get(i)?.clone())))
         .collect();
-    // Once it all checks, what each const is (see `crate::consts`).
+    // Once it all checks, what each const is (see `crate::consts`). Of a
+    // check alone, the program's: what a library's are matters only to
+    // running a program, and they never fail; those the program's need
+    // are worked out as they're needed.
     if result.is_ok() {
         let consts: Vec<crate::consts::Const> = (cx.fns.iter())
-            .filter(|f| f.konst)
+            .filter(|f| f.konst && (full || !cx.modules.in_library(f.module)))
             .map(|f| {
                 let Type::Fn(sig) = &f.scheme.ty else {
                     unreachable!("a const is a function of no parameters to the checker")
@@ -896,6 +899,9 @@ pub(crate) struct Checker {
     /// The library functions whose bodies were only typed, by `FnId`, in
     /// the order they were: `finish_library_bodies` checks them in full.
     typed_only: Vec<usize>,
+    /// Of `typed_only`, those not even typed, as they have no type
+    /// parameters (`fn_body`).
+    untyped: Vec<usize>,
     /// What `package_passes` set for each package checked, by its root
     /// module: so a library body can be checked in full later, as if then.
     package_contexts: Vec<(usize, PackageContext)>,
@@ -1266,6 +1272,7 @@ impl Checker {
             inferring: HashSet::new(),
             typing_libraries: false,
             typed_only: Vec::new(),
+            untyped: Vec::new(),
             package_contexts: Vec::new(),
             tests: Vec::new(),
             tests_from: 0,
@@ -1810,6 +1817,16 @@ impl Checker {
             };
             let notes = self.info.notes.len();
             let full = !(self.typing_libraries && self.only_typed(f, FnId(i)));
+            // Of a library function with no type parameters, only typed, a
+            // program's checking sees nothing the body's typing gives: every
+            // call it makes is at type arguments fixed in its body, so it's
+            // no part of polymorphic recursion, and its closures are its
+            // own. So it isn't even typed until it's checked in full.
+            if !full && self.fns[i].scheme.params.is_empty() && f.generics.consts.is_empty() {
+                self.typed_only.push(i);
+                self.untyped.push(i);
+                return Ok(());
+            }
             let result = self.body(f, FnId(i), full);
             self.finish_notes(notes);
             if !full {
@@ -1826,17 +1843,23 @@ impl Checker {
     /// Whether only the types of `f`'s body, whose id is `id`, are checked
     /// when the libraries are for `check_typed` (see `Libraries`): a library
     /// function's, unless a program's checking sees something of its body
-    /// other than its types: if its effects are inferred, if it's a const or
-    /// a static, whose value is worked out, a measure, whose body is in the
-    /// logic, or if it returns an opaque type, which stands for what its
-    /// body returns. What its types give, a program's checking sees: the
+    /// other than its types: if its effects are inferred, if it's an
+    /// exported const or a static, whose value the logic knows, a measure,
+    /// whose body is in the logic, or if it returns an opaque type, which
+    /// stands for what its body returns. (A check alone works out only the
+    /// program's consts' values, and those they need, `check_with`.) What its types give, a program's checking sees: the
     /// calls the body makes, at which type arguments, which polymorphic
     /// recursion is about (`no_polymorphic_recursion`), and its closures'
     /// types, with their effects, as far as what the body says of them,
     /// unproved.
     fn only_typed(&self, f: &FnDecl, id: FnId) -> bool {
+        // A library's const that isn't exported is one no program can
+        // name, so what's known of it is of its library's bodies alone; but
+        // a static is a place a program may reach, which its library's
+        // functions read.
+        let seen_const = f.is_const() && (f.is_static() || f.vis.is_export());
         if !self.modules.in_library(f.module)
-            || f.is_const()
+            || seen_const
             || f.measure.is_some()
             || self.inferring.contains(&id.0)
         {
@@ -1857,6 +1880,7 @@ impl Checker {
     /// program's.
     fn finish_library_bodies(&mut self, prog: &Program) -> Result<(), Error> {
         let typed = std::mem::take(&mut self.typed_only);
+        self.untyped.clear();
         if typed.is_empty() {
             return Ok(());
         }
@@ -2693,15 +2717,21 @@ mod tests {
 
     /// What a program's checking sees of the libraries (`seen`), or also
     /// what running it needs of them: MIR and proofs.
-    fn libraries_known(cx: &Checker, seen: bool) -> Vec<String> {
+    fn libraries_known(cx: &Checker, seen: bool, untyped: &[Span]) -> Vec<String> {
         let mut out = cx.library_part(cx);
         let mut sorted = |mut v: Vec<String>| {
             v.sort();
             out.extend(v);
         };
         let at = |id| cx.instance_at.get(id);
+        let in_untyped = |id| {
+            at(id).is_some_and(|s: &Span| {
+                (untyped.iter()).any(|b| b.start <= s.start && s.end <= b.end)
+            })
+        };
         sorted(
             (cx.info.instances.iter())
+                .filter(|(id, _)| !in_untyped(id))
                 .map(|(id, i)| format!("instance {id:?} {i:?} at {:?}", at(id)))
                 .collect(),
         );
@@ -2711,9 +2741,18 @@ mod tests {
                 .map(|(f, t)| format!("inferred {f} {t:?}"))
                 .collect(),
         );
+        // A library's const that isn't exported, no program sees, so it's
+        // only typed until the libraries are finished (`only_typed`).
+        let seen_const = |c: &String| {
+            !seen
+                || (cx.fns.iter()).any(|f| {
+                    &f.symbol == c && (f.is_static || f.level == crate::ast::Level::Export)
+                })
+        };
         sorted(
             cx.const_values
                 .iter()
+                .filter(|(c, _)| seen_const(c))
                 .map(|(c, k)| format!("const {c} {k:?}"))
                 .collect(),
         );
@@ -2759,13 +2798,25 @@ mod tests {
             "only {} typed",
             typed.typed_only.len()
         );
-        // What a program's checking sees is there before they're finished.
-        let seen = libraries_known(&typed, true);
-        same(&libraries_known(&at_once, true), &seen, "only typed");
+        // What a program's checking sees is there before they're finished:
+        // but the calls in the bodies not even typed, which are no part of
+        // polymorphic recursion, as they have no type parameters.
+        let untyped: Vec<Span> = typed.untyped.iter().map(|&i| typed.fns[i].body).collect();
+        assert!(untyped.len() > 100, "only {} not typed", untyped.len());
+        let seen = libraries_known(&typed, true, &untyped);
+        same(
+            &libraries_known(&at_once, true, &untyped),
+            &seen,
+            "only typed",
+        );
         let mut finished = typed;
         finished.finish_library_bodies(&typed_prog).unwrap();
-        let known = libraries_known(&finished, false);
-        same(&libraries_known(&at_once, false), &known, "finished later");
+        let known = libraries_known(&finished, false, &[]);
+        same(
+            &libraries_known(&at_once, false, &[]),
+            &known,
+            "finished later",
+        );
     }
 
     /// A library function whose effects are inferred is checked in full on

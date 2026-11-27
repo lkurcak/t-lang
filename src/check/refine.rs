@@ -6317,7 +6317,7 @@ impl Walk<'_> {
                     // head forgot it, says nothing of the value after; but
                     // every value it's had has its refinement, which each
                     // write proved, so the one after does too, on every
-                    // branch (lemma J2 of docs/61-proof-search.md). Not of a
+                    // branch (lemma J3 of docs/61-proof-search.md). Not of a
                     // local declared with no value: on a branch where it
                     // still has none, nothing has its refinement.
                     if vars.iter().any(Option::is_none)
