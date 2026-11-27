@@ -128,7 +128,7 @@
 - Retrospective 20 (0.109.1): no soundness hole in 0.108.0's patterns or 0.109.0's floats;
   `t check` of an empty program back to 117 ms from 180, as library functions say their
   effects; `..` in a measure's `match`, and `f32 as F`, accepted; generated tests for floats in
-  every place a value can be and for what's learned on one path of the new patterns.
+  every place a value can be and for what's learned on one path of the new patterns (#160).
 - Step 101 (0.109.0): floats, `f32` and `f64`: IEEE 754's arithmetic, literals, comparisons
   (neither `Eq` nor `Ord`), `as` the same number or a panic, a sealed `Float`, and `Display`,
   `Parse` and `{x:.3}` written in T on exact big numbers, the same in the interpreter and C.
