@@ -38,3 +38,12 @@ The language's decisions are in each step's doc, `docs/NN-*.md`, under its own
   inferred, so it's checked in full on every `t check` rather than only typed:
   `core::float::dec`'s took an empty program's check from about 100 ms to 180. The test
   `library_functions_say_their_effects` lists any that don't.
+
+## Math functions
+
+A change to `core/float/math.t` or `core/float/fix.t` is checked against MPFR before it
+merges, as CI can't tell a fast path that's a little off (its vectors are the hardest of
+random inputs, which a fast path rounds right even with its rounding test turned off): every
+input of each `f32` function it touches, `scripts/math/check.sh <fn> f32 all`, and millions
+of `f64` ones, `... f64 bits N` and `range`. Regenerate `tests/math/vectors.txt` with
+`scripts/math/vectors.c` if a function's inputs or answers change.

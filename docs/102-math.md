@@ -159,9 +159,16 @@ at the format's precision:
   powers of two, negative `x`, and every special value against every
   other.
 
-The tests carry inputs MPFR found hardest of each function, which the
-slow path decides, each with MPFR's answer, and run them in the
-interpreter and natively (`tests/generated_math.rs`).
+The tests carry inputs MPFR found hardest of each function, among 300
+million drawn at random, which the slow path decides, each with MPFR's
+answer, and run them in the interpreter and natively
+(`tests/generated_math.rs`). They catch a table entry or a term of a
+series wrong, and `pow_exact` left out; but not a fast path's rounding
+test turned off, as even the hardest of random inputs are rounded right
+by a fast path that accurate. Of an `f32`, the check of every input
+does; of an `f64`, only the hardest inputs known would, which searches
+built for it find. So a change to the functions is checked against MPFR
+before it merges (`CLAUDE.md`).
 
 ## Speed
 
