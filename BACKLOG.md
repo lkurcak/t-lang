@@ -108,6 +108,11 @@
   then maybe tests split into those for every platform and those for the home server only
   (a forge decision first).
 - Homebrew: `brew upgrade t` says there's no formula named `t`; check the tap's formula name.
+- A process retrospective, beside the design ones: from the evidence (CI times and failures,
+  how long PRs wait, what CI caught that a local run didn't, sessions' corrections and lost
+  context, the `FRICTION.md`s), a few changes, each landing in a `CLAUDE.md`, forge or a
+  backlog. If it pays, a practice for every project in the owner's `CLAUDE.md`, with forge
+  reporting CI times across repos.
 - Not decided, the owner's ideas for new programs: an embedded database (a B-tree over
   pages), an HTTP server (after an `Os` networking step), a graphical game (after FFI with
   pointers), compute shaders, a progress-bar library (once a T CLI needs one).
