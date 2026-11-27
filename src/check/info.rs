@@ -33,8 +33,12 @@ pub struct Info {
     pub literals: HashMap<NodeId, Type>,
     /// One per name in the program that means something: variables where
     /// they're bound and where they're used, functions, types, fields and
-    /// variants. In no particular order.
-    pub notes: Vec<Note>,
+    /// variants. In no particular order. The packages' own, not the
+    /// libraries', which are in `library_notes` (see `notes`).
+    pub(crate) own_notes: Vec<Note>,
+    /// The libraries' notes, as `own_notes` are the packages': the same in
+    /// every program, so shared, not copied with the rest for each one.
+    pub(crate) library_notes: std::sync::Arc<Vec<Note>>,
     /// The type arguments of each use of a generic function, struct or enum,
     /// by its node (see `ast::NodeId`): the expression that names a
     /// function, or the name of a method or of a struct or enum. In a
@@ -142,11 +146,17 @@ pub struct Resolved {
 }
 
 impl Info {
+    /// One per name in the program that means something, the libraries'
+    /// first, then the packages': variables where they're bound and where
+    /// they're used, functions, types, fields and variants.
+    pub fn notes(&self) -> impl Iterator<Item = &Note> {
+        self.library_notes.iter().chain(&self.own_notes)
+    }
+
     /// The name at `offset`, if there's one: the innermost. In a shorthand
     /// `P { x }`, which names both a field and a variable, the variable.
     pub fn note_at(&self, offset: usize) -> Option<&Note> {
-        self.notes
-            .iter()
+        self.notes()
             .filter(|n| n.span.contains(offset))
             .min_by_key(|n| {
                 (
@@ -163,8 +173,7 @@ impl Info {
     /// shadows it.
     pub fn occurrences(&self, def: Span) -> Vec<Span> {
         let mut out: Vec<Span> = self
-            .notes
-            .iter()
+            .notes()
             .filter(|n| n.def == Some(def))
             .map(|n| n.span)
             .chain([def])
@@ -381,7 +390,7 @@ impl Checker {
         if unwritten(span, &kind) {
             return;
         }
-        self.info.notes.push(Note {
+        self.info.own_notes.push(Note {
             span,
             kind,
             ty,
@@ -428,7 +437,7 @@ impl Checker {
         if unwritten(span, &kind) {
             return;
         }
-        self.info.notes.push(Note {
+        self.info.own_notes.push(Note {
             span,
             kind,
             ty: Some(ty),
@@ -447,7 +456,7 @@ impl Checker {
                 if unwritten(site.span, &NoteKind::Var(l.name.clone())) {
                     continue;
                 }
-                self.info.notes.push(Note {
+                self.info.own_notes.push(Note {
                     span: site.span,
                     kind: NoteKind::Var(l.name.clone()),
                     ty: Some(l.ty.clone()),
@@ -466,11 +475,11 @@ impl Checker {
     /// the notes made since `notes` and in the pending instances, as far as
     /// they're known, and files the instances in `info`.
     pub(super) fn finish_notes(&mut self, notes: usize) {
-        for i in notes..self.info.notes.len() {
-            let n = &self.info.notes[i];
+        for i in notes..self.info.own_notes.len() {
+            let n = &self.info.own_notes[i];
             let ty = n.ty.as_ref().map(|t| self.solved(t));
             let args = n.args.iter().map(|t| self.solved(t)).collect();
-            let n = &mut self.info.notes[i];
+            let n = &mut self.info.own_notes[i];
             n.ty = ty;
             n.args = args;
         }

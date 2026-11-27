@@ -202,6 +202,7 @@ impl Libraries {
             if let Err(e) = cx.finish_library_bodies(&self.prog) {
                 panic!("the libraries don't check: {}", e.render_in(&self.sources));
             }
+            share_notes(&mut cx);
             std::sync::Mutex::new(cx)
         })
     }
@@ -242,7 +243,18 @@ fn check_libraries(typing: bool) -> (crate::source::Sources, Program, Checker) {
     cx.typing_libraries = false;
     // Its own business, as `check_files` says.
     cx.warnings.clear();
+    share_notes(&mut cx);
     (sources, prog, cx)
+}
+
+/// Moves the notes `cx` has of its own to those of the libraries, shared by
+/// every program's checking (`Info::library_notes`), which then copies
+/// none of them.
+fn share_notes(cx: &mut Checker) {
+    let own = std::mem::take(&mut cx.info.own_notes);
+    let mut notes = std::mem::take(&mut cx.info.library_notes);
+    std::sync::Arc::make_mut(&mut notes).extend(own);
+    cx.info.library_notes = notes;
 }
 
 /// Type-checks `prog`, adding any warnings to `warnings`, in source order.
@@ -1845,7 +1857,7 @@ impl Checker {
                 Some(MethodOf::Impl(k)) => consts(&prog.impls[k].generics),
                 _ => Vec::new(),
             };
-            let notes = self.info.notes.len();
+            let notes = self.info.own_notes.len();
             let full = !(self.typing_libraries && self.only_typed(f, FnId(i)));
             // Of a library function with no type parameters, only typed, a
             // program's checking sees nothing the body's typing gives: every
@@ -1862,7 +1874,7 @@ impl Checker {
             if !full {
                 // What's noted of it is for an editor, which has the
                 // libraries checked in full: noted when they are.
-                self.info.notes.truncate(notes);
+                self.info.own_notes.truncate(notes);
                 self.typed_only.push(i);
             }
             result?;

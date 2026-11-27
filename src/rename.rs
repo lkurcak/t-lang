@@ -166,8 +166,7 @@ pub fn rename_all(
         // Its declaration: in a shorthand pattern `P { x }`, the variable,
         // as the field is declared elsewhere.
         let decl = info
-            .notes
-            .iter()
+            .notes()
             .find(|n| n.span == def && n.def == Some(def))
             .ok_or("there's nothing here to rename")?;
         if let NoteKind::Module(m) = &decl.kind {
@@ -257,8 +256,7 @@ pub fn rename_all(
     // after the rename, and as a variable or not, since a shorthand names a
     // field and a variable in one place.
     let defs_after: HashMap<(Span, bool), Option<Span>> = info_after
-        .notes
-        .iter()
+        .notes()
         .map(|n| ((n.span, is_var(n)), n.def))
         .collect();
     let moved_targets: Vec<Span> = (targets.iter())
@@ -269,8 +267,7 @@ pub fn rename_all(
         None => format!("the built-in `{name}`"),
         Some(d) => {
             let what = info_after
-                .notes
-                .iter()
+                .notes()
                 .find(|n| n.span == d && n.def == Some(d))
                 .map_or("definition", |n| what(&n.kind));
             format!(
@@ -280,7 +277,7 @@ pub fn rename_all(
             )
         }
     };
-    for n in &info.notes {
+    for n in info.notes() {
         let var = is_var(n);
         let at = moved(&renamed, n.span, var);
         let was = n.def.map(|d| moved(&renamed, d, var));
