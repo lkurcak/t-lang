@@ -131,7 +131,7 @@
 
 - A first look at the process: the 32 generated families in one test binary, so they run
   side by side (575 s to 247 s on four cores), sanitizer runs that cancel older ones,
-  `scripts/ci_times.py`, and a look at the process at each retrospective.
+  `scripts/ci_times.py`, and a look at the process at each retrospective (#163).
 - Step 102 (0.110.0): math functions of `f32` and `f64`, correctly rounded and written in T:
   `exp`, `exp2`, `exp_m1`, `ln`, `log2`, `log10`, `ln_1p`, `pow`, `sin`, `cos`, `tan`, `sinh`,
   `cosh`, `tanh`, checked against MPFR on every `f32` input; consts read in place; a refined
