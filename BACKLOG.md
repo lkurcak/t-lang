@@ -7,6 +7,10 @@
    full). In a private function, either the rest is inferred beside a written `e`, or an `F:
    FnMut(..)` bound that names no effect gets an inferred one (see "Generic helpers over
    closures" in t-fmt's `FRICTION.md`).
+1. Checking a program costs more as core grows: each check clones the libraries' checker and
+   their parsed program, about 15 ms more per program in the test profile since step 102's
+   2,700 lines, so CI's Ubuntu test job went from 19 to 30 minutes and macOS's from 6.5 to 17.
+   Share them (`Arc`, copy on write) instead of cloning, before step 103 adds more to core.
 1. Step 103, the rest of the math functions, correctly rounded on step 102's machinery
    (`docs/102-math.md`): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`
    (glibc's `cbrt(-27.0)` is `-3.0000000000000004`) and `hypot`, then `sin_pi` and `cos_pi`;
