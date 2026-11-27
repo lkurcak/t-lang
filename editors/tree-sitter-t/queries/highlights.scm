@@ -14,6 +14,7 @@
 ; Literals
 
 (integer_literal) @constant.numeric
+(float_literal) @constant.numeric.float
 (byte_literal) @constant.numeric
 (char_literal) @constant.character
 (string_literal) @string

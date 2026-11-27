@@ -2,7 +2,20 @@
 // decimal, of each type.
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    let ok: [&str; 12] = ["2.5", "-0.0", "1e-3", ".5", "1.", "+7", "1E5", "inf", "-Infinity", "NaN", "0.1", "1e400"];
+    let ok: [&str; 12] = [
+        "2.5",
+        "-0.0",
+        "1e-3",
+        ".5",
+        "1.",
+        "+7",
+        "1E5",
+        "inf",
+        "-Infinity",
+        "NaN",
+        "0.1",
+        "1e400",
+    ];
     for s in ok {
         match s.parse::<f64>() {
             Ok(x) => out.line(&x)?,
@@ -37,7 +50,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     // more, to the one above.
     out.line(&"9007199254740993".parse::<f64>().unwrap_or(0.0))?; // expect: 9007199254740992.0
     out.line(&"9007199254740993.0000000000000000001".parse::<f64>().unwrap_or(0.0))?; // expect: 9007199254740994.0
-    out.line(&"16777217".parse::<f32>().unwrap_or(0.0))?; // expect: 16777216.0
+    out.line(&"16777217".parse::<f32>().unwrap_or(0.0))?;                     // expect: 16777216.0
     out.line(&"1.00000017881393432617187499".parse::<f32>().unwrap_or(0.0))?; // expect: 1.0000001
     Ok(())
 }

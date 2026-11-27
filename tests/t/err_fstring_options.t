@@ -6,4 +6,4 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f"x = {x:b}")?;
     Ok(())
 }
-// error: a hole in a format string can say `:?`, for `Debug`, `:x` or `:08x`, for hexadecimal, at least 8 digits, `:05`, for decimal, at least 5 characters, and `:<8`, `:^8` or `:>8` for a width
+// error: a hole in a format string can say `:?`, for `Debug`, `:x` or `:08x`, for hexadecimal, at least 8 digits, `:05`, for decimal, at least 5 characters, `:.3`, for a float with 3 digits after its point, and `:<8`, `:^8` or `:>8` for a width

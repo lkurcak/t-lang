@@ -36,7 +36,7 @@ fn nearest_f64<F: Float>(x: f64) -> F;
 fn trunc_below<F: Float>(x: F, big: F) -> F {
     let a = x.abs();
     if a < big {
-        let r = (a + big) - big;
+        let r = a + big - big;
         let t = if r > a { r - 1.0 } else { r };
         t.copysign(x)
     } else {
@@ -129,44 +129,7 @@ impl Float for f32 {
 
     fn total_cmp(&self, other: &f32) -> Ordering {
         let sign = 0x8000_0000;
-        by_keys(
-            order_key(self.to_bits() as u64, sign),
-            order_key(other.to_bits() as u64, sign),
-        )
-    }
-}
-
-/// What `x` is, to be written: its sign, and its value `m · 2^e`, an
-/// infinity or a NaN. Its exponent, 11 bits, is 0 for 0 and the subnormals,
-/// whose least bit is 2^-1074, and all ones for the infinities and NaNs;
-/// else it says where the significand's leading 1, which isn't stored, is.
-fn parts_f64(x: f64) -> dec::Parts {
-    let b = x.to_bits();
-    let negative = b >= 0x8000_0000_0000_0000;
-    let exp = ((b >> 52) & 0x7FF) as i32;
-    let frac = b & 0x000F_FFFF_FFFF_FFFF;
-    if exp == 0x7FF {
-        if frac == 0 { dec::Parts::Infinite(negative) } else { dec::Parts::NaN }
-    } else if exp == 0 {
-        dec::Parts::Finite(negative, frac, -1074)
-    } else {
-        dec::Parts::Finite(negative, frac | 0x0010_0000_0000_0000, exp - 1075)
-    }
-}
-
-/// What `x` is: as `parts_f64`, with 8 bits of exponent and 23 of
-/// significand.
-fn parts_f32(x: f32) -> dec::Parts {
-    let b = x.to_bits();
-    let negative = b >= 0x8000_0000;
-    let exp = ((b >> 23) & 0xFF) as i32;
-    let frac = (b & 0x007F_FFFF) as u64;
-    if exp == 0xFF {
-        if frac == 0 { dec::Parts::Infinite(negative) } else { dec::Parts::NaN }
-    } else if exp == 0 {
-        dec::Parts::Finite(negative, frac, -149)
-    } else {
-        dec::Parts::Finite(negative, frac | 0x0080_0000, exp - 150)
+        by_keys(order_key(self.to_bits() as u64, sign), order_key(other.to_bits() as u64, sign))
     }
 }
 
@@ -178,7 +141,7 @@ fn of_parts_f64(parts: dec::Parts) -> f64 {
         dec::Parts::NaN => f64::nan(),
         dec::Parts::Infinite(negative) => {
             if negative { -f64::infinity() } else { f64::infinity() }
-        }
+        },
         dec::Parts::Finite(negative, m, e) => {
             let sign: u64 = if negative { 0x8000_0000_0000_0000 } else { 0 };
             let bits = if m < 0x0010_0000_0000_0000 {
@@ -188,7 +151,7 @@ fn of_parts_f64(parts: dec::Parts) -> f64 {
                 ((exp & 0x7FF) << 52) | (m & 0x000F_FFFF_FFFF_FFFF)
             };
             f64::from_bits(sign | bits)
-        }
+        },
     }
 }
 
@@ -198,7 +161,7 @@ fn of_parts_f32(parts: dec::Parts) -> f32 {
         dec::Parts::NaN => f32::nan(),
         dec::Parts::Infinite(negative) => {
             if negative { -f32::infinity() } else { f32::infinity() }
-        }
+        },
         dec::Parts::Finite(negative, m, e) => {
             let sign: u32 = if negative { 0x8000_0000 } else { 0 };
             let m32: u32 = wrap(m);
@@ -209,7 +172,7 @@ fn of_parts_f32(parts: dec::Parts) -> f32 {
                 ((exp & 0xFF) << 23) | (m32 & 0x007F_FFFF)
             };
             f32::from_bits(sign | bits)
-        }
+        },
     }
 }
 
@@ -217,7 +180,7 @@ fn of_parts_f32(parts: dec::Parts) -> f32 {
 /// `fmt::Fixed`).
 #[blame_caller]
 pub fn write_fixed<W: Write>(x: f64, places: usize, w: &mut W) -> Result<(), W::Error> with W::e {
-    dec::write_fixed(parts_f64(x), places, w)
+    dec::write_fixed(dec::parts_f64(x), places, w)
 }
 
 /// The fewest digits that read back as it, and of those the nearest: `0.1`,
@@ -227,7 +190,7 @@ pub fn write_fixed<W: Write>(x: f64, places: usize, w: &mut W) -> Result<(), W::
 impl Display for f64 {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
-        dec::write_shortest(parts_f64(*self), dec::f64_format(), w)
+        dec::write_shortest(dec::parts_f64(*self), dec::f64_format(), w)
     }
 }
 
@@ -235,7 +198,7 @@ impl Display for f64 {
 impl Display for f32 {
     #[blame_caller]
     fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
-        dec::write_shortest(parts_f32(*self), dec::f32_format(), w)
+        dec::write_shortest(dec::parts_f32(*self), dec::f32_format(), w)
     }
 }
 

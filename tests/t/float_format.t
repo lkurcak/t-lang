@@ -3,7 +3,20 @@
 // rounded at 3 digits after the point, ties to even.
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    let xs: [f64; 12] = [0.1, 1.0, 100.0, 1e15, 1e16, 0.0001, 0.00001, 1.5e-7, 123456.789, 5e-324, 1.7976931348623157e308, -2.5];
+    let xs: [f64; 12] = [
+        0.1,
+        1.0,
+        100.0,
+        1e15,
+        1e16,
+        0.0001,
+        0.00001,
+        1.5e-7,
+        123456.789,
+        5e-324,
+        1.7976931348623157e308,
+        -2.5,
+    ];
     for x in xs {
         out.line(&f"{x} {x:?}")?;
     }

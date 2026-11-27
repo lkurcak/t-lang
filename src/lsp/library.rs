@@ -44,6 +44,11 @@ impl LibrarySources {
             fs::create_dir(&dir)?;
             for (file, text) in files {
                 let path = dir.join(file);
+                // A module of a module's is in a directory of its own,
+                // `float/dec.t`.
+                if let Some(parent) = path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
                 fs::write(&path, text.as_bytes())?;
                 let mut permissions = fs::metadata(&path)?.permissions();
                 permissions.set_readonly(true);

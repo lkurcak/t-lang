@@ -32,7 +32,7 @@ impl Write for Text {
     }
 
     fn write_char(&mut self, c: char) -> Result<(), ()> {
-        if self.n < 64 && (c as u32) < 128 {
+        if self.n < 64 && c as u32 < 128 {
             self.b[self.n] = c as u8;
             self.n = self.n + 1;
         }

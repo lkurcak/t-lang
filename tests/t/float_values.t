@@ -15,7 +15,7 @@ fn area(s: Shape) -> f64 {
     }
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let mut p = Point { x: 1.5, y: -0.25 };
     let mut q = Point { x: f64::nan(), y: 2.0 };

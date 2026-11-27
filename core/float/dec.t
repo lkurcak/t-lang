@@ -41,7 +41,7 @@ impl Big {
         if self.n == 0 {
             return 0;
         }
-        (self.n - 1) * 32 + (width32(self.d[self.n - 1]) as usize)
+        (self.n - 1) * 32 + width32(self.d[self.n - 1]) as usize
     }
 
     /// Drops the 0 limbs at its top, so `n` counts up to its highest.
@@ -52,14 +52,16 @@ impl Big {
     }
 
     /// Its limb `i`, 0 past the end.
-    fn limb(&self, i: usize) -> u32 { if i < 128 { self.d[i] } else { 0 } }
+    fn limb(&self, i: usize) -> u32 {
+        if i < 128 { self.d[i] } else { 0 }
+    }
 
     /// It times `m`.
     fn mul_small(&mut self, m: u32) {
         let mut carry: u32 = 0;
         let n = self.n;
         for i in 0..n {
-            let t = (self.d[i] as u64) * (m as u64) + (carry as u64);
+            let t = self.d[i] as u64 * m as u64 + carry as u64;
             self.d[i] = wrap(t);
             carry = (t >> 32) as u32;
         }
@@ -110,7 +112,7 @@ impl Big {
             *self = Big::zero();
             return;
         }
-        for i in 0..128usize {
+        for i in 0..self.n {
             let lo = self.limb(i + limbs) as u64;
             let hi = self.limb(i + limbs + 1) as u64;
             let both = (hi << 32) | lo;
@@ -125,11 +127,28 @@ impl Big {
         let n = if self.n > b.n { self.n } else { b.n };
         let mut carry: u32 = 0;
         for i in 0..n {
-            let t = (self.d[i] as u64) + (b.d[i] as u64) + (carry as u64);
+            let t = self.d[i] as u64 + b.d[i] as u64 + carry as u64;
             self.d[i] = wrap(t);
             carry = (t >> 32) as u32;
         }
         self.n = n;
+        if carry != 0 && self.n < 128 {
+            self.d[self.n] = carry;
+            self.n = self.n + 1;
+        }
+    }
+
+    /// It plus `x`.
+    fn add_small(&mut self, x: u32) {
+        let mut carry = x;
+        for i in 0..self.n {
+            if carry == 0 {
+                return;
+            }
+            let t = self.d[i] as u64 + carry as u64;
+            self.d[i] = wrap(t);
+            carry = (t >> 32) as u32;
+        }
         if carry != 0 && self.n < 128 {
             self.d[self.n] = carry;
             self.n = self.n + 1;
@@ -141,7 +160,7 @@ impl Big {
         let mut borrow = false;
         let n = self.n;
         for i in 0..n {
-            let t = (self.d[i] as u64) + 0x1_0000_0000 - (b.d[i] as u64) - (if borrow { 1 } else { 0 });
+            let t = self.d[i] as u64 + 0x1_0000_0000 - b.d[i] as u64 - if borrow { 1 } else { 0 };
             self.d[i] = wrap(t);
             borrow = t < 0x1_0000_0000;
         }
@@ -152,9 +171,9 @@ impl Big {
     fn div_small(&mut self, m: { m: u32 | m > 0 }) -> u32 {
         let mut rem: u32 = 0;
         for i in (0..self.n).rev() {
-            let cur = ((rem as u64) << 32) | (self.d[i] as u64);
-            self.d[i] = wrap(cur / (m as u64));
-            rem = wrap(cur % (m as u64));
+            let cur = (rem as u64 << 32) | self.d[i] as u64;
+            self.d[i] = wrap(cur / m as u64);
+            rem = wrap(cur % m as u64);
         }
         self.trim();
         rem
@@ -190,7 +209,7 @@ impl Big {
     }
 
     /// Its lowest 64 bits.
-    fn low(&self) -> u64 { (self.d[0] as u64) | ((self.d[1] as u64) << 32) }
+    fn low(&self) -> u64 { self.d[0] as u64 | (self.d[1] as u64 << 32) }
 }
 
 /// 10^k, of a `k` less than 9.
@@ -211,15 +230,6 @@ fn pow10(k: usize) -> u32 {
 /// 2^k, of a `k` less than 32: doubled `k` times, which can't wrap.
 fn pow2(k: u32) -> u32 {
     let mut p: u32 = 1;
-    for _ in 0..k {
-        p = wrapping_mul(p, 2);
-    }
-    p
-}
-
-/// 2^k, of a `k` less than 64.
-fn pow2_64(k: usize) -> u64 {
-    let mut p: u64 = 1;
     for _ in 0..k {
         p = wrapping_mul(p, 2);
     }
@@ -252,11 +262,7 @@ fn sum(a: &Big, b: &Big) -> Big {
 /// What a float is, to be written or read: a sign, and a finite value
 /// `m · 2^e`, an infinity or a NaN.
 #[derive(Copy, Discard)]
-pub enum Parts {
-    Finite(bool, u64, { e: i32 | e >= -1100 && e <= 1000 }),
-    Infinite(bool),
-    NaN,
-}
+pub enum Parts { Finite(bool, u64, { e: i32 | e >= -1100 && e <= 1000 }), Infinite(bool), NaN }
 
 /// The shape of one of the float types: how many bits of significand it
 /// has, the leading one included, and the least exponent of its last bit,
@@ -274,7 +280,9 @@ pub struct Format {
 
 /// `f32`'s: 24 bits, the least subnormal 2^-149, the greatest finite
 /// value's last bit 2^104.
-pub fn f32_format() -> Format { Format { p: 24, least: -149, most: 104, low: 8388608, high: 16777216 } }
+pub fn f32_format() -> Format {
+    Format { p: 24, least: -149, most: 104, low: 8388608, high: 16777216 }
+}
 
 /// `f64`'s: 53 bits, the least subnormal 2^-1074, the greatest's last bit
 /// 2^971.
@@ -316,24 +324,46 @@ impl Digits {
 /// `x`, at least 0 and at most 5000, as a `usize`: a number of bits or
 /// digits, which is never more.
 fn index(x: i64) -> { u: usize | u <= 5000 } {
-    if x <= 0 {
-        0
-    } else if x >= 5000 {
-        5000
+    if x <= 0 { 0 } else if x >= 5000 { 5000 } else { x as usize }
+}
+
+/// What `x` is, to be written: its sign, and its value `m · 2^e`, an
+/// infinity or a NaN. Its exponent, 11 bits, is 0 for 0 and the subnormals,
+/// whose least bit is 2^-1074, and all ones for the infinities and NaNs;
+/// else it says where the significand's leading 1, which isn't stored, is.
+pub fn parts_f64(x: f64) -> Parts {
+    let b = x.to_bits();
+    let negative = b >= 0x8000_0000_0000_0000;
+    let exp = ((b >> 52) & 0x7FF) as i32;
+    let frac = b & 0x000F_FFFF_FFFF_FFFF;
+    if exp == 0x7FF {
+        if frac == 0 { Parts::Infinite(negative) } else { Parts::NaN }
+    } else if exp == 0 {
+        Parts::Finite(negative, frac, -1074)
     } else {
-        x as usize
+        Parts::Finite(negative, frac | 0x0010_0000_0000_0000, exp - 1075)
+    }
+}
+
+/// What `x` is: as `parts_f64`, with 8 bits of exponent and 23 of
+/// significand.
+pub fn parts_f32(x: f32) -> Parts {
+    let b = x.to_bits();
+    let negative = b >= 0x8000_0000;
+    let exp = ((b >> 23) & 0xFF) as i32;
+    let frac = (b & 0x007F_FFFF) as u64;
+    if exp == 0xFF {
+        if frac == 0 { Parts::Infinite(negative) } else { Parts::NaN }
+    } else if exp == 0 {
+        Parts::Finite(negative, frac, -149)
+    } else {
+        Parts::Finite(negative, frac | 0x0080_0000, exp - 150)
     }
 }
 
 /// `-x`, at least 0 and at most 5000, as `index` says.
 fn neg_index(x: i64) -> { u: usize | u <= 5000 } {
-    if x >= 0 {
-        0
-    } else if x <= -5000 {
-        5000
-    } else {
-        (-x) as usize
-    }
+    if x >= 0 { 0 } else if x <= -5000 { 5000 } else { -x as usize }
 }
 
 /// The fewest digits that read back as `m · 2^e`, `m` positive, of type
@@ -377,7 +407,7 @@ fn shortest(m: u64, e: { e: i32 | e >= -1100 && e <= 1000 }, f: Format) -> Digit
     // `k` with `10^(k-1)` at most the top of the gap, from the bits: the
     // value's magnitude, `log₁₀ 2` a little under or over so it's never
     // too great; then up while it's too small.
-    let top = e + (width64(m) as i32) - 1;
+    let top = e + width64(m) as i32 - 1;
     let mut k = if top >= 0 { (top * 78913) >> 18 } else { (top * 78914) >> 18 } + 1;
     if k >= 0 {
         s.mul_pow10(index(k as i64));
@@ -443,7 +473,6 @@ fn shortest(m: u64, e: { e: i32 | e >= -1100 && e <= 1000 }, f: Format) -> Digit
     }
 }
 
-
 /// Writes `n` `c`s.
 #[blame_caller]
 fn repeat<W: Write>(c: char, n: usize, w: &mut W) -> Result<(), W::Error> with W::e {
@@ -454,7 +483,9 @@ fn repeat<W: Write>(c: char, n: usize, w: &mut W) -> Result<(), W::Error> with W
 }
 
 /// Digit `x`, 0 to 9, as a character.
-fn digit(x: u8) -> char { if x < 10 { ((x as u32) + 0x30) as char } else { '?' } }
+fn digit(x: u8) -> char {
+    if x < 10 { (x as u32 + 0x30) as char } else { '?' }
+}
 
 /// Writes `parts`, of type `f`, the shortest way that reads back as it:
 /// `0.1`, `1.0`, `-0.0`, `1e16`, `1.5e-7`, `inf`, `NaN`. In decimal, with
@@ -462,7 +493,9 @@ fn digit(x: u8) -> char { if x < 10 { ((x as u32) + 0x30) as char } else { '?' }
 /// including `1e16`; else in scientific notation, its digits with a point
 /// after the first, if there's more than one, then `e` and the exponent.
 #[blame_caller]
-pub fn write_shortest<W: Write>(parts: Parts, f: Format, w: &mut W) -> Result<(), W::Error> with W::e {
+pub fn write_shortest<W: Write>(parts: Parts, f: Format, w: &mut W) -> Result<(), W::Error>
+with W::e
+{
     let (negative, m, e) = match parts {
         Parts::NaN => return w.write_str("NaN"),
         Parts::Infinite(negative) => return w.write_str(if negative { "-inf" } else { "inf" }),
@@ -495,7 +528,7 @@ pub fn write_shortest<W: Write>(parts: Parts, f: Format, w: &mut W) -> Result<()
         }
         return Ok(());
     }
-    let whole = index((sci as i64) + 1);
+    let whole = index(sci as i64 + 1);
     for i in 0..ds.n {
         if i == whole {
             w.write_char('.')?;
@@ -517,7 +550,9 @@ pub const MOST_PLACES: usize = 255;
 /// of `0.125` is `0.12`, and of `2.675`, which is a little under that, is
 /// `2.67`. No point if `places` is 0.
 #[blame_caller]
-pub fn write_fixed<W: Write>(parts: Parts, places: usize, w: &mut W) -> Result<(), W::Error> with W::e {
+pub fn write_fixed<W: Write>(parts: Parts, places: usize, w: &mut W) -> Result<(), W::Error>
+with W::e
+{
     let (negative, m, e) = match parts {
         Parts::NaN => return w.write_str("NaN"),
         Parts::Infinite(negative) => return w.write_str(if negative { "-inf" } else { "inf" }),
@@ -550,7 +585,7 @@ pub fn write_fixed<W: Write>(parts: Parts, places: usize, w: &mut W) -> Result<(
         };
         q = whole;
         if up {
-            q.add(&Big::of(1));
+            q.add_small(1);
         }
     }
     // Its digits, last first, nine at a time.
@@ -664,7 +699,7 @@ pub fn parse(s: &[u8], f: Format) -> Result<Parts, ParseFloatError> with {} {
                 }
             } else if kept < MOST_DIGITS {
                 big.mul_small(10);
-                big.add(&Big::of(d as u64));
+                big.add_small(d);
                 kept = kept + 1;
                 if !seen_point && point < 1_000_000_000 {
                     point = point + 1;
@@ -698,7 +733,7 @@ pub fn parse(s: &[u8], f: Format) -> Result<Parts, ParseFloatError> with {} {
             }
             // Past this, it's infinite or 0 whatever the digits are.
             if exp >= 0 && exp < 100_000 {
-                exp = exp * 10 + ((c - 0x30) as i64);
+                exp = exp * 10 + (c - 0x30) as i64;
             }
             digits = true;
             i = i + 1;
@@ -718,7 +753,7 @@ pub fn parse(s: &[u8], f: Format) -> Result<Parts, ParseFloatError> with {} {
     }
     if beyond {
         big.mul_small(10);
-        big.add(&Big::of(1));
+        big.add_small(1);
         kept = kept + 1;
     }
     // The value is `big · 10^ten`, and about `10^(point + exp)`.
@@ -732,7 +767,76 @@ pub fn parse(s: &[u8], f: Format) -> Result<Parts, ParseFloatError> with {} {
     // `kept` is at most `MOST_DIGITS + 1`, which a loop's checking doesn't
     // follow.
     let kept = if kept > 1000 { 1000 } else { kept };
-    Ok(nearest(negative, big, size - (kept as i64), f))
+    let ten = size - kept as i64;
+    // Few digits, and a power of ten the type has exactly, are both its
+    // values: so their product, or quotient, rounded once by the type's own
+    // arithmetic, is the nearest (Clinger's fast path).
+    if !beyond && f.p == 53 && kept <= 15 && ten >= -22 && ten <= 22 {
+        let d = f64::nearest(big.low());
+        let x = if ten >= 0 { d * ten_f64(index(ten)) } else { d / ten_f64(neg_index(ten)) };
+        return Ok(signed(parts_f64(x), negative));
+    }
+    if !beyond && f.p == 24 && kept <= 7 && ten >= -10 && ten <= 10 {
+        let d = f32::nearest(big.low());
+        let x = if ten >= 0 { d * ten_f32(index(ten)) } else { d / ten_f32(neg_index(ten)) };
+        return Ok(signed(parts_f32(x), negative));
+    }
+    Ok(nearest(negative, big, ten, f))
+}
+
+/// `parts`, of the sign `negative` says.
+fn signed(parts: Parts, negative: bool) -> Parts {
+    match parts {
+        Parts::Finite(_, m, e) => Parts::Finite(negative, m, e),
+        Parts::Infinite(_) => Parts::Infinite(negative),
+        Parts::NaN => Parts::NaN,
+    }
+}
+
+/// 10^k, of a `k` at most 22, as an `f64`, which it is exactly.
+fn ten_f64(k: usize) -> f64 {
+    match k {
+        0 => 1.0,
+        1 => 10.0,
+        2 => 100.0,
+        3 => 1e3,
+        4 => 1e4,
+        5 => 1e5,
+        6 => 1e6,
+        7 => 1e7,
+        8 => 1e8,
+        9 => 1e9,
+        10 => 1e10,
+        11 => 1e11,
+        12 => 1e12,
+        13 => 1e13,
+        14 => 1e14,
+        15 => 1e15,
+        16 => 1e16,
+        17 => 1e17,
+        18 => 1e18,
+        19 => 1e19,
+        20 => 1e20,
+        21 => 1e21,
+        _ => 1e22,
+    }
+}
+
+/// 10^k, of a `k` at most 10, as an `f32`, which it is exactly.
+fn ten_f32(k: usize) -> f32 {
+    match k {
+        0 => 1.0,
+        1 => 10.0,
+        2 => 100.0,
+        3 => 1e3,
+        4 => 1e4,
+        5 => 1e5,
+        6 => 1e6,
+        7 => 1e7,
+        8 => 1e8,
+        9 => 1e9,
+        _ => 1e10,
+    }
 }
 
 /// The float of type `f` nearest `big · 10^ten`, positive, ties to even,
@@ -748,30 +852,22 @@ fn nearest(negative: bool, big: Big, ten: { t: i64 | t >= -2000 && t <= 400 }, f
     }
     // `e`, with `u / (v · 2^e)` from 2^(p-1) to just under 2^p, or the
     // least exponent, for a subnormal.
+    // `e`, with `u / (v · 2^e)` from 2^(p-1) to just under 2^p, or the
+    // least exponent, for a subnormal. From their sizes, the quotient has
+    // `p` bits, or one more, which one more `e` takes away.
     let p = f.p as i64;
-    let mut e = (u.bits() as i64) - (v.bits() as i64) - p;
-    for _ in 0..8u32 {
-        let q = quotient(&u, &v, e);
-        if q >= f.high {
-            e = saturating_add(e, 1);
-        } else if q < f.low && e > (f.least as i64) {
-            e = saturating_sub(e, 1);
-        } else {
-            break;
-        }
-    }
-    if e < (f.least as i64) {
+    let mut e = u.bits() as i64 - v.bits() as i64 - p;
+    if e < f.least as i64 {
         e = f.least as i64;
     }
-    // `q`, and whether what's left is past half, half, or less.
-    let mut num = u;
-    let mut den = v;
-    if e >= 0 {
-        den.shl(index(e));
-    } else {
-        num.shl(neg_index(e));
+    let (mut q, mut num, mut den) = divided(&u, &v, e);
+    if q >= f.high {
+        e = saturating_add(e, 1);
+        let (q2, num2, den2) = divided(&u, &v, e);
+        q = q2;
+        num = num2;
+        den = den2;
     }
-    let q = divide(&mut num, &den);
     num.shl(1);
     let up = match num.cmp(&den) {
         Ordering::Greater => true,
@@ -783,14 +879,15 @@ fn nearest(negative: bool, big: Big, ten: { t: i64 | t >= -2000 && t <= 400 }, f
         m = f.low;
         e = saturating_add(e, 1);
     }
-    if e > (f.most as i64) {
+    if e > f.most as i64 {
         return Parts::Infinite(negative);
     }
     Parts::Finite(negative, m, e as i32)
 }
 
-/// `u / (v · 2^e)`, rounding down, or 2^63 if that's more.
-fn quotient(u: &Big, v: &Big, e: i64) -> u64 {
+/// `u / (v · 2^e)`, rounding down, or 2^63 if that's more; what's left
+/// over; and `v · 2^e`, all three times `2^-e` if `e` is negative.
+fn divided(u: &Big, v: &Big, e: i64) -> (u64, Big, Big) {
     let mut num = *u;
     let mut den = *v;
     if e >= 0 {
@@ -798,7 +895,8 @@ fn quotient(u: &Big, v: &Big, e: i64) -> u64 {
     } else {
         num.shl(neg_index(e));
     }
-    divide(&mut num, &den)
+    let q = divide(&mut num, &den);
+    (q, num, den)
 }
 
 /// `num / den`, rounding down, leaving the remainder in `num`; 2^63 if the
@@ -807,19 +905,20 @@ fn divide(num: &mut Big, den: &Big) -> u64 {
     if den.is_zero() {
         return 0;
     }
+    // `den` times each power of two from 2^63 down, halved as it goes.
+    let mut d = *den;
+    d.shl(63);
     let mut q: u64 = 0;
-    let mut bit: usize = 64;
-    while bit > 0 {
-        bit = bit - 1;
-        let mut shifted = *den;
-        shifted.shl(bit);
-        if !num.lt(&shifted) {
+    for bit in (0..64usize).rev() {
+        let take = !num.lt(&d);
+        if take {
             if bit == 63 {
                 return 0x8000_0000_0000_0000;
             }
-            num.sub(&shifted);
-            q = q | pow2_64(bit);
+            num.sub(&d);
         }
+        q = wrapping_mul(q, 2) | if take { 1 } else { 0 };
+        d.shr(1);
     }
     q
 }

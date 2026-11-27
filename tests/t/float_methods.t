@@ -16,7 +16,7 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     // expect: -0.0: -0.0 -0.0 -0.0 -0.0
     let nan = f64::nan();
     out.line(&f"{nan.floor()} {f64::infinity().round()}")?; // expect: NaN inf
-    out.line(&f"{(0.49999999999999994f64).round()}")?; // expect: 0.0
+    out.line(&f"{(0.49999999999999994f64).round()}")?;      // expect: 0.0
     out.line(&f"{(-3.5f64).abs()} {(-0.0f64).abs()} {3.0f64.copysign(-1.0)}")?; // expect: 3.5 0.0 -3.0
     out.line(&f"{2.0f64.sqrt()} {2.0f32.sqrt()} {(-1.0f64).sqrt()} {(-0.0f64).sqrt()}")?;
     // expect: 1.4142135623730951 1.4142135 NaN -0.0
@@ -24,9 +24,13 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
     out.line(&f"{1.0f64.min(nan)} {nan.max(1.0)} {0.0f64.min(-0.0)} {(-0.0f64).max(0.0)}")?;
     // expect: NaN NaN -0.0 0.0
     out.line(&f"{1.0f64.min(2.0)} {1.0f32.max(2.0)}")?; // expect: 1.0 2.0
-    out.line(&f"{nan.is_nan()} {nan.is_finite()} {f64::infinity().is_infinite()} {1.0f64.is_finite()}")?;
+    out.line(
+        &f"{nan.is_nan()} {nan.is_finite()} {f64::infinity().is_infinite()} {1.0f64.is_finite()}",
+    )?;
     // expect: true false true true
-    out.line(&f"{(-0.0f64).is_sign_negative()} {0.0f64.is_sign_negative()} {(-nan).is_sign_negative()}")?;
+    out.line(
+        &f"{(-0.0f64).is_sign_negative()} {0.0f64.is_sign_negative()} {(-nan).is_sign_negative()}",
+    )?;
     // expect: true false true
     out.line(&f"{f64::greatest()} {f32::greatest()}")?; // expect: 1.7976931348623157e308 3.4028235e38
     out.line(&f"{f64::least_positive()} {f32::least_positive()}")?; // expect: 2.2250738585072014e-308 1.1754944e-38

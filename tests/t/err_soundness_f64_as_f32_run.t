@@ -4,8 +4,8 @@ fn f(x: f64) -> f32 with panic { x as f32 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    out.line(&f(0.5))?; // expect: 0.5
-    out.line(&f(f64::nan()))?; // expect: NaN
+    out.line(&f(0.5))?;              // expect: 0.5
+    out.line(&f(f64::nan()))?;       // expect: NaN
     out.line(&f(-f64::infinity()))?; // expect: -inf
     out.line(&f(0.1))?;
     Ok(())
