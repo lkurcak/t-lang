@@ -7,7 +7,14 @@
 //! the operators, which are IEEE 754's too.
 
 use crate::cmp::Ordering;
-use crate::num::{Float, Int};
+use crate::fmt::{Debug, Display, Write};
+use crate::num::{Float, Int, wrap};
+use crate::result::Result;
+use crate::str::Parse;
+
+mod dec;
+
+export use self::dec::ParseFloatError;
 
 /// The square root of `x`, rounded once.
 #[intrinsic]
@@ -126,5 +133,142 @@ impl Float for f32 {
             order_key(self.to_bits() as u64, sign),
             order_key(other.to_bits() as u64, sign),
         )
+    }
+}
+
+/// What `x` is, to be written: its sign, and its value `m · 2^e`, an
+/// infinity or a NaN. Its exponent, 11 bits, is 0 for 0 and the subnormals,
+/// whose least bit is 2^-1074, and all ones for the infinities and NaNs;
+/// else it says where the significand's leading 1, which isn't stored, is.
+fn parts_f64(x: f64) -> dec::Parts {
+    let b = x.to_bits();
+    let negative = b >= 0x8000_0000_0000_0000;
+    let exp = ((b >> 52) & 0x7FF) as i32;
+    let frac = b & 0x000F_FFFF_FFFF_FFFF;
+    if exp == 0x7FF {
+        if frac == 0 { dec::Parts::Infinite(negative) } else { dec::Parts::NaN }
+    } else if exp == 0 {
+        dec::Parts::Finite(negative, frac, -1074)
+    } else {
+        dec::Parts::Finite(negative, frac | 0x0010_0000_0000_0000, exp - 1075)
+    }
+}
+
+/// What `x` is: as `parts_f64`, with 8 bits of exponent and 23 of
+/// significand.
+fn parts_f32(x: f32) -> dec::Parts {
+    let b = x.to_bits();
+    let negative = b >= 0x8000_0000;
+    let exp = ((b >> 23) & 0xFF) as i32;
+    let frac = (b & 0x007F_FFFF) as u64;
+    if exp == 0xFF {
+        if frac == 0 { dec::Parts::Infinite(negative) } else { dec::Parts::NaN }
+    } else if exp == 0 {
+        dec::Parts::Finite(negative, frac, -149)
+    } else {
+        dec::Parts::Finite(negative, frac | 0x0080_0000, exp - 150)
+    }
+}
+
+/// The `f64` that `parts` are of: `parse` makes them so that its
+/// significand fits, with its leading 1 at bit 52, or below for a
+/// subnormal, whose exponent is the least.
+fn of_parts_f64(parts: dec::Parts) -> f64 {
+    match parts {
+        dec::Parts::NaN => f64::nan(),
+        dec::Parts::Infinite(negative) => {
+            if negative { -f64::infinity() } else { f64::infinity() }
+        }
+        dec::Parts::Finite(negative, m, e) => {
+            let sign: u64 = if negative { 0x8000_0000_0000_0000 } else { 0 };
+            let bits = if m < 0x0010_0000_0000_0000 {
+                m & 0x000F_FFFF_FFFF_FFFF
+            } else {
+                let exp: u64 = if e > -1075 && e < 972 { (e + 1075) as u64 } else { 0 };
+                ((exp & 0x7FF) << 52) | (m & 0x000F_FFFF_FFFF_FFFF)
+            };
+            f64::from_bits(sign | bits)
+        }
+    }
+}
+
+/// The `f32` that `parts` are of, as `of_parts_f64`.
+fn of_parts_f32(parts: dec::Parts) -> f32 {
+    match parts {
+        dec::Parts::NaN => f32::nan(),
+        dec::Parts::Infinite(negative) => {
+            if negative { -f32::infinity() } else { f32::infinity() }
+        }
+        dec::Parts::Finite(negative, m, e) => {
+            let sign: u32 = if negative { 0x8000_0000 } else { 0 };
+            let m32: u32 = wrap(m);
+            let bits = if m < 0x0080_0000 {
+                m32 & 0x007F_FFFF
+            } else {
+                let exp: u32 = if e > -150 && e < 105 { (e + 150) as u32 } else { 0 };
+                ((exp & 0xFF) << 23) | (m32 & 0x007F_FFFF)
+            };
+            f32::from_bits(sign | bits)
+        }
+    }
+}
+
+/// The fewest digits that read back as it, and of those the nearest: `0.1`,
+/// `1.0`, `-0.0`, `1e16`, `1.5e-7`, `inf`, `NaN`. In decimal, with at least
+/// one digit after the point, from `0.0001` up to, not including, `1e16`;
+/// else in scientific notation. As Rust's `{:?}` writes it.
+impl Display for f64 {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        dec::write_shortest(parts_f64(*self), dec::f64_format(), w)
+    }
+}
+
+/// As an `f64` is written, with an `f32`'s digits: `0.1f32` is `0.1`.
+impl Display for f32 {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e {
+        dec::write_shortest(parts_f32(*self), dec::f32_format(), w)
+    }
+}
+
+/// As its `Display`.
+impl Debug for f64 {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { Display::fmt(self, w) }
+}
+
+/// As its `Display`.
+impl Debug for f32 {
+    #[blame_caller]
+    fn fmt<W: Write>(&self, w: &mut W) -> Result<(), W::Error> with W::e { Display::fmt(self, w) }
+}
+
+/// The `f64` nearest the decimal, ties to even: digits, with a `.` and
+/// more digits or not, or a `.` and digits, then an exponent or not, `e`
+/// or `E` and digits, with a sign or not; or `inf`, `infinity` or `nan`, in
+/// either case; with a `+` or a `-` first, or not. What `Display` writes
+/// reads back as the same bits, but for a NaN's.
+impl Parse for f64 {
+    type Error = ParseFloatError;
+
+    fn parse(s: &str) -> Result<f64, ParseFloatError> {
+        match dec::parse(s.as_bytes(), dec::f64_format()) {
+            Ok(parts) => Ok(of_parts_f64(parts)),
+            Err(e) => Err(e),
+        }
+    }
+}
+
+/// The `f32` nearest the decimal, as for an `f64`: rounded once, from the
+/// decimal, never through an `f64`.
+impl Parse for f32 {
+    type Error = ParseFloatError;
+
+    fn parse(s: &str) -> Result<f32, ParseFloatError> {
+        match dec::parse(s.as_bytes(), dec::f32_format()) {
+            Ok(parts) => Ok(of_parts_f32(parts)),
+            Err(e) => Err(e),
+        }
     }
 }
