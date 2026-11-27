@@ -33,7 +33,7 @@ fn nearest_f64<F: Float>(x: f64) -> F;
 /// its magnitude rounds to an integer, which taking `big` away again
 /// leaves exactly, and that's one too many if it rounded up. Else `x` is
 /// an integer already, an infinity or a NaN, and it's `x`.
-fn trunc_below<F: Float>(x: F, big: F) -> F {
+fn trunc_below<F: Float>(x: F, big: F) -> F with {} {
     let a = x.abs();
     if a < big {
         let r = a + big - big;
@@ -48,12 +48,12 @@ fn trunc_below<F: Float>(x: F, big: F) -> F {
 /// bit is `sign`: unsigned, ascending in IEEE 754's total order. A negative
 /// one's bits, every one flipped, are less the less it is, and below every
 /// positive one's, which get the top bit set.
-fn order_key(b: u64, sign: u64) -> u64 {
+fn order_key(b: u64, sign: u64) -> u64 with {} {
     if b >= sign { !b } else { b | 0x8000_0000_0000_0000 }
 }
 
 /// `a` against `b`, as unsigned keys.
-fn by_keys(a: u64, b: u64) -> Ordering {
+fn by_keys(a: u64, b: u64) -> Ordering with {} {
     if a < b { Ordering::Less } else if a == b { Ordering::Equal } else { Ordering::Greater }
 }
 
@@ -136,7 +136,7 @@ impl Float for f32 {
 /// The `f64` that `parts` are of: `parse` makes them so that its
 /// significand fits, with its leading 1 at bit 52, or below for a
 /// subnormal, whose exponent is the least.
-fn of_parts_f64(parts: dec::Parts) -> f64 {
+fn of_parts_f64(parts: dec::Parts) -> f64 with {} {
     match parts {
         dec::Parts::NaN => f64::nan(),
         dec::Parts::Infinite(negative) => {
@@ -156,7 +156,7 @@ fn of_parts_f64(parts: dec::Parts) -> f64 {
 }
 
 /// The `f32` that `parts` are of, as `of_parts_f64`.
-fn of_parts_f32(parts: dec::Parts) -> f32 {
+fn of_parts_f32(parts: dec::Parts) -> f32 with {} {
     match parts {
         dec::Parts::NaN => f32::nan(),
         dec::Parts::Infinite(negative) => {

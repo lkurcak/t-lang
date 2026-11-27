@@ -187,7 +187,7 @@ impl str {
 
 /// The bytes of `s` from `at` on. `at` is where a character starts, or the
 /// end, wherever it's used; were it not, it would be the empty string.
-fn after<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } {
+fn after<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } with {} {
     match s.split_at(at) {
         Some((_, tail)) => tail,
         None => "",
@@ -196,7 +196,7 @@ fn after<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } {
 
 /// The bytes of `s` before `at`, which is where a character starts or the
 /// end, as for `after`.
-fn before<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } {
+fn before<'a>(s: &'a str, at: usize) -> { t: &'a str | t.len() <= s.len() } with {} {
     match s.split_at(at) {
         Some((head, _)) => head,
         None => "",
@@ -285,7 +285,7 @@ impl Pattern for char {
 }
 
 /// Are the bytes of `h` from `at` on those of `n`, all of which `h` has?
-fn bytes_at(h: &[u8], n: &[u8], at: { a: usize | a + n.len() <= h.len() }) -> bool {
+fn bytes_at(h: &[u8], n: &[u8], at: { a: usize | a + n.len() <= h.len() }) -> bool with {} {
     let mut j = 0usize;
     while j < n.len() {
         if h[at + j] != n[j] {
@@ -526,7 +526,7 @@ impl Ord for str {
 }
 
 /// Is `b` one of the bytes after a character's first in UTF-8, `10xxxxxx`?
-fn is_continuation(b: u8) -> bool { b >= 0x80 && b <= 0xBF }
+fn is_continuation(b: u8) -> bool with {} { b >= 0x80 && b <= 0xBF }
 
 /// What `decode` finds: a character, and where the next one starts.
 #[derive(Copy, Discard)]
@@ -544,7 +544,7 @@ struct Decoded { c: char, next: usize }
 /// Each byte's bits are found by subtracting what's above them, and put
 /// together with `+`, as they don't overlap: arithmetic the checker proves
 /// can't overflow without splitting into cases, as `&` and `|` would.
-fn decode(b: &[u8], at: usize) -> Option<Decoded> {
+fn decode(b: &[u8], at: usize) -> Option<Decoded> with {} {
     let n = b.len();
     if at >= n {
         return None;
@@ -602,7 +602,7 @@ fn decode(b: &[u8], at: usize) -> Option<Decoded> {
 struct Six { bits: { c: u32 | c <= 0x3F } }
 
 /// The six bits of byte `i` of `b`, if it's a continuation byte.
-fn continuation(b: &[u8], i: { i: usize | i < b.len() }) -> Option<Six> {
+fn continuation(b: &[u8], i: { i: usize | i < b.len() }) -> Option<Six> with {} {
     let y = b[i];
     if y < 0x80 || y > 0xBF {
         return None;

@@ -2,16 +2,12 @@
 
 ## Now
 
-1. Retrospective 20, after 0.109.0: look for soundness holes in what shipped since 0.107.3
-   (patterns in 0.108.0, floats in 0.109.0), with generated tests for a fact learned on one
-   path and read on another (the hole 0.107.3 closed), and floats at every place a value can
-   be (a field, a variant, a type argument, a capture, a const) against the interpreter.
-2. Owner to decide: a generic helper that takes a closure has to spell out every effect
-   (`effect e`, `F: .. with e + Discard`, then `with {alloc, panic, e}` in full). In a private
-   function, either the rest is inferred beside a written `e`, or an `F: FnMut(..)` bound that
-   names no effect gets an inferred one (see "Generic helpers over closures" in t-fmt's
-   `FRICTION.md`).
-3. Step 102, math functions in T: `exp`, `ln`, `log2`, `pow`, `sin`, `cos`, `tanh` and the
+1. Owner: decide how a generic helper that takes a closure says its effects. Today it spells
+   out every one (`effect e`, `F: .. with e + Discard`, then `with {alloc, panic, e}` in
+   full). In a private function, either the rest is inferred beside a written `e`, or an `F:
+   FnMut(..)` bound that names no effect gets an inferred one (see "Generic helpers over
+   closures" in t-fmt's `FRICTION.md`).
+1. Step 102, math functions in T: `exp`, `ln`, `log2`, `pow`, `sin`, `cos`, `tanh` and the
    rest, of `F: Float`, written over IEEE 754's operations so they're the same on every
    machine, which the C library's aren't (glibc's `cbrt(-27.0)` is `-3.0000000000000004`); then
    the [ML and GPU path](backlog/ml-path.md).
@@ -25,7 +21,8 @@
   that sets the same variable (fourteen take 15 seconds): where branches meet, name a
   branch's value rather than copy what's known of it (#150; "What it doesn't do" in
   `docs/61-proof-search.md`). Due once a function takes over about 2 seconds to check;
-  t-fmt's slowest takes half a second.
+  t-fmt's slowest takes half a second. A generated test's loop with forty `if`s in a row,
+  each setting the same variable, took 74 seconds.
 - Assigning through a call's result: `module(p, i).doc = x`, where `module` gives a `&mut`
   (see "Can't assign through a call's result" in t-fmt's `FRICTION.md`).
 - `usize::MAX`: today it's `core::num::greatest::<usize>()`, which is hard to find. Make it
@@ -95,11 +92,17 @@
 - Patterns, once a use appears: consts of structs and enums (matching by structure), ranges of
   consts (`LO..=HI`), and `..` in slice patterns, which don't exist yet (see "What it doesn't
   do" in `docs/100-patterns.md`).
+- An array's pattern forgets what its elements' type says: `let [_, y] = a`, where `a: [{ v:
+  u8 | v < 3 }; 2]`, gives a `y` not known to be below 3, though `a[1]` is, and so is what a
+  tuple's pattern takes out.
+- A type alias as a path in an expression: `type F = f64;` then `F::from_bits(b)` says an
+  alias "can only be used as a type". Natural in float code written for one type.
 - Messages: `greatest::<T>()` of a type parameter says "unknown type `T`"; `old(..)` deeper
   than what's kept says "could not be represented by the supported reasoning" instead of
   that what a parameter pointed to that deep isn't known; a scenario under nested
   projections lists every implied bound, eight times; the orphan error for `impl<T> lib::Tr
-  for T` says "`T` is `core`'s".
+  for T` says "`T` is `core`'s"; a pattern in a `for` that can fail to match, `for (C, x)
+  in a`, says "non-exhaustive `match`: `Option::Some(_)` not covered".
 - `IntoIterator` for t-libs' `Grid` and `HashMap` and std's `Args`, so `for` takes them.
 - Doctests: the code in doc comments checked and run (`README.md`, Tests, calls them the
   natural next step).
@@ -122,6 +125,10 @@
 
 ## Done
 
+- Retrospective 20 (0.109.1): no soundness hole in 0.108.0's patterns or 0.109.0's floats;
+  `t check` of an empty program back to 117 ms from 180, as library functions say their
+  effects; `..` in a measure's `match`, and `f32 as F`, accepted; generated tests for floats in
+  every place a value can be and for what's learned on one path of the new patterns (#160).
 - Step 101 (0.109.0): floats, `f32` and `f64`: IEEE 754's arithmetic, literals, comparisons
   (neither `Eq` nor `Ord`), `as` the same number or a panic, a sealed `Float`, and `Display`,
   `Parse` and `{x:.3}` written in T on exact big numbers, the same in the interpreter and C.

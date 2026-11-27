@@ -130,7 +130,7 @@ impl char {
 }
 
 /// Byte `i` of `s` becomes `b`, if there's one.
-fn set(s: &mut [u8], i: usize, b: u8) {
+fn set(s: &mut [u8], i: usize, b: u8) with {} {
     match s.get_mut(i) {
         Some(x) => *x = b,
         None => {},
@@ -139,4 +139,4 @@ fn set(s: &mut [u8], i: usize, b: u8) {
 
 /// A byte after the first in UTF-8: `10`, then six bits of `n`, from bit
 /// `shift` up.
-fn tail(n: u32, shift: u32) -> u8 { ((n >> shift) & 0x3F) as u8 | 0x80 }
+fn tail(n: u32, shift: u32) -> u8 with {} { ((n >> shift) & 0x3F) as u8 | 0x80 }

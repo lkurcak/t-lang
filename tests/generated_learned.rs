@@ -4,9 +4,10 @@
 //! again in another. Learned by a `let` that declares it, an argument, an
 //! assignment to a variable declared with it, a struct's field, or a
 //! closure's body; in a branch whose condition makes it hold, one that
-//! can't be taken, an arm of a `match`, an iteration's branch, or a
-//! closure; asked after the branches meet, in the other branch, or later
-//! on the same path. Asked anywhere but later on the same path, it must be
+//! can't be taken, an arm of a `match` (one that matches a const, or a
+//! pattern with alternatives, or with `..`), an iteration's branch, a
+//! chain's block in an `if` or a `while`, or a closure; asked after the
+//! branches meet, in the other branch, or later on the same path. Asked anywhere but later on the same path, it must be
 //! proved again, and here it doesn't hold: refused. Later on the same
 //! path, it's known: accepted, and run by the interpreter, which checks
 //! each refinement as it's used. They're about what programs mean, so
@@ -90,6 +91,22 @@ enum Place {
     AfterChain,
     /// The same; asked there, later.
     ChainSamePath,
+    /// In the arm of a `match` that matches a const, `BIG`; asked after the
+    /// `match`.
+    AfterConstArm,
+    /// The same; asked in the `_` arm.
+    OtherArm,
+    /// The same; asked there, later.
+    ConstSamePath,
+    /// In an arm whose pattern has alternatives, each matching `BIG`;
+    /// asked after the `match`.
+    AfterAlternatives,
+    /// In an arm whose pattern has a `..`; asked after the `match`.
+    AfterRestArm,
+    /// In the block of a `while`'s chain; asked after the loop.
+    AfterWhileChain,
+    /// The same; asked there, later.
+    WhileChainSamePath,
 }
 
 /// The function: `l`'s elements are below 10; `Small` says below `n`.
@@ -129,16 +146,35 @@ fn program(learn: Learn, place: Place) -> String {
         Place::ChainSamePath => format!(
             "    if let Some(_) = Some(1u8) && n > 10 {{\n        {{\n            {s}\n        }}\n        let z: Small = l;\n        first(n, z)\n    }} else {{\n        0\n    }}"
         ),
+        Place::AfterConstArm => format!(
+            "    match n {{\n        BIG => {{\n            {s}\n        }}\n        _ => {{}}\n    }}\n    {ask}"
+        ),
+        Place::OtherArm => format!(
+            "    match n {{\n        BIG => {{\n            {{\n                {s}\n            }}\n            0\n        }}\n        _ => {{\n            {ask}\n        }}\n    }}"
+        ),
+        Place::ConstSamePath => format!(
+            "    match n {{\n        BIG => {{\n            {{\n                {s}\n            }}\n            let z: Small = l;\n            first(n, z)\n        }}\n        _ => 0,\n    }}"
+        ),
+        Place::AfterAlternatives => format!(
+            "    match (n, n) {{\n        (BIG, _) | (_, BIG) => {{\n            {s}\n        }}\n        _ => {{}}\n    }}\n    {ask}"
+        ),
+        Place::AfterRestArm => format!(
+            "    match (n, 1u8, 2u8) {{\n        (BIG, ..) => {{\n            {s}\n        }}\n        _ => {{}}\n    }}\n    {ask}"
+        ),
+        Place::AfterWhileChain => format!(
+            "    let mut go = true;\n    while go && let Some(_) = Some(1u8) && n > 10 {{\n        {{\n            {s}\n        }}\n        go = false;\n    }}\n    {ask}"
+        ),
+        Place::WhileChainSamePath => format!(
+            "    let mut r = 0u8;\n    let mut go = true;\n    while go && let Some(_) = Some(1u8) && n > 10 {{\n        {{\n            {s}\n        }}\n        let z: Small = l;\n        r = first(n, z);\n        go = false;\n    }}\n    r"
+        ),
     };
-    let main_n = if matches!(place, Place::SamePath | Place::ChainSamePath) {
-        11
-    } else {
-        3
-    };
+    let main_n = if same_path(place) { 11 } else { 3 };
     // `Small` is spelled out where it names `n`.
     let body = body.replace("Small", "[{ v: u8 | v < n }; 2]");
     format!(
-        "#[derive(Copy, Discard)]
+        "const BIG: u8 = 11;
+
+#[derive(Copy, Discard)]
 struct Holder {{ n: u8, a: [{{ v: u8 | v < n }}; 2] }}
 
 fn take(n: u8, y: [{{ v: u8 | v < n }}; 2]) -> u8 {{ y[0] }}
@@ -153,6 +189,14 @@ fn main() {{
     let _ = f({main_n}, [5, 5]);
 }}
 "
+    )
+}
+
+/// Whether `place` asks later on the path that learned it: then it's known.
+fn same_path(place: Place) -> bool {
+    matches!(
+        place,
+        Place::SamePath | Place::ChainSamePath | Place::ConstSamePath | Place::WhileChainSamePath
     )
 }
 
@@ -171,6 +215,13 @@ fn learned_on_a_path_stays_on_it() {
         Place::ChainElse,
         Place::AfterChain,
         Place::ChainSamePath,
+        Place::AfterConstArm,
+        Place::OtherArm,
+        Place::ConstSamePath,
+        Place::AfterAlternatives,
+        Place::AfterRestArm,
+        Place::AfterWhileChain,
+        Place::WhileChainSamePath,
     ];
     let mut wrong = Vec::new();
     let mut count = 0;
@@ -179,7 +230,7 @@ fn learned_on_a_path_stays_on_it() {
             let src = program(learn, place);
             count += 1;
             let got = verdict(&src);
-            let ok = matches!(place, Place::SamePath | Place::ChainSamePath);
+            let ok = same_path(place);
             let right = match (&got, ok) {
                 (Ok(()), true) => true,
                 (Err(m), false) => m.contains("can't prove") && m.contains("for `z`"),

@@ -4090,14 +4090,17 @@ fn params_in(t: &Type, out: &mut Vec<String>) {
 }
 
 /// The variants pattern `p` matches, if it only says which variant a
-/// value is: `V`, `V(_, ..)`, `V { .. }`, `_` (every variant: `[]` with
+/// value is: `V`, `V(_, _)`, `V(..)`, `_` (every variant: `[]` with
 /// `true`), or several of those with `|`. The `bool` says it matches every
-/// variant.
+/// variant. A `..` is the `_`s it stands for (lemma P1 of
+/// docs/100-patterns.md).
 fn variant_test(p: &Pattern) -> Option<(Vec<String>, bool)> {
     match &p.kind {
         PatternKind::Wild => Some((Vec::new(), true)),
         PatternKind::Variant(_, _, v, subs)
-            if subs.iter().all(|s| matches!(s.kind, PatternKind::Wild)) =>
+            if subs
+                .iter()
+                .all(|s| matches!(s.kind, PatternKind::Wild | PatternKind::Rest)) =>
         {
             Some((vec![v.name.clone()], false))
         }

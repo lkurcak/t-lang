@@ -81,7 +81,7 @@ export fn min<T: Ord + Discard>(a: T, b: T) -> T {
 }
 
 /// Integers in their order, which `<` says.
-fn compare<T: Int>(a: T, b: T) -> Ordering {
+fn compare<T: Int>(a: T, b: T) -> Ordering with {} {
     if a < b { Ordering::Less } else if a == b { Ordering::Equal } else { Ordering::Greater }
 }
 

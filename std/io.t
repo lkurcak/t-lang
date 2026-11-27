@@ -280,7 +280,7 @@ impl fmt::Write for Stderr {
 /// it worked, and that's how many bytes; with bit 63, it failed, with the
 /// operating system's number for why in the low 32 bits, and which
 /// `ErrorKind` that is, by its place in the enum, in the 8 above them.
-pub fn failure(r: u64) -> Option<Error> {
+pub fn failure(r: u64) -> Option<Error> with {} {
     if r >> 63 == 0 {
         return None;
     }
@@ -301,14 +301,14 @@ pub fn failure(r: u64) -> Option<Error> {
 /// into a buffer `len` long: no more, which `Read::read` promises. The
 /// operating system never says more; if it did, that's an `Other` error,
 /// rather than something trusted.
-pub fn counted(r: u64, len: usize) -> Result<{ n: usize | n <= len }, Error> {
+pub fn counted(r: u64, len: usize) -> Result<{ n: usize | n <= len }, Error> with {} {
     let n: usize = wrap(r);
     if n <= len { Ok(n) } else { Err(Error::new(ErrorKind::Other)) }
 }
 
 /// The error `r` says, as `failure` reads it, from an intrinsic that
 /// gives back only failures.
-pub fn error(r: u64) -> Error {
+pub fn error(r: u64) -> Error with {} {
     match failure(r) {
         Some(e) => e,
         None => Error::new(ErrorKind::Other),
@@ -316,7 +316,7 @@ pub fn error(r: u64) -> Error {
 }
 
 /// `Ok`, or the error `r` says, as `failure` reads it.
-pub fn status(r: u64) -> Result<(), Error> {
+pub fn status(r: u64) -> Result<(), Error> with {} {
     match failure(r) {
         Some(e) => Err(e),
         None => Ok(()),
