@@ -353,10 +353,10 @@ fn parse(seed: u64, times: usize, interpret: bool) {
         if s.starts_with('.') {
             s.insert(0, '0');
         }
-        if rng.next() % 3 > 0 {
+        if !rng.next().is_multiple_of(3) {
             write!(s, "e{}", rng.next() as i64 % 340).unwrap();
         }
-        if rng.next() % 4 == 0 {
+        if rng.next().is_multiple_of(4) {
             s.insert(0, '-');
         }
         strs.push(s);
