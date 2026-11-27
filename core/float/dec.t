@@ -269,13 +269,13 @@ pub enum Parts { Finite(bool, u64, { e: i32 | e >= -1100 && e <= 1000 }), Infini
 /// a subnormal's.
 #[derive(Copy, Discard)]
 pub struct Format {
-    p: { p: u32 | p >= 2 && p <= 53 },
-    least: { l: i32 | l >= -1100 && l <= 0 },
-    most: { m: i32 | m >= 0 && m <= 1000 },
+    pub p: { p: u32 | p >= 2 && p <= 53 },
+    pub least: { l: i32 | l >= -1100 && l <= 0 },
+    pub most: { m: i32 | m >= 0 && m <= 1000 },
     /// 2^(p-1), the least significand of a normal value.
-    low: { v: u64 | v >= 2 && v <= 4503599627370496 },
+    pub low: { v: u64 | v >= 2 && v <= 4503599627370496 },
     /// 2^p, past the greatest.
-    high: { v: u64 | v >= 4 && v <= 9007199254740992 },
+    pub high: { v: u64 | v >= 4 && v <= 9007199254740992 },
 }
 
 /// `f32`'s: 24 bits, the least subnormal 2^-149, the greatest finite

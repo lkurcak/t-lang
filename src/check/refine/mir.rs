@@ -888,6 +888,7 @@ impl Walk<'_> {
             if let Some((r, name)) = self.refined_let(id) {
                 self.need(&r, &Val::Other, Env::Here, span, format!("`{name}`"))?;
                 self.declare(id, &r, &name);
+                self.unset.insert(id);
             }
             self.bind(id, None);
             return Ok(());

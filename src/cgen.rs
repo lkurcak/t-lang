@@ -707,6 +707,9 @@ impl<'e> Gen<'e> {
                     Const::Unit => "{0}".to_string(),
                     Const::Str(s) => g.literal_init(s.as_bytes()),
                     Const::Bytes(b) => g.literal_init(b),
+                    Const::Float(crate::mir::FloatLit::Bits(x), Type::Float(f)) => {
+                        float_lit(*x, *f)
+                    }
                     c => panic!("`{c:?}` in a static's value"),
                 },
             };

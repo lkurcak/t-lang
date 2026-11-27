@@ -401,6 +401,17 @@ that learned it, as everything else that path knew.
   conjoined above it: `p && (t && (t => p) && q)` is `p && t && q`.
   Leaving it out leaves the same conjunction; and leaving out any
   conjunct only knows less, so it can't make a proof hold that didn't.
+- **Lemma J3 (a refined variable, joined).** Where branches meet, a
+  `let`'s variable that some branch left unread since a loop's head
+  forgot it has a new value after, which that branch says nothing of. But
+  every write to the variable proved its refinement (`keep_declared`), so
+  every value it has had has it, on every branch, and so has the one
+  after: `join_with` says so of it. Not of a `let x;` declared with no
+  value (`Walk::unset`): on a branch where it still has none, nothing has
+  its refinement, which might even say what no value can, and saying it
+  there would make the branch, which is taken, look as if it can't be.
+  Found in step 102, where a loop with a `break` lost the refinement of a
+  variable it changed (docs/102-math.md).
 - **Lemma K1 (learned on a path).** What's said of an object's values
   after it's made (`Walk::assume_tree`) is said under a fact `tok == 1`
   said at the same point, `tok` a variable nothing else mentions. Facts

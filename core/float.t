@@ -4,7 +4,9 @@
 //! What the checker takes on trust here is each type's bits, `to_bits` and
 //! `from_bits`, the square root, and the nearest float of an integer or an
 //! `f64`: all exactly what IEEE 754 says. The rest is written in T, over
-//! the operators, which are IEEE 754's too.
+//! the operators, which are IEEE 754's too: the text of floats in `dec`,
+//! and the math functions, correctly rounded, in `math`, with `fix` for
+//! what `math` can't tell quickly (docs/102-math.md).
 
 use crate::cmp::Ordering;
 use crate::fmt::{Debug, Display, Write};
@@ -13,6 +15,8 @@ use crate::result::Result;
 use crate::str::Parse;
 
 mod dec;
+mod fix;
+mod math;
 
 export use self::dec::ParseFloatError;
 
@@ -100,6 +104,34 @@ impl Float for f64 {
 
     fn sqrt(self) -> f64 { sqrt(self) }
 
+    fn exp(self) -> f64 { math::exp_f64(self) }
+
+    fn exp2(self) -> f64 { math::exp2_f64(self) }
+
+    fn exp_m1(self) -> f64 { math::exp_m1_f64(self) }
+
+    fn ln(self) -> f64 { math::ln_f64(self) }
+
+    fn log2(self) -> f64 { math::log2_f64(self) }
+
+    fn log10(self) -> f64 { math::log10_f64(self) }
+
+    fn ln_1p(self) -> f64 { math::ln_1p_f64(self) }
+
+    fn sin(self) -> f64 { math::sin_f64(self) }
+
+    fn cos(self) -> f64 { math::cos_f64(self) }
+
+    fn tan(self) -> f64 { math::tan_f64(self) }
+
+    fn sinh(self) -> f64 { math::sinh_f64(self) }
+
+    fn cosh(self) -> f64 { math::cosh_f64(self) }
+
+    fn tanh(self) -> f64 { math::tanh_f64(self) }
+
+    fn pow(self, y: f64) -> f64 { math::pow_f64(self, y) }
+
     fn total_cmp(&self, other: &f64) -> Ordering {
         let sign = 0x8000_0000_0000_0000;
         by_keys(order_key(self.to_bits(), sign), order_key(other.to_bits(), sign))
@@ -126,6 +158,34 @@ impl Float for f32 {
     fn trunc(self) -> f32 { trunc_below(self, 8388608.0) }
 
     fn sqrt(self) -> f32 { sqrt(self) }
+
+    fn exp(self) -> f32 { math::exp_f32(self) }
+
+    fn exp2(self) -> f32 { math::exp2_f32(self) }
+
+    fn exp_m1(self) -> f32 { math::exp_m1_f32(self) }
+
+    fn ln(self) -> f32 { math::ln_f32(self) }
+
+    fn log2(self) -> f32 { math::log2_f32(self) }
+
+    fn log10(self) -> f32 { math::log10_f32(self) }
+
+    fn ln_1p(self) -> f32 { math::ln_1p_f32(self) }
+
+    fn sin(self) -> f32 { math::sin_f32(self) }
+
+    fn cos(self) -> f32 { math::cos_f32(self) }
+
+    fn tan(self) -> f32 { math::tan_f32(self) }
+
+    fn sinh(self) -> f32 { math::sinh_f32(self) }
+
+    fn cosh(self) -> f32 { math::cosh_f32(self) }
+
+    fn tanh(self) -> f32 { math::tanh_f32(self) }
+
+    fn pow(self, y: f32) -> f32 { math::pow_f32(self, y) }
 
     fn total_cmp(&self, other: &f32) -> Ordering {
         let sign = 0x8000_0000;

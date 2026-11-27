@@ -1,5 +1,45 @@
 # Changelog
 
+## 0.110.0 (2026-11-27)
+
+Step 102: math functions. See [docs/102-math.md](docs/102-math.md).
+
+### Added
+
+- `exp`, `exp2`, `exp_m1`, `ln`, `log2`, `log10`, `ln_1p`, `pow`, `sin`,
+  `cos`, `tan`, `sinh`, `cosh` and `tanh`, methods of `Float`, of `f32` and
+  `f64`: each gives the float nearest the exact value, ties to even, for
+  every input, so the same bits on every machine and of any correct
+  implementation. `pow` is IEEE 754's (C's): `pow(x, 0)` and `pow(1, y)`
+  are 1 even of a NaN. All written in T, `with {}`, proved not to panic,
+  and checked against MPFR: on every `f32` input, and millions of `f64`s.
+- `scripts/math`: the checks against MPFR, the hardest inputs CI runs
+  (`tests/math/vectors.txt`), and the tables, worked out by MPFR.
+
+### Changed
+
+- A const read by index or by field, `TABLE[i]`, `CONST.x`, is read where
+  its one value is, rather than built whole at each use: a table of 64
+  pairs was a kilobyte written per read.
+- `t check` does less with the libraries' code: a library function with
+  no type parameters isn't typed, a library's private const isn't checked,
+  and the libraries' consts' values aren't worked out, as nothing of
+  them reaches a program's check. So the math functions' 2,700 lines add
+  ~8 ms to checking an empty program (~133 ms), where they'd have added
+  ~85, and ~22 to t-chess; `t run` and `t build`, which check the
+  libraries in full, take ~0.25 s longer.
+- A program is lowered with only the library functions it reaches, as
+  generic ones always were, not every non-generic one (about a third of
+  the time, of a small program), and the libraries' consts are worked
+  out once in a process, not once a program: the tests, which check and
+  run thousands of programs in one, don't get slower with core.
+
+### Fixed
+
+- A `let mut` with a refinement, changed in a loop that `break`s, keeps
+  it after the loop: the checker lost it where the `break` and the loop's
+  end met, and refused code that counted on it.
+
 ## 0.109.1 (2026-11-27)
 
 Retrospective 20's fixes. It found no soundness hole in 0.108.0's patterns

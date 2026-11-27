@@ -292,109 +292,6 @@ fn main(os: std::Os) -> core::result::Result::<(), core::io::Error> with panic {
     }
 }
 
-/// How many values it has. It's a measure, so refinements can say it:
-/// `i: { i: usize | i < s.len() }`. It's of the reference, which knows
-/// it, so nothing written through a `&mut [T]` changes it.
-#[intrinsic]
-#[measure]
-export fn <[u8]>::len(&self) -> usize;
-
-/// The value at `i`, which is less than `len()`, so there's one: `s[i]`
-/// is `*s.index(i)`.
-#[intrinsic]
-export fn <[u8]>::index(&self, i: { i: usize | i < self.len() }) -> &u8;
-
-/// Its values, by reference, front to back.
-export fn <[u8]>::iter(&self) -> { it: core::slice::Iter::<u8> | it.len() == self.len() } {
-    let _0: Iter<u8>;
-    let _1: &[u8]; // self
-    bb0: {
-        _0 = core::slice::Iter::<u8> { rest: copy _1 };
-        dead _1;
-        return;
-    }
-}
-
-fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
-    &mut self,
-) -> core::option::Option::<&u8> {
-    let _0: Option<&u8>;
-    let _1: &mut Iter<u8>; // self
-    let _2: &[u8]; // rest
-    let _3: &[u8];
-    let _4: ();
-    let _5: bool;
-    let _6: usize;
-    let _7: &[u8];
-    let _8: usize;
-    let _9: !;
-    let _10: (&[u8], &[u8]);
-    let _11: usize;
-    let _12: &[u8];
-    let _13: &[u8]; // head
-    let _14: &[u8]; // tail
-    let _15: ();
-    let _16: &u8;
-    let _17: &u8;
-    let _18: usize;
-    let _19: &[u8];
-    bb0: {
-        _3 = copy (*_1).0;
-        _2 = copy _3;
-        dead _3;
-        _7 = &(*_2);
-        _6 = <[u8]>::len(move _7);
-        _8 = 0_usize;
-        _5 = copy _6 == copy _8;
-        dead _8;
-        dead _7;
-        dead _6;
-        if copy _5 { bb1 } else { bb2 };
-    }
-    bb1: {
-        _0 = core::option::Option::<&u8>::None;
-        dead _5;
-        dead _4;
-        dead _2;
-        dead _1;
-        return;
-    }
-    bb2: {
-        _4 = ();
-        goto bb3;
-    }
-    bb3: {
-        dead _5;
-        dead _4;
-        _11 = 1_usize;
-        _12 = &(*_2);
-        _10 = <[u8]>::cut(move _12, move _11);
-        _13 = copy _10.0;
-        _14 = copy _10.1;
-        kept _10;
-        dead _12;
-        dead _11;
-        dead _10;
-        (*_1).0 = copy _14;
-        _15 = ();
-        dead _15;
-        _18 = 0_usize;
-        _19 = &(*_13);
-        _17 = <[u8]>::index(move _19, move _18);
-        _16 = &(*_17);
-        _0 = core::option::Option::<&u8>::Some(move _16);
-        dead _19;
-        dead _18;
-        dead _17;
-        dead _16;
-        dead _14;
-        dead _13;
-        dead _2;
-        dead _1;
-        return;
-    }
-}
-
 fn <core::result::Result::<(), core::io::Error> as core::ops::Try>::branch(
     self,
 ) -> core::ops::ControlFlow::<core::result::Result<!, core::io::Error>, ()> {
@@ -491,6 +388,18 @@ export fn <[bool; 2]>::index(&self, i: { i: usize | i < self.len() }) -> &bool {
     }
 }
 
+/// How many values it has. It's a measure, so refinements can say it:
+/// `i: { i: usize | i < s.len() }`. It's of the reference, which knows
+/// it, so nothing written through a `&mut [T]` changes it.
+#[intrinsic]
+#[measure]
+export fn <[u8]>::len(&self) -> usize;
+
+/// The value at `i`, which is less than `len()`, so there's one: `s[i]`
+/// is `*s.index(i)`.
+#[intrinsic]
+export fn <[u8]>::index(&self, i: { i: usize | i < self.len() }) -> &u8;
+
 /// All its values, as a slice.
 #[intrinsic]
 export fn <[bool; 2]>::as_slice(&self) -> { s: &[bool] | s.len() == self.len() };
@@ -520,9 +429,85 @@ export fn <[u8; 3]>::iter(&self) -> { it: core::slice::Iter::<u8> | it.len() == 
     }
 }
 
-/// All its values, as a slice.
-#[intrinsic]
-export fn <[u8; 3]>::as_slice(&self) -> { s: &[u8] | s.len() == self.len() };
+fn <core::slice::Iter::<u8> as core::iter::Iterator>::next<'a>(
+    &mut self,
+) -> core::option::Option::<&u8> {
+    let _0: Option<&u8>;
+    let _1: &mut Iter<u8>; // self
+    let _2: &[u8]; // rest
+    let _3: &[u8];
+    let _4: ();
+    let _5: bool;
+    let _6: usize;
+    let _7: &[u8];
+    let _8: usize;
+    let _9: !;
+    let _10: (&[u8], &[u8]);
+    let _11: usize;
+    let _12: &[u8];
+    let _13: &[u8]; // head
+    let _14: &[u8]; // tail
+    let _15: ();
+    let _16: &u8;
+    let _17: &u8;
+    let _18: usize;
+    let _19: &[u8];
+    bb0: {
+        _3 = copy (*_1).0;
+        _2 = copy _3;
+        dead _3;
+        _7 = &(*_2);
+        _6 = <[u8]>::len(move _7);
+        _8 = 0_usize;
+        _5 = copy _6 == copy _8;
+        dead _8;
+        dead _7;
+        dead _6;
+        if copy _5 { bb1 } else { bb2 };
+    }
+    bb1: {
+        _0 = core::option::Option::<&u8>::None;
+        dead _5;
+        dead _4;
+        dead _2;
+        dead _1;
+        return;
+    }
+    bb2: {
+        _4 = ();
+        goto bb3;
+    }
+    bb3: {
+        dead _5;
+        dead _4;
+        _11 = 1_usize;
+        _12 = &(*_2);
+        _10 = <[u8]>::cut(move _12, move _11);
+        _13 = copy _10.0;
+        _14 = copy _10.1;
+        kept _10;
+        dead _12;
+        dead _11;
+        dead _10;
+        (*_1).0 = copy _14;
+        _15 = ();
+        dead _15;
+        _18 = 0_usize;
+        _19 = &(*_13);
+        _17 = <[u8]>::index(move _19, move _18);
+        _16 = &(*_17);
+        _0 = core::option::Option::<&u8>::Some(move _16);
+        dead _19;
+        dead _18;
+        dead _17;
+        dead _16;
+        dead _14;
+        dead _13;
+        dead _2;
+        dead _1;
+        return;
+    }
+}
 
 /// The values before index `mid`, which is at most `len()`, and those
 /// from it on: `split_at` and `slice` are safe code over it.
@@ -531,3 +516,18 @@ fn <[u8]>::cut<'a>(
     &'a self,
     mid: { m: usize | m <= self.len() },
 ) -> { s: (&'a [u8], &'a [u8]) | s.0.len() == mid && s.1.len() + mid == self.len() };
+
+/// All its values, as a slice.
+#[intrinsic]
+export fn <[u8; 3]>::as_slice(&self) -> { s: &[u8] | s.len() == self.len() };
+
+/// Its values, by reference, front to back.
+export fn <[u8]>::iter(&self) -> { it: core::slice::Iter::<u8> | it.len() == self.len() } {
+    let _0: Iter<u8>;
+    let _1: &[u8]; // self
+    bb0: {
+        _0 = core::slice::Iter::<u8> { rest: copy _1 };
+        dead _1;
+        return;
+    }
+}
