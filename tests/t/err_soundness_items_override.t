@@ -18,9 +18,7 @@ impl Iterator for Low {
         }
     }
 
-    fn any<effect px, P: FnMut(usize) -> bool with px + Discard>(&mut self, mut p: P) -> bool
-    with px
-    {
+    fn any<P: FnMut(usize) -> bool + Discard>(&mut self, mut p: P) -> bool with P::e {
         if self.n < 8 {
             self.n = self.n + 1;
             p(9)

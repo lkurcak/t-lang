@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.112.0 (2026-11-28)
 
 Step 104: `Fn` bounds leave what calls do open. See
 [docs/104-open-fn-bounds.md](docs/104-open-fn-bounds.md).

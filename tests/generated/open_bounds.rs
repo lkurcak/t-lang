@@ -508,3 +508,52 @@ fn inherited_by_an_impl() {
     }
     run_all(cases);
 }
+
+/// What decides an open bound's `F::e`: the caller's view of what it gives,
+/// here a type parameter `G` known only by its bound `with X`, and never
+/// what the copy's `F` turns out to do. `inner` takes a function pointer of
+/// type `fn() -> u8 with F::e`, which `outer` gives one within `X`; the
+/// copy of `inner` for each closure must still know it does `X` (lemma O2
+/// of docs/104-open-fn-bounds.md).
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn decided_where_called() {
+    // A function for the pointer, and what it does.
+    let ptrs: [(&str, Fx); 3] = [
+        ("fn ptr() -> u8 { 3 }\n", Fx::NONE),
+        (
+            "fn ptr() -> u8 { opaque() + 250 }\n",
+            Fx {
+                alloc: false,
+                panic: true,
+            },
+        ),
+        (
+            "fn ptr() -> u8 {\n    let b = Box::new(3u8);\n    *b\n}\n",
+            Fx {
+                alloc: true,
+                panic: false,
+            },
+        ),
+    ];
+    let mut cases = Vec::new();
+    for (ptr, p) in ptrs {
+        for x in CALLERS.iter().flatten() {
+            for a in &ARGS {
+                for c in CALLERS {
+                    let main = format!(
+                        "{PRELUDE}\n{ptr}\nfn inner<F: Fn() -> u8 + Discard>(_f: F, h: fn() -> u8 with F::e) -> u8 {{ h() }}\n\n\
+                         fn outer<G: Fn() -> u8 with {x} + Discard>(g: G) -> u8 with {x} {{ inner(g, ptr) }}\n\n\
+                         fn main(){} {{\n    let _v = outer({});\n}}\n",
+                        says(c),
+                        a.text,
+                        x = x.text(),
+                    );
+                    let accept = p.within(*x) && a.does.within(*x) && c.is_none_or(|c| x.within(c));
+                    cases.push((main, None, accept));
+                }
+            }
+        }
+    }
+    run_all(cases);
+}

@@ -7,7 +7,5 @@ fn helper<effect e, F: Fn() with e + Discard>(f: F) with e {
     let _b = Box::new(1u8);
 }
 
-fn main() {
-    helper(|| {})
-}
+fn main() { helper(|| {}) }
 // error: `Box::new` may allocate, but `helper` doesn't say `with alloc`

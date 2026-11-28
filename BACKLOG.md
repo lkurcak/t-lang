@@ -2,9 +2,9 @@
 
 ## Now
 
-1. [Step 104, `Fn` bounds leave a closure's effects open](backlog/fn-bound-effects.md): with no
-   `with`, `F: FnMut() -> T` may do what its argument does, named `F::e`, and `with {}` says
-   none; so a helper that takes a closure needs no `effect e`.
+1. Retrospective 21, after 0.112.0 (steps 101 to 104: floats, math, open `Fn` bounds): probe
+   open bounds beside every kind of effect item and position (as retro 19's axes ask), the
+   process (CI times, PR rounds), and the untracked programs on the latest `t`.
 1. Step 105, CPU float speed, measured before it's tuned: n-body, spectral-norm, mandelbrot, a
    dot product and matrix multiplies in T, Rust and C, then what the numbers show (item 3 of
    [the ML and GPU path](backlog/ml-path.md)).
@@ -39,6 +39,10 @@
   neural-network library in t-libs, tested on MNIST from a linear model to a small residual
   net; an agent that learns to play a T game such as t-maze; then FFI with pointers and
   linking shared libraries; GPU kernels later.
+- A call of an open opaque result, `-> impl Fn() -> u8` with no `with`, from a function that
+  says its effects: the message says where the result's bound can say them, but offers no edit
+  (it would add `with ..` to the bound, in the other function); see "What it doesn't do" in
+  `docs/104-open-fn-bounds.md`.
 - The math vectors (`scripts/math/vectors.c`) for step 102's functions as step 103's have: an
   input in each interval of `EXP2`, `LN1`, `LN2` and `SINCOS`, as random ones leave most out
   and CI misses an entry wrong in its last bit; and a second search for any branch of a slow
@@ -133,6 +137,10 @@
 
 ## Done
 
+- Step 104 (0.112.0): an `Fn` bound with no `with` leaves what its calls do open, `F::e`, an
+  effect parameter of its own decided where it's called; opaque results' bounds too; core,
+  alloc, std, t-libs, t-fmt and t-life name no effect parameter one bound uses; a recursive
+  function passing its effect parameter on is no longer polymorphic recursion.
 - Step 103 (0.111.0): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`,
   `hypot`, `sin_pi` and `cos_pi`, correctly rounded; `cbrt` and `hypot` decided exactly by a
   midpoint's cube or square; each slow path checked on its own against MPFR (#166).
@@ -161,5 +169,3 @@
   the new syntax.
 - t-fmt: `t fmt` written in T, about 9,600 lines, printing byte for byte what `t fmt` does
   for every T file in this repo's tests, examples and libraries; its CI compares the two.
-- Step 99 (0.107.3, #151): a refinement proved of a value in one branch is no longer known in
-  the other branch or after the branches meet (a soundness hole since 0.77.0).

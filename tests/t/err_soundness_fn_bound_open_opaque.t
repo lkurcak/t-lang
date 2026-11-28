@@ -1,8 +1,6 @@
 // An opaque result's open bound hides what its calls do, so a function
 // that says its effects can't call it: no `with` can name them.
-fn make() -> impl Fn(i64) -> i64 + Discard {
-    |x| if x > 0 { panic("no") } else { x }
-}
+fn make() -> impl Fn(i64) -> i64 + Discard { |x| if x > 0 { panic("no") } else { x } }
 
 export fn caller() -> i64 {
     let f = make();

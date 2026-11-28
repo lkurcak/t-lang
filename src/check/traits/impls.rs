@@ -403,11 +403,12 @@ impl Checker {
             ps.iter().filter(|p| params.is_implicit(p)).count()
         };
         let (mine, trait_s) = (implicit(own, got_params), implicit(theirs, want_params));
-        if own.len() - mine == theirs.len() - trait_s && mine != trait_s {
+        if mine != trait_s {
             return Err(mismatch(match mine < trait_s {
                 true => "an `Fn` bound in the trait's says no `with`, which leaves what its calls \
                          do open, and this one says what they may do: say no `with` in it, as \
-                         the trait does"
+                         the trait does, and no effect parameter for it; what its calls do is \
+                         then `F::e`, after its type parameter"
                     .to_string(),
                 false => "an `Fn` bound in this one says no `with`, which leaves what its calls \
                           do open, but the trait's says what they may do: say it here too"

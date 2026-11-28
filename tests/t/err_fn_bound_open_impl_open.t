@@ -8,7 +8,9 @@ trait Each {
 struct Three {}
 
 impl Each for Three {
-    fn each<G: FnMut(u8) + Discard>(&self, mut g: G) with G::e { g(1); }
+    fn each<G: FnMut(u8) + Discard>(&self, mut g: G) with G::e {
+        g(1);
+    }
 }
 
 fn main() {}

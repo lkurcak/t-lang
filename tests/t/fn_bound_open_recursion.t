@@ -13,7 +13,7 @@ fn quiet() -> u8 with {} { run(|x| x, 3) }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;
-    out.line(&quiet())?; // expect: 0
+    out.line(&quiet())?;             // expect: 0
     out.line(&run(|x| x + 200, 2))?; // expect: 200
     out.line(&run_e(|x| x + 1, 2))?; // expect: 2
     Ok(())

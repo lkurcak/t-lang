@@ -53,8 +53,8 @@ fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
         // expect: 3
     }
     let mut m = 0u8;
-    Three {}.each(|x| m = m + x);
-    out.line(&m)?; // expect: 6
+    (Three {}).each(|x| m = m + x);
+    out.line(&m)?;              // expect: 6
     out.line(&sum(&Three {}))?; // expect: 6
     Ok(())
 }
