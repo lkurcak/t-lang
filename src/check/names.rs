@@ -465,9 +465,7 @@ impl Walk<'_> {
             }
             _ => {}
         }
-        for c in e.children() {
-            self.expr(c);
-        }
+        e.each_child(&mut |c| self.expr(c));
     }
 
     fn pattern(&mut self, p: &Pattern) {

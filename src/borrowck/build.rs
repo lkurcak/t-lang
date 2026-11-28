@@ -2251,9 +2251,7 @@ fn pred_names<'e>(e: &'e Expr, binder: &str, out: &mut Vec<&'e str>) {
     {
         out.push(name);
     }
-    for c in e.children() {
-        pred_names(c, binder, out);
-    }
+    e.each_child(&mut |c| pred_names(c, binder, out));
 }
 
 /// Does `p` bind any variables?

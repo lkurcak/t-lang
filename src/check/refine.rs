@@ -4141,9 +4141,7 @@ fn const_named(consts: &[Ident], name: &str) -> Option<Named> {
 /// Calls `f` with `e` and everything in it.
 fn each_expr(e: &Expr, f: &mut impl FnMut(&Expr)) {
     f(e);
-    for c in e.children() {
-        each_expr(c, f);
-    }
+    e.each_child(&mut |c| each_expr(c, f));
 }
 
 /// The value of `e`, if it's a constant, of literals: what a predicate

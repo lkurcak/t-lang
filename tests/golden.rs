@@ -401,8 +401,7 @@ fn renames_in(path: &Path) -> (Vec<String>, usize) {
     let src = sources.text();
     let before = expect::run(&files);
     let mut defs: Vec<_> = info
-        .notes
-        .iter()
+        .notes()
         .filter(|n| n.def == Some(n.span) && !sources.in_others(n.span.start))
         .collect();
     defs.sort_by_key(|n| n.span.start);

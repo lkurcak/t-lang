@@ -174,9 +174,7 @@ fn mentioned(e: &Expr, out: &mut HashSet<String>) {
         }
         _ => {}
     }
-    for c in e.children() {
-        mentioned(c, out);
-    }
+    e.each_child(&mut |c| mentioned(c, out));
 }
 
 /// The strongly connected components of the graph whose edges from each
@@ -449,12 +447,12 @@ impl Checker {
     /// stand for, which monomorphising and the tools read.
     pub(super) fn zonk_inferred(&mut self) {
         let z = |cx: &Checker, t: &Type| cx.with_inferred(t);
-        let mut notes = std::mem::take(&mut self.info.notes);
+        let mut notes = std::mem::take(&mut self.info.own_notes);
         for n in &mut notes {
             n.ty = n.ty.as_ref().map(|t| z(self, t));
             n.args = n.args.iter().map(|t| z(self, t)).collect();
         }
-        self.info.notes = notes;
+        self.info.own_notes = notes;
         let mut instances = std::mem::take(&mut self.info.instances);
         for i in instances.values_mut() {
             match i {

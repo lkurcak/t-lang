@@ -1139,7 +1139,7 @@ fn type_symbol(src: &str, d: &TypeDecl) -> DocumentSymbol {
 /// The types the checker inferred, and the type arguments it worked out for
 /// each use of something generic, inside `range` of the file at `uri`.
 fn inlay_hints(a: &Analysis, uri: &Uri, range: Range) -> Vec<InlayHint> {
-    let mut notes: Vec<_> = a.info().notes.iter().collect();
+    let mut notes: Vec<_> = a.info().notes().collect();
     notes.sort_by_key(|n| n.span.start);
     notes
         .iter()

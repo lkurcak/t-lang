@@ -10,7 +10,7 @@ use crate::source::Sources;
 
 pub fn warnings(sources: &Sources, prog: &Program) -> Vec<Warning> {
     let mut blocks = Vec::new();
-    for (f, ..) in prog.all_fns() {
+    for (f, ..) in prog.own_fns() {
         unsafe_blocks(&f.body, &mut blocks);
     }
     let text = sources.text();
@@ -34,9 +34,7 @@ fn unsafe_blocks(e: &Expr, out: &mut Vec<usize>) {
     if let ExprKind::Unsafe(_) = e.kind {
         out.push(e.span.start);
     }
-    for c in e.children() {
-        unsafe_blocks(c, out);
-    }
+    e.each_child(&mut |c| unsafe_blocks(c, out));
 }
 
 /// Is there a `// SAFETY:` comment among the lines of comments just above

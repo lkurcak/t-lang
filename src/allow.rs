@@ -75,7 +75,8 @@ pub fn apply(prog: &Program, sources: &Sources, warnings: &mut Vec<Warning>) {
 /// Everything in `prog` that has attributes, as the part of the program
 /// they're of, how many modules out that is from where they're written,
 /// and the attributes: a module that has files is in them too, and the
-/// crate root's own are of all of it.
+/// crate root's own are of all of it. Not the libraries' functions and
+/// types: what they allow is of their own code, whose warnings are dropped.
 fn allowed<'p>(prog: &'p Program, sources: &Sources) -> Vec<(Span, usize, &'p [Allow])> {
     let mut out: Vec<(Span, usize, &[Allow])> = Vec::new();
     out.push((
@@ -98,10 +99,10 @@ fn allowed<'p>(prog: &'p Program, sources: &Sources) -> Vec<(Span, usize, &'p [A
             depth += 1;
         }
     }
-    for (f, ..) in prog.all_fns() {
+    for (f, ..) in prog.own_fns() {
         out.push((f.span, 0, &f.allows));
     }
-    for (d, _) in prog.all_types() {
+    for (d, _) in prog.own_types() {
         out.push((d.span(), 0, d.allows()));
         match d {
             TypeDecl::Struct(s) => {

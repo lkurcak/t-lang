@@ -340,7 +340,5 @@ fn nested_fns<'p>(e: &'p Expr, out: &mut Vec<&'p FnDecl>) {
             }
         }
     }
-    for c in e.children() {
-        nested_fns(c, out);
-    }
+    e.each_child(&mut |c| nested_fns(c, out));
 }

@@ -6,7 +6,7 @@ fn syntax_errors_cannot_produce_a_checked_program() {
     let analysis = t_lang::check_source(src);
     let error = analysis.result.unwrap_err();
     assert_eq!(error.phase, t_lang::error::Phase::Syntax);
-    assert!(analysis.info.notes.is_empty());
+    assert!(analysis.info.notes().next().is_none());
     let run = t_lang::run_source(src);
     assert_eq!(run.result.unwrap_err().phase, t_lang::error::Phase::Syntax);
     assert!(run.output.is_empty());
