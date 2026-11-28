@@ -2,15 +2,12 @@
 
 ## Now
 
-1. Owner: decide how a generic helper that takes a closure says its effects. Today it spells
-   out every one (`effect e`, `F: .. with e + Discard`, then `with {alloc, panic, e}` in
-   full). In a private function, either the rest is inferred beside a written `e`, or an `F:
-   FnMut(..)` bound that names no effect gets an inferred one (see "Generic helpers over
-   closures" in t-fmt's `FRICTION.md`).
 1. Step 103, the rest of the math functions, correctly rounded on step 102's machinery
    (`docs/102-math.md`): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`
-   (glibc's `cbrt(-27.0)` is `-3.0000000000000004`) and `hypot`, then `sin_pi` and `cos_pi`;
-   then the [ML and GPU path](backlog/ml-path.md).
+   (glibc's `cbrt(-27.0)` is `-3.0000000000000004`) and `hypot`, then `sin_pi` and `cos_pi`.
+1. [Step 104, `Fn` bounds leave a closure's effects open](backlog/fn-bound-effects.md): with no
+   `with`, `F: FnMut() -> T` may do what its argument does, named `F::e`, and `with {}` says
+   none; so a helper that takes a closure needs no `effect e`.
 
 ## Later
 
@@ -129,6 +126,8 @@
 
 ## Done
 
+- Owner's decision: an `Fn` bound that says no `with` leaves what its calls do open, named
+  `F::e`, rather than saying they do nothing; step 104 does it (#165).
 - Checking a program copies and walks less of the libraries: an empty one's check is half as
   long (52 ms to 27 in the test profile), their notes shared, lints and searches for nested
   items skipping them (#164).
@@ -156,5 +155,3 @@
   the other branch or after the branches meet (a soundness hole since 0.77.0).
 - Step 98 (0.107.2, #150): checking time no longer doubles with each level of nested `if`s
   and `match`es. A function of t-fmt took 28 seconds to check, now a quarter of one.
-- Step 97 (0.107.1, #149): a bound an associated effect hangs on is decided with every impl,
-  derived ones too, the same in every package (a hole since 0.107.0); three crashes fixed.
