@@ -1,6 +1,6 @@
 // What an opaque type hides can't do more than its bound says: callers of
-// `make` see only `Fn(i64) -> i64`, which can't panic.
-fn make() -> impl Fn(i64) -> i64 { |x| x / 0 }
+// `make` see only `Fn(i64) -> i64 with {}`, which can't panic.
+fn make() -> impl Fn(i64) -> i64 with {} { |x| x / 0 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;

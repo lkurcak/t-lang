@@ -7,7 +7,7 @@ fn get(b: &mut RawBuf<i64>, i: usize) -> i64 with unsafe {
     if i < b.cap() { b.read(i) } else { 0 }
 }
 
-fn twice<F: FnMut() -> i64 + Discard>(mut f: F) -> i64 with panic { f() + f() }
+fn twice<F: FnMut() -> i64 with {} + Discard>(mut f: F) -> i64 with panic { f() + f() }
 
 fn main() with {alloc, panic} {
     let mut b: RawBuf<i64> = RawBuf::new(1);

@@ -1028,6 +1028,11 @@ fn depth_of(t: &Type, p: &str) -> Option<i64> {
     match t {
         Type::Param(q, _) if q == p => Some(0),
         Type::Proj(s, ..) => depth_of(s, p).map(|_| UNBOUNDED),
+        // A set of effects is flat: one in another is its effects
+        // (`Type::effects`), so `{e}` for `e` is no deeper, and a set's
+        // atoms are only so many. Passing an effect parameter on, as an
+        // argument for one, is always `{e}` (`Params::arg`).
+        Type::Effects(items) => items.iter().filter_map(|t| depth_of(t, p)).max(),
         t => t
             .parts()
             .filter_map(|t| depth_of(t, p))

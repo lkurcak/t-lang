@@ -1,4 +1,4 @@
-// An impl's bound with no `with` holds only of what can't panic, so `go`,
+// An impl's bound that says `with {}` holds only of what can't panic, so `go`,
 // which knows only that `W<F>` implements `Run`, needn't say it may.
 trait Run {
     fn run(&self) -> i64;
@@ -7,7 +7,7 @@ trait Run {
 #[derive(Discard where F: Discard)]
 struct W<F> { f: F }
 
-impl<F: Fn() -> i64> Run for W<F> {
+impl<F: Fn() -> i64 with {}> Run for W<F> {
     fn run(&self) -> i64 { (self.f)() }
 }
 

@@ -150,6 +150,12 @@ pub const FN_TRAITS: &[&str] = &[FN, FN_MUT, FN_ONCE];
 /// be written, so only such bounds can say what it is.
 pub const SIG: &str = "(signature)";
 
+/// The associated effect of `FnOnce`, `F::e`: what a call of an `F` does,
+/// the effects of its `SIG`. A bound with no `with` leaves it open, so a
+/// function generic in `F` has it where it calls one (see
+/// docs/104-open-fn-bounds.md).
+pub const CALLS: &str = "e";
+
 /// The traits `core::prelude` brings in, which messages name by their
 /// names alone (see `Traits::shorten`).
 const PRELUDE_TRAITS: &[&str] = &[
@@ -1719,6 +1725,31 @@ fn binding(
             _ => None,
         };
         return sig.map(|t| (t, Vec::new()));
+    }
+    // What a call of it does: the effects of its signature, which a bound
+    // or an opaque type's says, or a function's or closure's type has. On a
+    // parameter whose bound says no `with`, that's the parameter's own
+    // effect parameter (`modules::Rewrite::open_effects`). Where its
+    // signature's effects are this projection itself, an opaque type's or
+    // a type's parameter's open bound, nothing says more: it's rigid
+    // (lemmas O3 and O4 of docs/104-open-fn-bounds.md).
+    if name == CALLS && tr == FN_ONCE {
+        let this = Type::Proj(Box::new(s.clone()), FN_ONCE.into(), CALLS.into());
+        let sig = Type::Proj(Box::new(s.clone()), FN_ONCE.into(), SIG.into());
+        let raw = match local.iter().find(|(p, _)| *p == sig) {
+            Some((_, u)) => Some(u.clone()),
+            None => project(impls, anon, local, s, FN_ONCE, SIG),
+        };
+        return match raw? {
+            Type::Fn(f) if f.effects.effect_items().contains(&this) => None,
+            Type::Fn(f) => Some((*f.effects, Vec::new())),
+            // Through a reference, what's behind it.
+            Type::Proj(inner, _, n) if n == SIG && *inner != *s => Some((
+                Type::effects([Type::Proj(inner, FN_ONCE.into(), CALLS.into())]),
+                Vec::new(),
+            )),
+            _ => None,
+        };
     }
     // A type parameter, a projection or an opaque type: if a bound says it
     // implements `tr`, the projection is rigid (lemma R2); or else it's a

@@ -52,13 +52,23 @@ impl Checker {
             }
             // `FnOnce`'s signature: what a bound like `Fn(i64) -> i64`
             // says it is. Its name can't be written, so nothing else can.
+            // And what its calls do, `F::e`: the effects of its signature
+            // (`traits::binding`).
             let assoc = match name.name == FN_ONCE {
-                true => vec![AssocDecl {
-                    name: crate::traits::SIG.into(),
-                    effect: false,
-                    bounds: Vec::new(),
-                    span: name.span,
-                }],
+                true => vec![
+                    AssocDecl {
+                        name: crate::traits::SIG.into(),
+                        effect: false,
+                        bounds: Vec::new(),
+                        span: name.span,
+                    },
+                    AssocDecl {
+                        name: crate::traits::CALLS.into(),
+                        effect: true,
+                        bounds: Vec::new(),
+                        span: name.span,
+                    },
+                ],
                 false => Vec::new(),
             };
             let def = TraitDef {

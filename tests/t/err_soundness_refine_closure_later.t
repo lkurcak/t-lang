@@ -3,7 +3,7 @@
 // to 1. The closure's `d` is the copy, not what `d` is at the call. (One
 // that borrows `d` runs only while `d` can't change: `frozen` in
 // loan_forgets.t.)
-fn apply<F: FnMut() -> i64 + Discard>(mut f: F) -> i64 { f() }
+fn apply<F: FnMut() -> i64 with {} + Discard>(mut f: F) -> i64 { f() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;

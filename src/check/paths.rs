@@ -156,7 +156,7 @@ impl Checker {
         rest: &str,
     ) -> Result<Vec<Type>, Error> {
         if targs.is_empty() {
-            let example = vec!["i64"; params.len()].join(", ");
+            let example = vec!["i64"; params.written()].join(", ");
             return Ok(params
                 .iter()
                 .map(|p| {
@@ -173,16 +173,24 @@ impl Checker {
                 })
                 .collect());
         }
-        if targs.len() != params.len() {
+        if targs.len() != params.written() {
             return Err(generics::arity_error(
                 &format!("`{name}`"),
-                params.len(),
+                params.written(),
                 targs.len(),
                 span,
             ));
         }
+        // An open `Fn` bound's effect parameter isn't written: it's
+        // decided by what the bound's argument's calls do.
+        let mut written = targs.iter();
         let mut args = Vec::new();
-        for (p, t) in params.iter().zip(targs) {
+        for p in params.iter() {
+            if params.is_implicit(p) {
+                args.push(self.fresh_effects(span, format!("`{p}` for this use of `{name}`")));
+                continue;
+            }
+            let t = written.next().expect("as many as are written");
             args.push(match params.is_effect(p) {
                 true if matches!(&t.kind, TypeExprKind::Named(n, a) if n == "_" && a.is_empty()) => {
                     self.fresh_effects(t.span, format!("`{p}` for this use of `{name}`"))

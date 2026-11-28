@@ -4,9 +4,9 @@ struct Map2<I, F, G> { iter: I, f: F, g: G }
 
 impl<I: Iterator, U, F: FnMut(I::Item) -> U, G: FnMut() -> U> Iterator for Map2<I, F, G> where U: Discard {
     type Item = U;
-    effect e = I::e;
+    effect e = {I::e, F::e, G::e};
 
-    fn next(&mut self) -> Option<U> with I::e {
+    fn next(&mut self) -> Option<U> with {I::e, F::e, G::e} {
         match self.iter.next() {
             Some(x) => {
                 let _u = (self.f)(x);

@@ -9,7 +9,7 @@ trait Get {
 }
 
 // Needs a closure that returns what lives as long as its argument.
-impl<P: Fn(&i64) -> Option<&i64>> Get for Wrap<P> {
+impl<P: Fn(&i64) -> Option<&i64> with {}> Get for Wrap<P> {
     fn get<'a>(&self, x: &'a i64) -> Option<&'a i64> { (self.p)(x) }
 }
 

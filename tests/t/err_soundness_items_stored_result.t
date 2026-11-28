@@ -6,9 +6,9 @@ struct Then<I, F, U> { iter: I, f: F, last: Option<U> }
 
 impl<I: Iterator, F: FnMut(I::Item) -> U, U> Iterator for Then<I, F, U> {
     type Item = U;
-    effect e = I::e;
+    effect e = {I::e, F::e};
 
-    fn next(&mut self) -> Option<U> with I::e {
+    fn next(&mut self) -> Option<U> with {I::e, F::e} {
         match self.last.take() {
             Some(u) => Some(u),
             None => match self.iter.next() {

@@ -1,6 +1,6 @@
 // The same from inside `g`'s own group, where `g`'s effects aren't known
 // yet when its body is checked: the bound is checked once they are.
-fn twice<F: Fn() -> i64 + Discard>(f: F) -> i64 { core::num::wrapping_add(f(), f()) }
+fn twice<F: Fn() -> i64 with {} + Discard>(f: F) -> i64 { core::num::wrapping_add(f(), f()) }
 
 fn g(n: u8) -> i64 {
     if n == 0 { panic("boom") } else { twice(|| g(n - 1)) }

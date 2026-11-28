@@ -1194,6 +1194,20 @@ impl Params {
         self.unsized_.iter().any(|c| c == name)
     }
 
+    /// Is `name` one of them, and the effect parameter of an `Fn` bound
+    /// that says no `with`, `F::e`, which nothing writes, so no type
+    /// arguments say (see `modules::Rewrite::open_effects`)? No name
+    /// written can have a `::`.
+    pub fn is_implicit(&self, name: &str) -> bool {
+        self.is_effect(name) && name.contains("::")
+    }
+
+    /// How many type arguments written for them say: those that aren't
+    /// `is_implicit`.
+    pub fn written(&self) -> usize {
+        self.names.iter().filter(|p| !self.is_implicit(p)).count()
+    }
+
     /// Is `name` one of them, and a type parameter?
     pub fn is_type(&self, name: &str) -> bool {
         self.names.iter().any(|n| n == name) && !self.is_effect(name) && !self.is_const(name)

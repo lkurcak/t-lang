@@ -1413,6 +1413,7 @@ impl Rewrite<'_> {
             }
             self.discard_when(d)?;
             self.generics(&mut d.generics)?;
+            self.open_effects(&mut d.generics);
             self.ty(&mut d.self_ty)?;
             for a in &mut d.assoc {
                 self.ty(&mut a.ty)?;
@@ -1811,6 +1812,61 @@ impl Rewrite<'_> {
         Ok(())
     }
 
+    /// Each `Fn` bound of a function's, a method's or an impl's that says
+    /// no `with` leaves what its calls do open: it gets an effect
+    /// parameter of its own, `F::e`, which its calls have, as if `effect
+    /// F::e` and `with F::e` were written. So each use decides it by what
+    /// its argument's calls do, as it does a written one, and what's
+    /// inferred and checked of it is what is of any (lemma O1 of
+    /// docs/104-open-fn-bounds.md). Its name can't be written, as no
+    /// parameter's can have `::` in it: `F::e` written is the projection
+    /// `<F as FnOnce>::e`, which is what `F`'s calls do, so it (see
+    /// `traits::binding`).
+    ///
+    /// Not a type's: a struct can't have effect parameters, and its bound
+    /// with no `with` says nothing of its calls' effects (lemma O4).
+    fn open_effects(&mut self, g: &mut Generics) {
+        let mut open: Vec<(String, Span)> = Vec::new();
+        let subjects = (g.bounds.iter_mut())
+            .map(|(p, items)| (p.name.clone(), items))
+            .chain(g.wheres.iter_mut().map(|(t, items)| (t.to_string(), items)));
+        for (subject, items) in subjects {
+            for b in items.iter_mut() {
+                if b.sig.is_none() || b.effects.is_some() {
+                    continue;
+                }
+                let name = format!("{subject}::e");
+                let span = b.span;
+                let item = Effect {
+                    kind: EffectKind::Named(Ident {
+                        name: name.clone(),
+                        span,
+                        id: self.id(),
+                    }),
+                    span,
+                    id: self.id(),
+                    unless: None,
+                    cond: None,
+                };
+                b.effects = Some(EffectSet {
+                    items: vec![item],
+                    span,
+                    with: true,
+                });
+                // Said twice, `F: Fn() + FnMut()`, it's one parameter, and
+                // the checker says it's said twice.
+                if !open.iter().any(|(n, _)| *n == name) {
+                    open.push((name, span));
+                }
+            }
+        }
+        for (name, span) in open {
+            let id = self.id();
+            g.types.push(Ident { name, span, id });
+            g.effects.push(id);
+        }
+    }
+
     fn bound(&mut self, b: &mut BoundItem) -> Result<(), Error> {
         self.trait_ref(&mut b.name)?;
         for a in &mut b.assoc {
@@ -1854,6 +1910,7 @@ impl Rewrite<'_> {
             .extend(f.generics.types.iter().map(|p| p.name.clone()));
         let outer = std::mem::replace(&mut self.interface, interface);
         self.generics(&mut f.generics)?;
+        self.open_effects(&mut f.generics);
         for p in &mut f.params {
             self.ty(&mut p.ty)?;
         }

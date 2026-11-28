@@ -814,6 +814,9 @@ pub(crate) struct Checker {
     effect_vars: HashSet<u32>,
     /// Is the function being checked a method of an impl of a trait?
     in_trait_impl: bool,
+    /// Is it a method of a trait or of a trait's impl, whose effects the
+    /// trait says, so never inferred (`infer::infers`)?
+    in_trait_method: bool,
     /// Is the body being checked an impl's own `discard`? Then `self`, at
     /// its end, is dropped part by part (lemma D3 of
     /// docs/20-destructors.md).
@@ -1277,6 +1280,7 @@ impl Checker {
             effect_owners: HashMap::new(),
             effect_vars: HashSet::new(),
             in_trait_impl: false,
+            in_trait_method: false,
             in_discard: false,
             refined: HashMap::new(),
             unless: HashMap::new(),
@@ -1844,6 +1848,7 @@ impl Checker {
                 method,
                 Some(MethodOf::Impl(k)) if prog.impls[k].trait_name.is_some()
             );
+            self.in_trait_method = self.in_trait_impl || matches!(method, Some(MethodOf::Trait(_)));
             // An impl of `Discard` for a refined type is one of
             // `DiscardWhen` (`modules::Rewrite::discard_when`).
             self.in_discard = matches!(

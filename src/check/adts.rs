@@ -124,6 +124,7 @@ impl Checker {
                         }
                         // A refinement is checked once every type is known.
                         let t = self.resolve_refined_with(&f.ty, &params, &mut lts)?;
+                        open_calls(&t, f.ty.span)?;
                         field_types.push((symbol.as_str(), f.ty.span, t.clone()));
                         fields.push((f.name.name.clone(), t));
                     }
@@ -142,6 +143,7 @@ impl Checker {
                         for f in &v.fields {
                             // A refinement is checked once every type is known.
                             let t = self.resolve_refined_with(f, &params, &mut lts)?;
+                            open_calls(&t, f.span)?;
                             field_types.push((symbol.as_str(), f.span, t.clone()));
                             tys.push(t);
                         }
@@ -583,4 +585,32 @@ pub(super) fn adt_names(t: &Type, out: &mut HashSet<String>) {
     each_adt(t, &mut |name, _| {
         out.insert(name.to_string());
     });
+}
+
+/// Refuses field type `t`, written at `span`, if it names what calls of a
+/// type parameter do, `<F as FnOnce>::e`, that the type's bound leaves
+/// open. A function that has the type knows that only by its own bound on
+/// `F`, which may say more than what calls of the `F` it's used at do: a
+/// value it made, `fn() with F::e` there, could then be read where `F` is
+/// one whose calls do less (lemma O4 of docs/104-open-fn-bounds.md).
+fn open_calls(t: &Type, span: crate::error::Span) -> Result<(), Error> {
+    fn find(t: &Type) -> Option<&Type> {
+        match t {
+            Type::Proj(s, tr, n) if tr == crate::traits::FN_ONCE && n == crate::traits::CALLS => {
+                Some(s)
+            }
+            t => t.parts().find_map(find),
+        }
+    }
+    match find(t) {
+        Some(s) => Err(Error::ty(
+            span,
+            format!(
+                "a field can't have what calls of `{s}` do, `{s}::e`, in its type: the type's \
+                 bound on `{s}` leaves that open, so what has it is only known where the type is \
+                 used; say what its effects are, as in `with {{alloc}}`"
+            ),
+        )),
+        None => Ok(()),
+    }
 }
