@@ -48,6 +48,8 @@ EXPORT(acosh)
 EXPORT(atanh)
 EXPORT(cbrt)
 EXPORT(sqrt)
+EXPORT(sin_pi)
+EXPORT(cos_pi)
 EXPORT2(pow)
 EXPORT2(atan2)
 EXPORT2(hypot)
@@ -62,6 +64,7 @@ static const struct {
     ENTRY(ln_1p), ENTRY(sin),   ENTRY(cos),    ENTRY(tan),   ENTRY(asin),  ENTRY(acos),
     ENTRY(atan),  ENTRY(sinh),  ENTRY(cosh),   ENTRY(tanh),  ENTRY(asinh), ENTRY(acosh),
     ENTRY(atanh), ENTRY(cbrt),  ENTRY(sqrt),   ENTRY(pow),   ENTRY(atan2), ENTRY(hypot),
+    ENTRY(sin_pi), ENTRY(cos_pi),
 };
 
 static int f;         /* the function, in FUNCTIONS */

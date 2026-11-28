@@ -683,7 +683,8 @@ pub fn log(x: f64, b: u32, f: Format) -> u64 with {} {
 
 /// `a / b`, of finite floats with `|a| < |b|`, `b` not 0: `a` is `ma ·
 /// 2^ea` and `b` is `mb · 2^eb`, so it's `ma / (2 mb)`, from 1/4 to 1, by
-/// long division, times `2^(ea - eb + 1)`, a shift right.
+/// long division, times `2^(ea - eb + 1)`: a shift right, or of `ea = eb`,
+/// where `ma < mb`, left by one.
 fn quotient(a: f64, b: f64, n: { n: usize | n >= 2 && n <= 34 }) -> Fix with {} {
     if a == 0.0 {
         return Fix::zero(n);
@@ -692,7 +693,15 @@ fn quotient(a: f64, b: f64, n: { n: usize | n >= 2 && n <= 34 }) -> Fix with {} 
     let (mb, eb) = significand(if b < 0.0 { -b } else { b });
     let q = ratio(ma, if mb > 0 { 2 * mb } else { 1 }, n);
     let shift = eb - ea - 1;
-    let r = if shift <= 0 { q } else if shift >= 2000 { Fix::zero(n) } else { q.shr(shift as u32) };
+    let r = if shift < 0 {
+        q.shl(1)
+    } else if shift == 0 {
+        q
+    } else if shift >= 2000 {
+        Fix::zero(n)
+    } else {
+        q.shr(shift as u32)
+    };
     if (a < 0.0) != (b < 0.0) { r.neg() } else { r }
 }
 
@@ -718,21 +727,29 @@ fn ln1p_series(d: &Fix) -> (Fix, { e: u32 | e <= 2000 }) with {} {
 /// magnitude at least 2^-53: `1 + x` is `s + se`, exactly, of floats, and
 /// it's `ln s + ln(1 + se/s)`, the second below 2^-52.
 pub fn ln_1p(x: f64, f: Format) -> u64 with {} {
-    let s = 1.0 + x;
-    let bb = s - 1.0;
-    let se = 1.0 - (s - bb) + (x - bb);
     let mut v = Fix::zero(LOW);
     for step in 0..2u32 {
         let n = if step == 0 { LOW } else { HIGH };
-        let (l, err) = ln_fix(s, n);
-        let (c, cerr) = ln1p_series(&quotient(se, s, n));
-        let t = l.add(&c);
-        match decide_signed(&t, err + cerr + 4, 0, f) {
+        let (t, err) = ln1p_fix(x, n);
+        match decide_signed(&t, err, 0, f) {
             Option::Some(bits) => return bits,
             Option::None => v = t,
         }
     }
     nearest_signed(&v, 0, f)
+}
+
+/// `ln(1 + x)`, of `ln_1p`'s `x`, in `n` limbs, and how many units it may
+/// be off.
+fn ln1p_fix(x: f64, n: { n: usize | n >= 2 && n <= 34 }) -> (Fix, { e: u32 | e <= 110000 })
+with {}
+{
+    let s = 1.0 + x;
+    let bb = s - 1.0;
+    let se = 1.0 - (s - bb) + (x - bb);
+    let (l, err) = ln_fix(s, n);
+    let (c, cerr) = ln1p_series(&quotient(se, s, n));
+    (l.add(&c), err + cerr + 4)
 }
 
 /// The float nearest `2^x`, of format `f`, of an `x` not an integer, of
@@ -1353,4 +1370,394 @@ pub fn trig(x: f64, which: Trig, f: Format) -> u64 with {} {
         }
     }
     nearest_signed(&v, scale, f)
+}
+
+// The slow paths of step 103 (docs/103-more-math.md), and the exact
+// comparisons that decide `cbrt` and `hypot`.
+
+/// π, of `n` limbs, less than 2 units off.
+fn pi(n: { n: usize | n >= 2 && n <= 38 }) -> Fix with {} { half_pi(n).shl(1) }
+
+/// sqrt v, of an exact `v` from 0 to below 4, to less than 32 units: below
+/// 1/4 it's moved up by `4^j` first, exactly, to `w` from 1/4 to 1, so the
+/// root is `sqrt w / 2^j`. `1 / sqrt w` by Newton's iteration `r (3 - w
+/// r^2) / 2` from the `f64` nearest, which doubles the bits it's right to
+/// each time, 52 to more than 1088 in five, the last off by its own
+/// roundings only, less than 7 units; then `w · r`, at most 4 times that,
+/// and one more.
+fn sqrt_fix(v: &Fix) -> Fix with {} {
+    let n = v.n;
+    let top = v.top();
+    if top < 0 {
+        return Fix::zero(n);
+    }
+    let frac = 32 * (n as i64 - 1);
+    let j0 = (frac - 1 - top) / 2;
+    let j: { j: u32 | j <= 640 } = if j0 <= 0 { 0 } else if j0 > 640 { 640 } else { j0 as u32 };
+    let w = v.shl(2 * j);
+    let mut r = Fix::of(n, 1.0 / w.to_f64().sqrt());
+    let three = Fix::int(n, 3);
+    for _ in 0..6u32 {
+        r = r.mul(&three.sub(&w.mul(&r.mul(&r)))).shr(1);
+    }
+    w.mul(&r).shr(j)
+}
+
+/// atan v, of a `v` from 0 to 1 that's less than `ev` units off, to less
+/// than the units it says: halved three times, by `tan(θ/2) = tan θ / (1 +
+/// sqrt(1 + tan^2 θ))`, to at most tan(π/32), below 0.1, each time less
+/// than 18 units off more, and what it was before at most 3/4 of that, as
+/// the map's slope is at most 1/2 and `sqrt`'s and `recip`'s errors shrink
+/// so; then its Taylor series, `w - w^3/3 + ..`, each term less than 3 units
+/// off, as `w^2 < 0.01` shrinks what its powers were; and the sum times 8,
+/// exactly.
+fn atan_fix(v: &Fix, ev: { e: u32 | e <= 10000 }) -> (Fix, { e: u32 | e <= 200000 }) with {} {
+    let n = v.n;
+    let one = Fix::int(n, 1);
+    let mut w = *v;
+    for _ in 0..3u32 {
+        let s = sqrt_fix(&one.add(&w.mul(&w)));
+        w = w.mul(&recip(&one.add(&s)));
+    }
+    let w2 = w.mul(&w);
+    let mut sum = w;
+    let mut p = w;
+    let mut terms: { t: u32 | t <= 2000 } = 1;
+    for i in 1..2000u32 {
+        p = p.mul(&w2);
+        if p.is_zero() {
+            break;
+        }
+        let t = p.div_small(2 * i + 1);
+        sum = if i % 2 == 1 { sum.sub(&t) } else { sum.add(&t) };
+        terms = i + 1;
+    }
+    (sum.shl(3), 8 * ev + 24 * terms + 400)
+}
+
+/// The float nearest the angle of the point `(±b, a)`, of format `f`,
+/// negative if `negative`: `atan(a / b)`, or `π - atan(a / b)` if `left`,
+/// of finite `a` and `b` above 0. Where `a / b` is below 2^-60 and the
+/// angle is `atan(a / b)`, `atan_tiny`'s; else to `a < b`, `atan q`, `q = a
+/// / b` less than a unit off (`quotient`); `π/4` where they're equal; past
+/// it `π/2 - atan(b / a)`; and π less that if `left`.
+pub fn atan2(a: f64, b: f64, left: bool, negative: bool, f: Format) -> u64 with {} {
+    let (ma, ea) = significand(a);
+    let (mb, eb) = significand(b);
+    if !left && ea - eb < -60 {
+        return atan_tiny(ma, mb, ea - eb + 1, negative, f);
+    }
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let (t, err) = if a < b {
+            atan_fix(&quotient(a, b, n), 1)
+        } else if a == b {
+            (half_pi(n).shr(1), 1)
+        } else {
+            let (t, e) = atan_fix(&quotient(b, a, n), 1);
+            (half_pi(n).sub(&t), e + 1)
+        };
+        let (w, e) = if left { (pi(n).sub(&t), err + 2) } else { (t, err) };
+        match decide(&w, e, 0, negative, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = w,
+        }
+    }
+    nearest(&v, 0, negative, f)
+}
+
+/// The float nearest `atan q`, negative if `negative`, of a `q` below
+/// 2^-60, `(ma / mb) · 2^(k - 1)`: `q = Q · 2^k`, `Q = ma / 2mb` from 1/4 to 1,
+/// and `atan q = 2^k (Q - B)`, `B = Q^3 4^k/3 - Q^5 16^k/5 + ..`, at most
+/// 2^-118 of `Q`. `Q` is less than a unit off, and exact where the odd part
+/// of `mb` divides `ma`, as it then has at most 54 bits; `B` less than 2
+/// units a term. Where every term of `B` is below a unit and `Q` is exact,
+/// `atan q` is above `Q` less a unit and below `Q`, where no rounding
+/// boundary is, as they're whole units: so it rounds as `Q` less half a unit,
+/// which isn't one. That's where `q` is halfway between two floats, which
+/// `atan q`, a little less, isn't.
+fn atan_tiny(
+    ma: { m: u64 | m < 9007199254740992 },
+    mb: { m: u64 | m < 9007199254740992 },
+    k: { k: i64 | k >= -2500 && k <= -59 },
+    negative: bool,
+    f: Format,
+) -> u64 with {} {
+    let mut odd: { m: u64 | m < 9007199254740992 } = mb;
+    for _ in 0..53u32 {
+        if odd % 2 == 1 || odd == 0 {
+            break;
+        }
+        odd = odd / 2;
+    }
+    let exact = odd > 0 && ma % odd == 0;
+    let shift: u32 = if k < -2000 { 4000 } else { (-2 * k) as u32 };
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let q = ratio(ma, if mb > 0 { 2 * mb } else { 1 }, n);
+        let q2 = q.mul(&q).shr(shift);
+        let mut b = Fix::zero(n);
+        let mut p = q;
+        let mut terms: { t: u32 | t <= 200 } = 0;
+        for i in 1..200u32 {
+            p = p.mul(&q2);
+            if p.is_zero() {
+                break;
+            }
+            let t = p.div_small(2 * i + 1);
+            b = if i % 2 == 1 { b.add(&t) } else { b.sub(&t) };
+            terms = i;
+        }
+        if terms == 0 && exact {
+            match decide(&q.shl(1).sub_units(1), 0, k - 1, negative, f) {
+                Option::Some(bits) => return bits,
+                Option::None => {},
+            }
+        }
+        let w = q.sub(&b);
+        match decide(&w, 2 * terms + 2, k, negative, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = w,
+        }
+    }
+    nearest(&v, k, negative, f)
+}
+
+/// The float nearest `asin a`, of format `f`, negative if `negative`, of an
+/// `a` from 2^-26 to below 1: `s = sqrt(1 - a^2)`, `1 - a^2` exact, so `s`
+/// less than 32 units off; where `a ≤ s`, `atan(a / s)`, `s` at least 1/√2,
+/// so `a / s` less than `2 · 32 + 8 + 1` off; else `π/2 - atan(s / a)`, `s /
+/// a` less than `√2 · 32 + 8 + 1`.
+pub fn asin(a: f64, negative: bool, f: Format) -> u64 with {} {
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let x = Fix::of(n, a);
+        let s = sqrt_fix(&Fix::int(n, 1).sub(&x.mul(&x)));
+        let (t, err) = if s.sub(&x).is_negative() {
+            let (t, e) = atan_fix(&s.mul(&recip(&x)), 80);
+            (half_pi(n).sub(&t), e + 1)
+        } else {
+            atan_fix(&x.mul(&recip(&s)), 80)
+        };
+        match decide(&t, err, 0, negative, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = t,
+        }
+    }
+    nearest(&v, 0, negative, f)
+}
+
+/// The float nearest `acos x`, of format `f`, of an `x` of magnitude `a` from
+/// 2^-60 to below 1: of `asin`'s parts, `π/2 ∓ atan(a / s)` where `a ≤ s`,
+/// else `atan(s / a)`, or `π` less it below 0.
+pub fn acos(x: f64, f: Format) -> u64 with {} {
+    let a = if x < 0.0 { -x } else { x };
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let fx = Fix::of(n, a);
+        let s = sqrt_fix(&Fix::int(n, 1).sub(&fx.mul(&fx)));
+        let (t, err) = if s.sub(&fx).is_negative() {
+            let (t, e) = atan_fix(&s.mul(&recip(&fx)), 80);
+            if x < 0.0 { (pi(n).sub(&t), e + 2) } else { (t, e) }
+        } else {
+            let (t, e) = atan_fix(&fx.mul(&recip(&s)), 80);
+            if x < 0.0 { (half_pi(n).add(&t), e + 1) } else { (half_pi(n).sub(&t), e + 1) }
+        };
+        match decide(&t, err, 0, false, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = t,
+        }
+    }
+    nearest(&v, 0, false, f)
+}
+
+/// ln v, of a `v` from 1 to 4 that's less than `ev` units off, to less than
+/// the units it says: `v = 2^e · m`, `m` from 0.7 to 1.42, so `z = (m - 1) /
+/// (m + 1)`, from `recip`, below 0.18 and less than `ev + 6` units off; then
+/// `2 atanh z`, its series each term less than 3 units off, as `ln_fix`'s;
+/// and `e ln 2`, `e` at most 2.
+fn ln_of(v: &Fix, ev: { e: u32 | e <= 1000 }) -> (Fix, { e: u32 | e <= 20000 }) with {} {
+    let n = v.n;
+    let y = v.to_f64();
+    let (m, e) = if y >= 2.8284271247461903 {
+        (v.shr(2), 2)
+    } else if y >= 1.4142135623730951 {
+        (v.shr(1), 1)
+    } else {
+        (*v, 0)
+    };
+    let one = Fix::int(n, 1);
+    let z = m.sub(&one).mul(&recip(&m.add(&one)));
+    let z2 = z.mul(&z);
+    let mut sum = z;
+    let mut p = z;
+    let mut terms: { t: u32 | t <= 2000 } = 1;
+    for i in 1..2000u32 {
+        p = p.mul(&z2);
+        if p.is_zero() {
+            break;
+        }
+        sum = sum.add(&p.div_small(2 * i + 1));
+        terms = i + 1;
+    }
+    let l = sum.mul_small(2);
+    let lv = if e == 0 { l } else if n <= 36 { l.add(&ln2(n).mul_small(e)) } else { l };
+    (lv, 2 * (2 * ev + 3 * terms + 12) + 4)
+}
+
+/// The float nearest `asinh a`, of format `f`, negative if `negative`, of an
+/// `a` from 2^-26 up: to 1, `ln(a + sqrt(1 + a^2))`, `1 + a^2` exact, so its
+/// root less than 32 units off, and the sum from 1 to 2.42; past 1, `ln a +
+/// ln(1 + sqrt(1 + 1/a^2))`, `1/a` less than a unit off (`quotient`), its
+/// square less than 3, and the root so less than 34.
+pub fn asinh(a: f64, negative: bool, f: Format) -> u64 with {} {
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let one = Fix::int(n, 1);
+        let (t, err) = if a <= 1.0 {
+            let x = Fix::of(n, a);
+            ln_of(&x.add(&sqrt_fix(&one.add(&x.mul(&x)))), 34)
+        } else {
+            let r = quotient(1.0, a, n);
+            let (l1, e1) = ln_fix(a, n);
+            let (l2, e2) = ln_of(&one.add(&sqrt_fix(&one.add(&r.mul(&r)))), 36);
+            (l1.add(&l2), e1 + e2)
+        };
+        match decide(&t, err, 0, negative, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = t,
+        }
+    }
+    nearest(&v, 0, negative, f)
+}
+
+/// The float nearest `acosh x`, of format `f`, of an `x` above 1: below 2,
+/// `ln(1 + t + sqrt(t (2 + t)))`, `t = x - 1` exact, as is `t (2 + t)`, so the
+/// root less than 32 units off; from 2, `ln x + ln(1 + sqrt(1 - 1/x^2))`,
+/// `1 - 1/x^2` at least 3/4 and less than 3 units off.
+pub fn acosh(x: f64, f: Format) -> u64 with {} {
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let one = Fix::int(n, 1);
+        let (t, err) = if x < 2.0 {
+            let t = Fix::of(n, x - 1.0);
+            let r = sqrt_fix(&t.mul(&Fix::int(n, 2).add(&t)));
+            ln_of(&one.add(&t).add(&r), 34)
+        } else {
+            let r = quotient(1.0, x, n);
+            let (l1, e1) = ln_fix(x, n);
+            let (l2, e2) = ln_of(&one.add(&sqrt_fix(&one.sub(&r.mul(&r)))), 36);
+            (l1.add(&l2), e1 + e2)
+        };
+        match decide(&t, err, 0, false, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = t,
+        }
+    }
+    nearest(&v, 0, false, f)
+}
+
+/// The float nearest `atanh a`, of format `f`, negative if `negative`, of an
+/// `a` from 2^-27 to below 1: `(ln(1 + a) - ln(1 - a)) / 2`.
+pub fn atanh(a: f64, negative: bool, f: Format) -> u64 with {} {
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let (p, ep) = ln1p_fix(a, n);
+        let (m, em) = ln1p_fix(-a, n);
+        let t = p.sub(&m).shr(1);
+        match decide(&t, (ep + em) / 2 + 2, 0, negative, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = t,
+        }
+    }
+    nearest(&v, 0, negative, f)
+}
+
+/// The float nearest `sin πa`, or `cos πa` if `cos`, of format `f`, of `a =
+/// n + k/2 + r`, `n` an integer and `k` from 0 to 2 (math's `pi_reduce`),
+/// passed as `r`, nonzero, from -1/4 to 1/4 and of magnitude at least
+/// 2^-200, and `q = 2n + k` mod 4: `πr`, less than 2 units off, then by the
+/// quadrant `±sin πr` or `±cos πr`.
+pub fn sin_cos_pi(r: f64, q: u32, cos: bool, f: Format) -> u64 with {} {
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let (s, c, err) = sincos(&pi(n).mul(&Fix::of(n, r)));
+        let t = match (cos, q) {
+            (false, 0) => s,
+            (false, 1) => c,
+            (false, 2) => s.neg(),
+            (false, _) => c.neg(),
+            (true, 0) => c,
+            (true, 1) => s.neg(),
+            (true, 2) => c.neg(),
+            (true, _) => s,
+        };
+        match decide_signed(&t, err + 4, 0, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = t,
+        }
+    }
+    nearest_signed(&v, 0, f)
+}
+
+/// The float nearest `sin πa`, of format `f`, negative if `negative`, of an
+/// `a` above 0 and below 2^-52: `a = M · 2^k`, `M` from 1/2 to 1, and `sin πa =
+/// 2^k (P - P^3 4^k/6 + P^5 16^k/120 - ..)`, `P = πM`, less than 3 units off,
+/// and the terms after it, at most 2^-100 of it, each less than 2 more.
+pub fn sin_pi_tiny(a: f64, negative: bool, f: Format) -> u64 with {} {
+    let (m, e) = significand(a);
+    let k = e + 53;
+    let shift: u32 = if k > -52 { 104 } else if k < -2000 { 4000 } else { (-2 * k) as u32 };
+    let mf = m as f64 * 1.1102230246251565e-16;
+    let mut v = Fix::zero(LOW);
+    for step in 0..2u32 {
+        let n = if step == 0 { LOW } else { HIGH };
+        let p = pi(n).mul(&Fix::of(n, mf));
+        let p2 = p.mul(&p).shr(shift);
+        let mut s = p;
+        let mut t = p;
+        let mut terms: { t: u32 | t <= 200 } = 0;
+        for j in 1..200u32 {
+            let i: { i: u32 | i >= 1 && i < 200 } = if j >= 1 && j < 200 { j } else { 1 };
+            t = t.mul(&p2).div_small(2 * i * (2 * i + 1));
+            if t.is_zero() {
+                break;
+            }
+            s = if i % 2 == 1 { s.sub(&t) } else { s.add(&t) };
+            terms = i;
+        }
+        match decide(&s, 2 * terms + 5, k, negative, f) {
+            Option::Some(bits) => return bits,
+            Option::None => v = s,
+        }
+    }
+    nearest(&v, k, negative, f)
+}
+
+/// Is `u` above the cube of the midpoint of `l` and `h`: is `cbrt u` above
+/// it? Exactly, in a `Fix` of `LOW` limbs: of `u` from 1 to 8 and `l` and
+/// `h` from 1 to 2, each of 53 bits, so the midpoint has 54, and its cube
+/// 162 after the point, which the 288 hold.
+pub fn cube_above(u: f64, l: f64, h: f64) -> bool with {} {
+    let m = Fix::of(LOW, l).add(&Fix::of(LOW, h)).shr(1);
+    m.mul(&m).mul(&m).sub(&Fix::of(LOW, u)).is_negative()
+}
+
+/// The sign of `x^2 + y^2` less the square of the midpoint of `l` and `h`:
+/// -1, 0 or 1, exactly, in a `Fix` of `LOW` limbs, of `x`, `y`, `l` and `h`
+/// from 0 to 4, none of which has bits below 2^-110.
+pub fn square_side(x: f64, y: f64, l: f64, h: f64) -> i32 with {} {
+    let fx = Fix::of(LOW, x);
+    let fy = Fix::of(LOW, y);
+    let m = Fix::of(LOW, l).add(&Fix::of(LOW, h)).shr(1);
+    let d = fx.mul(&fx).add(&fy.mul(&fy)).sub(&m.mul(&m));
+    if d.is_zero() { 0 } else if d.is_negative() { -1 } else { 1 }
 }

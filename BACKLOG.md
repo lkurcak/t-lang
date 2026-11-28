@@ -2,12 +2,12 @@
 
 ## Now
 
-1. Step 103, the rest of the math functions, correctly rounded on step 102's machinery
-   (`docs/102-math.md`): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`
-   (glibc's `cbrt(-27.0)` is `-3.0000000000000004`) and `hypot`, then `sin_pi` and `cos_pi`.
 1. [Step 104, `Fn` bounds leave a closure's effects open](backlog/fn-bound-effects.md): with no
    `with`, `F: FnMut() -> T` may do what its argument does, named `F::e`, and `with {}` says
    none; so a helper that takes a closure needs no `effect e`.
+1. Step 105, CPU float speed, measured before it's tuned: n-body, spectral-norm, mandelbrot, a
+   dot product and matrix multiplies in T, Rust and C, then what the numbers show (item 3 of
+   [the ML and GPU path](backlog/ml-path.md)).
 
 ## Later
 
@@ -17,7 +17,8 @@
   the parsed libraries copied when a program is read.
 - [Checking faster](backlog/compile-time.md): a cache of each package's check on disk, then
   function bodies checked in parallel. Due at the first program over about 10,000 lines or a
-  check over a few seconds, and t-fmt is 9,600 lines that take 6 seconds to check.
+  check over a few seconds, and t-fmt is 9,600 lines that take 6 seconds to check. Every
+  `t check` pays for the libraries' lines too: step 103's 1,570 added 8 ms, to 115.
 - [Checking time still doubles](backlog/joins-by-reference.md) with each `if let` in a row
   that sets the same variable (fourteen take 15 seconds): where branches meet, name a
   branch's value rather than copy what's known of it (#150; "What it doesn't do" in
@@ -34,10 +35,16 @@
 - Keywords that are ordinary words (`sealed`, `law`, `ensures`, `invariant`, `effect`,
   `with`) as names wherever they can't be read as the keyword. t-fmt's `FRICTION.md` says
   they bite constantly; step 100 only makes the message say it's a keyword.
-- [The ML and GPU path](backlog/ml-path.md), after math functions: CPU float speed measured
-  against Rust and C and then tuned; a matrix and neural-network library in t-libs, tested on
-  MNIST from a linear model to a small residual net; an agent that learns to play a T game
-  such as t-maze; then FFI with pointers and linking shared libraries; GPU kernels later.
+- [The ML and GPU path](backlog/ml-path.md), after CPU float speed: a matrix and
+  neural-network library in t-libs, tested on MNIST from a linear model to a small residual
+  net; an agent that learns to play a T game such as t-maze; then FFI with pointers and
+  linking shared libraries; GPU kernels later.
+- The math vectors (`scripts/math/vectors.c`) for step 102's functions as step 103's have: an
+  input in each interval of `EXP2`, `LN1`, `LN2` and `SINCOS`, as random ones leave most out
+  and CI misses an entry wrong in its last bit; and a second search for any branch of a slow
+  path that none of the hardest reach.
+- IEEE 754's other functions in turns, `tan_pi`, `asin_pi`, `acos_pi`, `atan_pi` and
+  `atan2_pi`, once a program wants one (D3 of `docs/103-more-math.md`).
 - Floats, what step 101 left out (`docs/101-floats.md`): refinements of floats (measures like
   `is_finite` first, so `{ x: f64 | x.is_finite() }`), `%` (exact, as C's `fmod`), `mul_add`,
   hex float literals, a wrapper that's `Eq` and `Ord` by `total_cmp`, atomics of floats, and
@@ -126,6 +133,9 @@
 
 ## Done
 
+- Step 103 (0.111.0): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`,
+  `hypot`, `sin_pi` and `cos_pi`, correctly rounded; `cbrt` and `hypot` decided exactly by a
+  midpoint's cube or square; each slow path checked on its own against MPFR (#166).
 - Owner's decision: an `Fn` bound that says no `with` leaves what its calls do open, named
   `F::e`, rather than saying they do nothing; step 104 does it (#165).
 - Checking a program copies and walks less of the libraries: an empty one's check is half as
@@ -153,5 +163,3 @@
   for every T file in this repo's tests, examples and libraries; its CI compares the two.
 - Step 99 (0.107.3, #151): a refinement proved of a value in one branch is no longer known in
   the other branch or after the branches meet (a soundness hole since 0.77.0).
-- Step 98 (0.107.2, #150): checking time no longer doubles with each level of nested `if`s
-  and `match`es. A function of t-fmt took 28 seconds to check, now a quarter of one.

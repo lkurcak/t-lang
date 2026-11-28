@@ -29,6 +29,7 @@ static const struct {
     {"tanh", mpfr_tanh, 0},   {"asinh", mpfr_asinh, 0}, {"acosh", mpfr_acosh, 0},
     {"atanh", mpfr_atanh, 0}, {"cbrt", mpfr_cbrt, 0},   {"sqrt", mpfr_sqrt, 0},
     {"pow", 0, mpfr_pow},     {"atan2", 0, mpfr_atan2}, {"hypot", 0, mpfr_hypot},
+    {"sin_pi", mpfr_sinpi, 0}, {"cos_pi", mpfr_cospi, 0},
 };
 enum { N_FUNCTIONS = sizeof FUNCTIONS / sizeof FUNCTIONS[0] };
 

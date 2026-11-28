@@ -10,6 +10,7 @@
  * random; the edges; and `pow`'s exact and halfway values. A line is `name
  * type x [y] want`, in hex bits. The same seeds give the same file, in
  * about 25 minutes on 32 threads. */
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -28,7 +29,10 @@ static double uniform(uint64_t *s, double lo, double hi) {
 }
 
 /* Where each function's inputs are drawn from, half of them: the other
- * half are uniform bit patterns, every exponent alike. */
+ * half are uniform bit patterns, every exponent alike. A function named
+ * again is searched again, every input in its second range, for its
+ * hardest alone: where a range wide enough for the rest leaves a branch of
+ * a slow path that few of the hardest reach. */
 static const struct {
     const char *name;
     double lo, hi, lo2, hi2;
@@ -36,7 +40,11 @@ static const struct {
     {"exp", -745, 710},  {"exp2", -1075, 1024}, {"exp_m1", -40, 710}, {"ln", 0, 4},
     {"log2", 0, 4},      {"log10", 0, 4},       {"ln_1p", -1, 3},     {"sin", -20, 20},
     {"cos", -20, 20},    {"tan", -20, 20},      {"sinh", -712, 712},  {"cosh", -712, 712},
-    {"tanh", -20, 20},   {"pow", 0, 4, -60, 60},
+    {"tanh", -20, 20},   {"pow", 0, 4, -60, 60},  {"asin", -1, 1},       {"acos", -1, 1},
+    {"atan", -20, 20},   {"atan2", -20, 20, -20, 20},                 {"asinh", -20, 20},
+    {"acosh", 1, 20},    {"atanh", -1, 1},      {"cbrt", -100, 100},  {"hypot", -20, 20, -20, 20},
+    {"sin_pi", -20, 20}, {"cos_pi", -20, 20},
+    {"atan", -1, 1},     {"asinh", -1, 1},      {"acosh", 1, 2},
 };
 enum { N_RANGES = sizeof RANGES / sizeof RANGES[0] };
 
@@ -47,14 +55,14 @@ typedef struct {
     uint64_t x, y;
 } Hard;
 
-static int f, type, range;
+static int f, type, range, again;
 static uint64_t draws;
 static Hard best[THREADS][KEEP];
 
 static uint64_t to_bits(double d) { return type == F64 ? bits64(d) : bits32((float)d); }
 
 static uint64_t draw(uint64_t *s, int second) {
-    if (next(s) & 1) {
+    if (!again && next(s) & 1) {
         uint64_t b = next(s);
         return type == F64 ? b : (b & 0xFFFFFFFFu);
     }
@@ -65,7 +73,7 @@ static uint64_t draw(uint64_t *s, int second) {
 
 static void *search(void *arg) {
     uint64_t me = (uint64_t)(uintptr_t)arg;
-    uint64_t s = 0x5EED0000u + me * 7919 + f * 104729 + type;
+    uint64_t s = 0x5EED0000u + me * 7919 + f * 104729 + type + (again ? range * 1299709u : 0);
     Hard *keep = best[me];
     for (int i = 0; i < KEEP; i++) keep[i].h = -1;
     for (uint64_t i = me; i < draws; i += THREADS) {
@@ -98,9 +106,11 @@ int main(int argc, char **argv) {
     draws = argc > 1 ? strtoull(argv[1], 0, 10) : 300000000;
     static const double EDGES[] = {0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 10.0, 1e-300, -1e-300,
                                    5e-324, 1e300, -1e300, 0.1, 3.0, -3.0, 709.8, -745.2,
-                                   88.7, -104.0, 1e22, 1048576.5};
+                                   88.7, -104.0, 1e22, 1048576.5, INFINITY, -INFINITY, NAN};
     for (range = 0; range < N_RANGES; range++) {
         f = function_named(RANGES[range].name);
+        again = 0;
+        for (int r = 0; r < range; r++) again |= function_named(RANGES[r].name) == f;
         for (type = F32; type <= F64; type++) {
             pthread_t ts[THREADS];
             for (int i = 0; i < THREADS; i++)
@@ -111,6 +121,9 @@ int main(int argc, char **argv) {
                 for (int k = 0; k < KEEP; k++) all[i * KEEP + k] = best[i][k];
             qsort(all, THREADS * KEEP, sizeof all[0], by_hardness);
             for (int k = 0; k < KEEP; k++) line(all[k].x, all[k].y);
+            fprintf(stderr, "%s %s%s: hardest %d bits past the format's\n", RANGES[range].name,
+                    type == F64 ? "f64" : "f32", again ? ", again" : "", all[0].h);
+            if (again) continue;
             uint64_t s = 0xACE + range * 31 + type;
             for (int k = 0; k < RANDOM; k++) {
                 uint64_t x = draw(&s, 0), y = arity(f) == 2 ? draw(&s, 1) : 0;
@@ -121,10 +134,12 @@ int main(int argc, char **argv) {
                 if (arity(f) == 1)
                     line(to_bits(EDGES[i]), 0);
                 else
-                    for (int j = 0; j < n; j += 3) line(to_bits(EDGES[i]), to_bits(EDGES[j]));
+                    /* Of the second, every third, and every zero, infinity
+                     * and NaN, so each sign of each against each. */
+                    for (int j = 0; j < n; j++)
+                        if (j % 3 == 0 || EDGES[j] == 0.0 || !isfinite(EDGES[j]))
+                            line(to_bits(EDGES[i]), to_bits(EDGES[j]));
             }
-            fprintf(stderr, "%s %s: hardest %d bits past the format's\n", RANGES[range].name,
-                    type == F64 ? "f64" : "f32", all[0].h);
         }
     }
     /* `pow`'s exact values and halfway ones (lemma M4), which no random
@@ -169,6 +184,81 @@ int main(int argc, char **argv) {
         line(to_bits(4.0), to_bits(edge / 2));
         line(to_bits(-1.0), to_bits(9007199254740992.0));
         line(to_bits(-1.0), to_bits(1e300));
+    }
+    /* Of step 103's, what no random draw finds either (docs/103-more-math.md):
+     * `hypot`'s halfway values, of `a = m^2 - n^2` and `b = 2mn`, whose
+     * `m^2 + n^2`, odd and just past 2^p, is halfway between two floats; the
+     * exact cube roots; `atan2`'s quotients halfway between two subnormals,
+     * whose angle, a little less, rounds down; an input in each interval of
+     * `atan`'s table; and `sin_pi` and `cos_pi` at multiples of 1/2, of big
+     * and tiny values, and of integers past 2^52. */
+    f = function_named("hypot");
+    for (type = F32; type <= F64; type++) {
+        int p = type == F64 ? 53 : 24, scale = type == F64 ? -900 : -100;
+        uint64_t top = 1ull << p;
+        int found = 0;
+        for (uint64_t m = (uint64_t)sqrt((double)top); found < 12 && m > 1; m--)
+            for (uint64_t n = 1; n < m; n++) {
+                if ((m + n) % 2 == 0) continue;
+                if (m * m + n * n <= top) continue;
+                uint64_t a = m * m - n * n, b = 2 * m * n;
+                if (a < top && b < top) {
+                    line(to_bits((double)a), to_bits((double)b));
+                    line(to_bits(-ldexp((double)b, scale)), to_bits(ldexp((double)a, scale)));
+                    found++;
+                }
+                break;
+            }
+    }
+    f = function_named("cbrt");
+    for (type = F32; type <= F64; type++) {
+        int bits = type == F64 ? 17 : 8;
+        uint64_t s = 0xCB27 + type;
+        for (int k = 0; k < 12; k++) {
+            double r = (double)((next(&s) >> 40) % (1u << bits) | 1);
+            line(to_bits(r * r * r), 0);
+            line(to_bits(-ldexp(r * r * r, type == F64 ? -990 : -120)), 0);
+        }
+    }
+    f = function_named("atan2");
+    for (type = F32; type <= F64; type++) {
+        double least = type == F64 ? 0x1p-1074 : 0x1p-149;
+        for (int k = 0; k < 6; k++) {
+            line(to_bits((2 * k + 1) * least), to_bits(2.0));
+            line(to_bits(-(2 * k + 3) * least), to_bits(2.0));
+        }
+    }
+    /* An input in each interval of `atan`'s table, `t` nearest `j/64`, so
+     * that an entry wrong in its last bit is caught, which random inputs
+     * leave most of: `atan` of `t` and of `-1/t`; `asin` and `acos` of the
+     * `a` whose quotient `a / sqrt(1 - a^2)` is `t`, and of the one whose
+     * inverse is; `atan2` of `(t, 1)` and `(1, -t)`. Of an `f64` only, as
+     * an `f32`'s rounding hides an error that small. */
+    type = F64;
+    for (int j = 0; j <= 64; j++) {
+        double t = (j + (j < 64 ? 0.3 : -0.3)) / 64, r = sqrt(1 + t * t);
+        f = function_named("atan");
+        line(to_bits(t), 0);
+        line(to_bits(-1 / t), 0);
+        for (int g = 0; g < 2; g++) {
+            f = function_named(g == 0 ? "asin" : "acos");
+            line(to_bits(t / r), 0);
+            line(to_bits(-1 / r), 0);
+        }
+        f = function_named("atan2");
+        line(to_bits(t), to_bits(1.0));
+        line(to_bits(1.0), to_bits(-t));
+    }
+    static const double HALVES[] = {0.5, 1.0, 1.5, 2.0, 2.5, 0.25, 0.75, 1e15 + 0.5, 0x1p52,
+                                    0x1p52 + 1.0, 0x1p53, 1e300, 1e-300, 5e-324, 0x1p-52,
+                                    0x1p-53, 1.0 / 3.0, 1.0 / 6.0};
+    for (int g = 0; g < 2; g++) {
+        f = function_named(g == 0 ? "sin_pi" : "cos_pi");
+        for (type = F32; type <= F64; type++)
+            for (unsigned i = 0; i < sizeof HALVES / sizeof HALVES[0]; i++) {
+                line(to_bits(HALVES[i]), 0);
+                line(to_bits(-HALVES[i]), 0);
+            }
     }
     return 0;
 }

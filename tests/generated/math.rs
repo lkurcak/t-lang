@@ -1,7 +1,9 @@
-//! The math functions of `Float` (docs/102-math.md) against MPFR's answers,
-//! which `tests/math/vectors.txt` holds: for each function of each type,
-//! the inputs MPFR found hardest to round among millions, which go the
-//! slow way, random ones, and the edges (`scripts/math/vectors.c`). Each
+//! The math functions of `Float` (docs/102-math.md, docs/103-more-math.md)
+//! against MPFR's answers, which `tests/math/vectors.txt` holds: for each
+//! function of each type, the inputs MPFR found hardest to round among
+//! millions, which go the slow way, random ones, the edges, the
+//! infinities and a NaN too, and what no random draw finds, as an input in
+//! each interval of `atan`'s table (`scripts/math/vectors.c`). Each
 //! function's are run in the interpreter and, compiled through C,
 //! natively, which must agree, bit for bit, and give MPFR's answer: the
 //! same bits, but for a NaN's, which aren't said.
@@ -89,59 +91,89 @@ fn is_nan(b: u64, ty: &str) -> bool {
     }
 }
 
-/// Each function of `ty` gives MPFR's answer for each of its cases.
+/// Each function of `ty` gives MPFR's answer for each of its cases. The
+/// functions run side by side, as the slow paths take the interpreter a
+/// while: a function's cases are one program.
 fn check(ty: &str) {
-    let bits = if ty == "f64" { "u64" } else { "u32" };
-    let mut wrong = Vec::new();
-    for ((name, t), cases) in vectors() {
-        if t != ty {
-            continue;
-        }
-        let two = name == "pow";
-        let xs: Vec<String> = cases.iter().map(|c| c.x.to_string()).collect();
-        let ys: Vec<String> = cases.iter().map(|c| c.y.to_string()).collect();
-        let n = cases.len();
-        let call = match two {
-            true => format!("{ty}::from_bits(XS[i]).{name}({ty}::from_bits(YS[i]))"),
-            false => format!("{ty}::from_bits(XS[i]).{name}()"),
-        };
-        let src = format!(
-            "const XS: [{bits}; {n}] = [{}];\n\
-             const YS: [{bits}; {n}] = [{}];\n\
-             fn main(os: std::Os) -> Result<(), std::io::Error> {{\n\
-             \x20   let mut out = os.stdout;\n\
-             \x20   for i in 0..{n}usize {{\n\
-             \x20       out.line(&{call}.to_bits())?;\n\
-             \x20   }}\n\
-             \x20   Ok(())\n\
-             }}\n",
-            xs.join(", "),
-            ys.join(", "),
-        );
-        let out = run_both(&format!("{name}_{ty}"), &src);
-        let got: Vec<u64> = out.lines().map(|l| l.parse().unwrap()).collect();
-        assert_eq!(got.len(), n, "{name} of {ty}: not every case printed");
-        for (c, g) in cases.iter().zip(got) {
-            if g != c.want && !(is_nan(g, ty) && is_nan(c.want, ty)) {
-                wrong.push(format!(
-                    "{name}({:#x}{}) of {ty} = {g:#x}, not {:#x}",
-                    c.x,
-                    if two {
-                        format!(", {:#x}", c.y)
-                    } else {
-                        String::new()
-                    },
-                    c.want
-                ));
-            }
-        }
-    }
+    let all: Vec<((String, String), Vec<Case>)> = vectors()
+        .into_iter()
+        .filter(|((_, t), _)| t == ty)
+        .collect();
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(4, |n| n.get());
+    let mut wrong: Vec<(usize, Vec<String>)> = std::thread::scope(|s| {
+        let workers: Vec<_> = (0..threads.min(all.len()))
+            .map(|_| {
+                s.spawn(|| {
+                    let mut done = Vec::new();
+                    loop {
+                        let i = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        let Some(((name, _), cases)) = all.get(i) else {
+                            return done;
+                        };
+                        done.push((i, check_one(name, ty, cases)));
+                    }
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|w| w.join().unwrap())
+            .collect()
+    });
+    wrong.sort_by_key(|(i, _)| *i);
+    let wrong: Vec<String> = wrong.into_iter().flat_map(|(_, w)| w).collect();
     assert!(
         wrong.is_empty(),
         "{} wrong:\n{}",
         wrong.len(),
         wrong.join("\n")
     );
+}
+
+/// The cases of `name` of `ty` that don't give MPFR's answer.
+fn check_one(name: &str, ty: &str, cases: &[Case]) -> Vec<String> {
+    let bits = if ty == "f64" { "u64" } else { "u32" };
+    let mut wrong = Vec::new();
+    let two = matches!(name, "pow" | "atan2" | "hypot");
+    let xs: Vec<String> = cases.iter().map(|c| c.x.to_string()).collect();
+    let ys: Vec<String> = cases.iter().map(|c| c.y.to_string()).collect();
+    let n = cases.len();
+    let call = match two {
+        true => format!("{ty}::from_bits(XS[i]).{name}({ty}::from_bits(YS[i]))"),
+        false => format!("{ty}::from_bits(XS[i]).{name}()"),
+    };
+    let src = format!(
+        "const XS: [{bits}; {n}] = [{}];\n\
+         const YS: [{bits}; {n}] = [{}];\n\
+         fn main(os: std::Os) -> Result<(), std::io::Error> {{\n\
+         \x20   let mut out = os.stdout;\n\
+         \x20   for i in 0..{n}usize {{\n\
+         \x20       out.line(&{call}.to_bits())?;\n\
+         \x20   }}\n\
+         \x20   Ok(())\n\
+         }}\n",
+        xs.join(", "),
+        ys.join(", "),
+    );
+    let out = run_both(&format!("{name}_{ty}"), &src);
+    let got: Vec<u64> = out.lines().map(|l| l.parse().unwrap()).collect();
+    assert_eq!(got.len(), n, "{name} of {ty}: not every case printed");
+    for (c, g) in cases.iter().zip(got) {
+        if g != c.want && !(is_nan(g, ty) && is_nan(c.want, ty)) {
+            wrong.push(format!(
+                "{name}({:#x}{}) of {ty} = {g:#x}, not {:#x}",
+                c.x,
+                if two {
+                    format!(", {:#x}", c.y)
+                } else {
+                    String::new()
+                },
+                c.want
+            ));
+        }
+    }
+    wrong
 }
 
 #[test]

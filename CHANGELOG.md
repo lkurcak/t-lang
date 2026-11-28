@@ -1,5 +1,28 @@
 # Changelog
 
+## 0.111.0 (2026-11-28)
+
+Step 103: more math functions. See
+[docs/103-more-math.md](docs/103-more-math.md).
+
+### Added
+
+- `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt` and
+  `hypot`, methods of `Float`, of `f32` and `f64`, correctly rounded as
+  0.110.0's are: the float nearest the exact value, for every input.
+  `y.atan2(x)` and `x.hypot(y)` take their arguments in Rust's order, and
+  their values where one is 0, infinite or a NaN are IEEE 754's (C's).
+  `cbrt` and `hypot` are exact wherever their value is a float, as of
+  `-27.0` and of `3.0` and `4.0`, and `hypot` doesn't overflow on the way.
+- `sin_pi` and `cos_pi`, `sin(πx)` and `cos(πx)` worked out from `x`
+  itself, so exact at multiples of 1/2 and as precise of a big `x` as of a
+  small one, which `(x * π).sin()` isn't.
+
+### Changed
+
+- `t check` copies and walks less of the libraries for each program:
+  checking an empty one takes about half as long as on 0.110.0 (#164).
+
 ## 0.110.0 (2026-11-27)
 
 Step 102: math functions. See [docs/102-math.md](docs/102-math.md).

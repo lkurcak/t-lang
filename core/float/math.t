@@ -13,7 +13,7 @@
 //! more precise than it needs, which an `f32` of its own may be made
 //! faster with, later, giving the same results.
 
-use crate::num::{Float, wrap};
+use crate::num::{Float, wrap, wrapping_sub};
 use crate::option::Option;
 use super::dec::{f32_format, f64_format};
 use super::fix;
@@ -106,11 +106,15 @@ fn dd_mul(ah: f64, al: f64, bh: f64, bl: f64) -> (f64, f64) with {} {
 /// both: then each end in `f64` is past the true one, and rounding it to
 /// an `f32` once is monotone (lemma M2).
 fn decide32(hi: f64, lo: f64, eps: f64) -> Option<f32> with {} {
+    let (a, b) = ends32(hi, lo, eps);
+    if a.to_bits() == b.to_bits() { Option::Some(a) } else { Option::None }
+}
+
+/// The ends `decide32` rounds: the `f32`s nearest `y ± e`, of `y = hi + lo`.
+fn ends32(hi: f64, lo: f64, eps: f64) -> (f32, f32) with {} {
     let y = hi + lo;
     let e = abs(y) * (eps + 2.220446049250313e-16);
-    let a = f32::nearest_f64(y - e);
-    let b = f32::nearest_f64(y + e);
-    if a.to_bits() == b.to_bits() { Option::Some(a) } else { Option::None }
+    (f32::nearest_f64(y - e), f32::nearest_f64(y + e))
 }
 
 /// 2^(j/64), j from 0 to 63, each as `hi + lo`, the bits of each `f64`
@@ -2200,4 +2204,1067 @@ pub fn tan_f32(x: f32) -> f32 with {} {
         return x;
     }
     trig_f32(x as f64, fix::Trig::Tan)
+}
+
+// The functions of step 103 (docs/103-more-math.md): the inverses of the
+// trigonometric and hyperbolic ones, `cbrt` and `hypot`, and `sin_pi` and
+// `cos_pi`.
+
+/// π, π/2 and π/4, as double-doubles, within 2^-107 of each.
+const PI_H: f64 = 3.1415926535897931;
+const PI_L: f64 = 1.2246467991473532e-16;
+const PIO2_H: f64 = 1.5707963267948966;
+const PIO2_L: f64 = 6.123233995736766e-17;
+const PIO4_H: f64 = 0.78539816339744828;
+const PIO4_L: f64 = 3.061616997868383e-17;
+
+/// 2^-76: the error the functions of step 103 decide with, but for the
+/// inverse hyperbolic ones, which are `ln`'s and decide with `LN_EPS`, and
+/// `sin_pi` and `cos_pi`, which are `sin`'s and decide with `TRIG_EPS`. Each
+/// says its own, which is below 2^-92 (lemma M1): this is far wider, so
+/// that the hardest of random inputs, which the tests carry, go the slow
+/// way and check it, at a cost of once in about 2^22 calls.
+const ARC_EPS: f64 = 1.3234889800848443e-23;
+
+/// `x` as `m · 2^e`, `m` from 1 to below 2, exactly, of a finite `x` above
+/// 0, a subnormal one too, which is scaled up by 2^54 first.
+fn parts(x: f64) -> (f64, { e: i32 | e >= -1077 && e <= 1024 }) with {} {
+    let (b, s) = if x < 2.2250738585072014e-308 {
+        ((x * 18014398509481984.0).to_bits(), 54)
+    } else {
+        (x.to_bits(), 0)
+    };
+    let e = ((b >> 52) % 2048) as i32 - 1023 - s;
+    (f64::from_bits((b & 0x000F_FFFF_FFFF_FFFF) | 0x3FF0_0000_0000_0000), e)
+}
+
+/// sqrt(h + l), as `hi + lo`, of a normalized `h + l` above 0, within
+/// 2^-104 of it: the `f64` root `r`, then a step of Newton's, `r + (h + l
+/// - r^2) / 2r`, `r^2` exactly, and `h - r^2`'s high part exact, as they're
+/// within a factor of two (Sterbenz); what the step leaves out, `(h + l -
+/// r^2)^2 / 8r^3`, is below 2^-106 of it.
+fn dd_sqrt(h: f64, l: f64) -> (f64, f64) with {} {
+    let r = h.sqrt();
+    let (p, pe) = two_prod(r, r);
+    fast_two_sum(r, (h - p - pe + l) / (2.0 * r))
+}
+
+/// π/2 - (th + tl), of a `th` from 0 to π/4 and a little, so at least π/4:
+/// nothing cancels.
+fn pio2_less(th: f64, tl: f64) -> (f64, f64) with {} {
+    let (h, e) = fast_two_sum(PIO2_H, -th);
+    fast_two_sum(h, e + (PIO2_L - tl))
+}
+
+/// π/2 + (th + tl), of a `th` from 0 to π/4 and a little.
+fn pio2_more(th: f64, tl: f64) -> (f64, f64) with {} {
+    let (h, e) = fast_two_sum(PIO2_H, th);
+    fast_two_sum(h, e + (PIO2_L + tl))
+}
+
+/// π - (th + tl), of a `th` from 0 to π/2 and a little, so at least π/2.
+fn pi_less(th: f64, tl: f64) -> (f64, f64) with {} {
+    let (h, e) = fast_two_sum(PI_H, -th);
+    fast_two_sum(h, e + (PI_L - tl))
+}
+
+/// atan(j/64), j from 0 to 64, each as `hi + lo`, as bits
+/// (scripts/math/tables.c `atan`).
+const ATAN: [u64; 130] = [
+    0x0000000000000000,
+    0x0000000000000000,
+    0x3F8FFF555BBB729B,
+    0xBC2220C39D4DFF50,
+    0x3F9FFD55BBA97625,
+    0xBC35EC431444912C,
+    0x3FA7FB818430DA2A,
+    0xBC086EF8F794F105,
+    0x3FAFF55BB72CFDEA,
+    0xBC3C934D86D23F1D,
+    0x3FB3F59F0E7C559D,
+    0x3C5AC4CE285DF847,
+    0x3FB7EE182602F10F,
+    0xBC5CFB654C0C3D98,
+    0x3FBBE39EBE6F07C3,
+    0x3C5F7B8F29A05987,
+    0x3FBFD5BA9AAC2F6E,
+    0xBC4CD37686760C17,
+    0x3FC1E1FAFB043727,
+    0xBC4B485914DACF8C,
+    0x3FC3D6EEE8C6626C,
+    0x3C661A3B0CE9281B,
+    0x3FC5C9811E3EC26A,
+    0xBC5054AB2C010F3D,
+    0x3FC7B97B4BCE5B02,
+    0x3C5347B0B4F881CA,
+    0x3FC9A6A8E96C8626,
+    0x3C4CF601E7B4348E,
+    0x3FCB90D7529260A2,
+    0x3C217B10D2E0E5AB,
+    0x3FCD77D5DF205736,
+    0x3C6C648D1534597E,
+    0x3FCF5B75F92C80DD,
+    0x3C68AB6E3CF7AFBD,
+    0x3FD09DC597D86362,
+    0x3C762E47390CB865,
+    0x3FD18BF5A30BF178,
+    0x3C630CA4748B1BF9,
+    0x3FD278372057EF46,
+    0xBC7077CDD36DFC81,
+    0x3FD362773707EBCC,
+    0xBC6963A544B672D8,
+    0x3FD44AA436C2AF0A,
+    0xBC75D5E43C55B3BA,
+    0x3FD530AD9951CD4A,
+    0xBC62566480884082,
+    0x3FD614840309CFE2,
+    0xBC7A725715711F00,
+    0x3FD6F61941E4DEF1,
+    0xBC7C63AAE6F6E918,
+    0x3FD7D5604B63B3F7,
+    0x3C769C885C2B249A,
+    0x3FD8B24D394A1B25,
+    0x3C7B6D0BA3748FA8,
+    0x3FD98CD5454D6B18,
+    0x3C79E6C988FD0A77,
+    0x3FDA64EEC3CC23FD,
+    0xBC724DEC1B50B7FF,
+    0x3FDB3A911DA65C6C,
+    0x3C7AE187B1CA5040,
+    0x3FDC0DB4C94EC9F0,
+    0xBC7CC1CE70934C34,
+    0x3FDCDE53432C1351,
+    0xBC7A2CFA4418F1AD,
+    0x3FDDAC670561BB4F,
+    0x3C7A2B7F222F65E2,
+    0x3FDE77EB7F175A34,
+    0x3C70E53DC1BF3435,
+    0x3FDF40DD0B541418,
+    0xBC6A3992DC382A23,
+    0x3FE0039C73C1A40C,
+    0xBC8B32C949C9D593,
+    0x3FE0657E94DB30D0,
+    0xBC7D5B495F6349E6,
+    0x3FE0C6145B5B43DA,
+    0x3C5974FA13B5404F,
+    0x3FE1255D9BFBD2A9,
+    0xBC52BDAEE1C0EE35,
+    0x3FE1835A88BE7C13,
+    0x3C8C621CEC00C301,
+    0x3FE1E00BABDEFEB4,
+    0xBC5928DF287A668F,
+    0x3FE23B71E2CC9E6A,
+    0x3C6C421C9F38224E,
+    0x3FE2958E59308E31,
+    0xBC709E73B0C6C087,
+    0x3FE2EE628406CBCA,
+    0x3C8C5D5E9FF0CF8D,
+    0x3FE345F01CCE37BB,
+    0x3C81021137C71102,
+    0x3FE39C391CD4171A,
+    0xBC82304331D8BF46,
+    0x3FE3F13FB89E96F4,
+    0x3C7ECF8B492644F0,
+    0x3FE445065B795B56,
+    0xBC7F76D0163F79C8,
+    0x3FE4978FA3269EE1,
+    0x3C72419A87F2A458,
+    0x3FE4E8DE5BB6EC04,
+    0x3C84A33DBEB3796C,
+    0x3FE538F57B89061F,
+    0xBC81BB74ABDA520C,
+    0x3FE587D81F732FBB,
+    0xBC75E5C9D8C5A950,
+    0x3FE5D58987169B18,
+    0x3C60028E4BC5E7CA,
+    0x3FE6220D115D7B8E,
+    0xBC62B785350EE8C1,
+    0x3FE66D663923E087,
+    0xBC76EA6FEBE8BBBA,
+    0x3FE6B798920B3D99,
+    0xBC8A80386188C50E,
+    0x3FE700A7C5784634,
+    0xBC78C34D25AADEF6,
+    0x3FE748978FBA8E0F,
+    0x3C47B2A6165884A1,
+    0x3FE78F6BBD5D315E,
+    0x3C8406A089803740,
+    0x3FE7D528289FA093,
+    0x3C8560821E2F3AA9,
+    0x3FE819D0B7158A4D,
+    0xBC7BF76229D3B917,
+    0x3FE85D69576CC2C5,
+    0x3C66B66E7FC8B8C3,
+    0x3FE89FF5FF57F1F8,
+    0xBC855B9A5E177A1B,
+    0x3FE8E17AA99CC05E,
+    0xBC7EC182AB042F61,
+    0x3FE921FB54442D18,
+    0x3C81A62633145C07,
+];
+
+/// atan t, as `hi + lo`, of a `t = th + tl` from 0 to 1 and a little, its
+/// low part at most its high one's last bit: within 2^-93 of it (lemma M1;
+/// MPFR finds at most 2^-95.2). `t = c + d`, `c = j/64` the nearest, so
+/// `|d| ≤ 1/128` and a little, and `atan t = atan c + atan u`, `u = (t - c)
+/// / (1 + tc)`, `|u| ≤ |d|`, within 2^-99 of it: `th - c` is exact, as `c`
+/// has 7 bits and is within a factor of two of `th`, or 0. Then `atan u = u
+/// - u^3 Q`, `Q = 1/3 - u^2/5 + u^4/7 - .. - u^10/13`, which leaves out
+/// less than 2^-101 of it; `u^3 Q` is at most 2^-15.6 of `u`: `Q`'s first
+/// two terms in double-double, the rest, below 2^-30.8 of it, in `f64`, a
+/// few of its last bits off, so `Q` within 2^-79 of itself and `atan u`
+/// within 2^-94.6. Where `j ≥ 1`, `|atan u|` is at most half `atan c`, so
+/// their sum isn't less than half of either, and cancels at most one more
+/// bit.
+fn atan_core(th: f64, tl: f64) -> (f64, f64) with {} {
+    let jf = th * 64.0 + SHIFTER;
+    let j0 = fix::clamp(wrap(jf.to_bits()), 64);
+    let j = if j0 < 0 { 0 } else { j0 } as usize;
+    let c = (jf - SHIFTER) * 0.015625;
+    let (nh, nl) = two_sum(th - c, tl);
+    let (ph, pl) = two_prod(th, c);
+    let (dh0, dl0) = fast_two_sum(1.0, ph);
+    let (dh, dl) = fast_two_sum(dh0, dl0 + (pl + tl * c));
+    let (uh, ul) = dd_div(nh, nl, dh, dl);
+    let (s2h, s2l0) = two_prod(uh, uh);
+    let s2l = s2l0 + 2.0 * uh * ul;
+    let mut t = -0.076923076923076927;
+    t = t * s2h + 0.090909090909090912;
+    t = t * s2h - 0.1111111111111111;
+    t = t * s2h + 0.14285714285714285;
+    t = s2h * s2h * t;
+    let (p, pe) = two_prod(s2h, 0.20000000000000001);
+    let (q, qe) = fast_two_sum(0.33333333333333331, -p);
+    let ql = qe
+        + (1.8503717077085941e-17
+            - pe
+            + s2h * 1.1102230246251566e-17
+            - s2l * 0.20000000000000001
+            + t);
+    let (ch3, cl3) = dd_mul(uh, ul, s2h, s2l);
+    let (vh, vl) = dd_mul(ch3, cl3, q, ql);
+    let (ah, ae) = fast_two_sum(uh, -vh);
+    let al = ae + (ul - vl);
+    if j == 0 {
+        return fast_two_sum(ah, al);
+    }
+    let bh = f64::from_bits(ATAN[2 * j]);
+    let bl = f64::from_bits(ATAN[2 * j + 1]);
+    let (sh, se) = fast_two_sum(bh, ah);
+    fast_two_sum(sh, se + (bl + al))
+}
+
+/// atan a, as `hi + lo`, of an `a` above 0, within 2^-93 of it: to 1,
+/// `atan_core`; then `π/2 - atan(1/a)`, `1/a` within 2^-100 of it, and
+/// atan's error no more than its argument's, relatively; past 2^100, `π/2
+/// - 1/a`, as what that leaves out, `1/3a^3`, is below 2^-300.
+fn atan_pos(a: f64) -> (f64, f64) with {} {
+    if a <= 1.0 {
+        return atan_core(a, 0.0);
+    }
+    if a > 1.2676506002282294e30 {
+        return fast_two_sum(PIO2_H, PIO2_L - 1.0 / a);
+    }
+    let (rh, rl) = dd_div(1.0, 0.0, a, 0.0);
+    let (th, tl) = atan_core(rh, rl);
+    pio2_less(th, tl)
+}
+
+/// atan x, from -π/2 to π/2: `x` itself below 2^-27, where `x^3/3` is
+/// below half its last bit, and ±π/2 of ±∞.
+pub fn atan_f64(x: f64) -> f64 with {} {
+    if x != x {
+        return x + x;
+    }
+    let a = abs(x);
+    if a < 7.450580596923828e-9 {
+        return x;
+    }
+    let (hi, lo) = atan_pos(a);
+    match decide64(hi, lo, ARC_EPS) {
+        Option::Some(y) => if x < 0.0 { -y } else { y },
+        Option::None => f64::from_bits(fix::atan2(a, 1.0, false, x < 0.0, f64_format())),
+    }
+}
+
+/// atan x of an `f32`: `x` below 2^-13.
+pub fn atan_f32(x: f32) -> f32 with {} {
+    if x != x {
+        return x + x;
+    }
+    let a = abs(x as f64);
+    if a < 0.0001220703125 {
+        return x;
+    }
+    let (hi, lo) = atan_pos(a);
+    match decide32(hi, lo, ARC_EPS) {
+        Option::Some(y) => if x < 0.0 { -y } else { y },
+        Option::None => f32::from_bits(wrap(fix::atan2(a, 1.0, false, x < 0.0, f32_format()))),
+    }
+}
+
+/// sqrt(1 - a^2), as `hi + lo`, of an `a` from 0 to below 1, within 2^-103
+/// of it: `1 - a^2` as `(1 - a)(1 + a)` from 1/2 on, where `1 - a` is exact
+/// and `1 + a` is two `f64`s exactly, else as `1 - a^2`, `a^2` exactly: either
+/// way within 2^-104 of it.
+fn sqrt_one_less_square(a: f64) -> (f64, f64) with {} {
+    let (h, l) = if a >= 0.5 {
+        let (eh, el) = fast_two_sum(1.0, a);
+        dd_mul(eh, el, 1.0 - a, 0.0)
+    } else {
+        let (p, pe) = two_prod(a, a);
+        let (h, e) = fast_two_sum(1.0, -p);
+        fast_two_sum(h, e - pe)
+    };
+    dd_sqrt(h, l)
+}
+
+/// asin a, as `hi + lo`, of an `a` from 2^-26 to below 1, within 2^-92 of
+/// it: `atan(a / s)`, `s = sqrt(1 - a^2)`, where `a ≤ s`, else `π/2 - atan(s
+/// / a)`, which is at least π/4; the quotient within 2^-100 of it, and
+/// `s`'s error, 2^-103, besides.
+fn asin_pos(a: f64) -> (f64, f64) with {} {
+    let (sh, sl) = sqrt_one_less_square(a);
+    if a <= sh {
+        let (qh, ql) = dd_div(a, 0.0, sh, sl);
+        atan_core(qh, ql)
+    } else {
+        let (qh, ql) = dd_div(sh, sl, a, 0.0);
+        let (th, tl) = atan_core(qh, ql);
+        pio2_less(th, tl)
+    }
+}
+
+/// asin x, from -π/2 to π/2: a NaN past ±1, and `x` itself below 2^-26,
+/// where `x^3/6` is below half its last bit.
+pub fn asin_f64(x: f64) -> f64 with {} {
+    let a = abs(x);
+    if !(a < 1.0) {
+        return if a == 1.0 {
+            if x < 0.0 { -PIO2_H } else { PIO2_H }
+        } else {
+            f64::nan() + x
+        };
+    }
+    if a < 1.4901161193847656e-8 {
+        return x;
+    }
+    let (hi, lo) = asin_pos(a);
+    match decide64(hi, lo, ARC_EPS) {
+        Option::Some(y) => if x < 0.0 { -y } else { y },
+        Option::None => f64::from_bits(fix::asin(a, x < 0.0, f64_format())),
+    }
+}
+
+/// asin x of an `f32`: `x` below 2^-12.
+pub fn asin_f32(x: f32) -> f32 with {} {
+    let a = abs(x as f64);
+    if !(a < 1.0) {
+        return if a == 1.0 {
+            if x < 0.0 { -1.5707964 } else { 1.5707964 }
+        } else {
+            f32::nan() + x
+        };
+    }
+    if a < 0.000244140625 {
+        return x;
+    }
+    let (hi, lo) = asin_pos(a);
+    match decide32(hi, lo, ARC_EPS) {
+        Option::Some(y) => if x < 0.0 { -y } else { y },
+        Option::None => f32::from_bits(wrap(fix::asin(a, x < 0.0, f32_format()))),
+    }
+}
+
+/// acos x, as `hi + lo`, of an `x` of magnitude `a` from 2^-60 to below 1,
+/// within 2^-92 of it: of `asin`'s parts, `π/2 ∓ atan(a / s)` where `a ≤ s`,
+/// at least π/4, else `atan(s / a)` of an `x` above 0, and `π - atan(s / a)`,
+/// at least 3π/4, below.
+fn acos_core(x: f64) -> (f64, f64) with {} {
+    let a = abs(x);
+    let (sh, sl) = sqrt_one_less_square(a);
+    if a <= sh {
+        let (qh, ql) = dd_div(a, 0.0, sh, sl);
+        let (th, tl) = atan_core(qh, ql);
+        if x < 0.0 { pio2_more(th, tl) } else { pio2_less(th, tl) }
+    } else {
+        let (qh, ql) = dd_div(sh, sl, a, 0.0);
+        let (th, tl) = atan_core(qh, ql);
+        if x < 0.0 { pi_less(th, tl) } else { (th, tl) }
+    }
+}
+
+/// acos x, from 0 to π: a NaN past ±1, and π/2 below 2^-60, where `π/2 -
+/// x` rounds to the `f64` nearest π/2.
+pub fn acos_f64(x: f64) -> f64 with {} {
+    let a = abs(x);
+    if !(a < 1.0) {
+        return if x == 1.0 { 0.0 } else if x == -1.0 { PI_H } else { f64::nan() + x };
+    }
+    if a < 8.673617379884035e-19 {
+        return PIO2_H;
+    }
+    let (hi, lo) = acos_core(x);
+    match decide64(hi, lo, ARC_EPS) {
+        Option::Some(y) => y,
+        Option::None => f64::from_bits(fix::acos(x, f64_format())),
+    }
+}
+
+/// acos x of an `f32`: π/2 below 2^-30.
+pub fn acos_f32(x: f32) -> f32 with {} {
+    let d = x as f64;
+    let a = abs(d);
+    if !(a < 1.0) {
+        return if x == 1.0 { 0.0 } else if x == -1.0 { 3.1415927 } else { f32::nan() + x };
+    }
+    if a < 9.313225746154785e-10 {
+        return 1.5707964;
+    }
+    let (hi, lo) = acos_core(d);
+    match decide32(hi, lo, ARC_EPS) {
+        Option::Some(y) => y,
+        Option::None => f32::from_bits(wrap(fix::acos(d, f32_format()))),
+    }
+}
+
+/// atan(a / b), or `π - atan(a / b)` if `left`, the angle of the point `(±b,
+/// a)`, of finite `a` and `b` above 0, as `(hi + lo) · 2^m`, within 2^-92 of
+/// it. With `a = ma · 2^ea` and `b = mb · 2^eb`, `ma` and `mb` from 1 to 2:
+/// where `ea - eb` is over 60, `a / b` is above 2^59, and the angle `π/2 ∓ b
+/// / a`, as `atan(a / b) = π/2 - atan(b / a)` and `b / a` is below 2^-59;
+/// where it's below -60, `π - a / b` if `left`, else `atan(a / b)` is `a /
+/// b` but for less than 2^-118 of it, as `(ma / mb) · 2^(ea - eb)`, scaled
+/// as `m` says, as it may be subnormal; else `ma · 2^(ea - eb)`, exactly,
+/// and `mb` are as `a` and `b` but both normal and of moderate size, so
+/// their quotient, or the other's, is `atan_core`'s.
+fn atan2_core(a: f64, b: f64, left: bool) -> (f64, f64, i32) with {} {
+    let (ma, ea) = parts(a);
+    let (mb, eb) = parts(b);
+    let d = ea - eb;
+    if d > 60 {
+        let r = b / a;
+        let (h, l) = if left {
+            fast_two_sum(PIO2_H, PIO2_L + r)
+        } else {
+            fast_two_sum(PIO2_H, PIO2_L - r)
+        };
+        return (h, l, 0);
+    }
+    if d < -60 {
+        if left {
+            let (h, l) = fast_two_sum(PI_H, PI_L - a / b);
+            return (h, l, 0);
+        }
+        let (qh, ql) = dd_div(ma, 0.0, mb, 0.0);
+        return (qh, ql, d);
+    }
+    let a2 = ma * two_to(d);
+    let (th, tl) = if a2 <= mb {
+        let (qh, ql) = dd_div(a2, 0.0, mb, 0.0);
+        atan_core(qh, ql)
+    } else {
+        let (qh, ql) = dd_div(mb, 0.0, a2, 0.0);
+        let (th, tl) = atan_core(qh, ql);
+        pio2_less(th, tl)
+    };
+    let (h, l) = if left { pi_less(th, tl) } else { (th, tl) };
+    (h, l, 0)
+}
+
+/// atan2(y, x), from -π to π: the angle of the point `(x, y)`, its sign
+/// `y`'s, of `-0.0` too. IEEE 754-2019's values where `x` or `y` is 0 or an
+/// infinity (§9.2.1), which are C's: of `y = ±0`, ±0 where `x` is positive
+/// or +0, else ±π; of `x = ±0`, ±π/2; of `x = ±∞`, ±0 or ±π, but where `y`
+/// is an infinity too, which makes them ±π/4 and ±3π/4; and of `y = ±∞`,
+/// else, ±π/2.
+pub fn atan2_f64(y: f64, x: f64) -> f64 with {} {
+    if x != x || y != y {
+        return x + y;
+    }
+    let a = abs(y);
+    let b = abs(x);
+    let left = x.is_sign_negative();
+    let infinity = f64::infinity();
+    let r = if a == 0.0 {
+        if left { PI_H } else { 0.0 }
+    } else if a == infinity {
+        if b == infinity {
+            if left { 2.3561944901923448 } else { PIO4_H }
+        } else {
+            PIO2_H
+        }
+    } else if b == 0.0 {
+        PIO2_H
+    } else if b == infinity {
+        if left { PI_H } else { 0.0 }
+    } else {
+        let (hi, lo, m) = atan2_core(a, b, left);
+        let fast = if m > -1022 {
+            match decide64(hi, lo, ARC_EPS) {
+                Option::Some(r) => Option::Some(scale(r, m)),
+                Option::None => Option::None,
+            }
+        } else {
+            Option::None
+        };
+        match fast {
+            Option::Some(r) => r,
+            Option::None => f64::from_bits(fix::atan2(a, b, left, false, f64_format())),
+        }
+    };
+    if y.is_sign_negative() { -r } else { r }
+}
+
+/// atan2(y, x) of `f32`s, as of `f64`s: their quotient is never past
+/// 2^±277, so the angle never subnormal as an `f64`.
+pub fn atan2_f32(y: f32, x: f32) -> f32 with {} {
+    if x != x || y != y {
+        return x + y;
+    }
+    let a = abs(y as f64);
+    let b = abs(x as f64);
+    let left = x.is_sign_negative();
+    let infinity = f64::infinity();
+    let r: f32 = if a == 0.0 {
+        if left { 3.1415927 } else { 0.0 }
+    } else if a == infinity {
+        if b == infinity {
+            if left { 2.3561945 } else { 0.78539819 }
+        } else {
+            1.5707964
+        }
+    } else if b == 0.0 {
+        1.5707964
+    } else if b == infinity {
+        if left { 3.1415927 } else { 0.0 }
+    } else {
+        let (hi, lo, m) = atan2_core(a, b, left);
+        match decide32(scale(hi, m), scale(lo, m), ARC_EPS) {
+            Option::Some(r) => r,
+            Option::None => f32::from_bits(wrap(fix::atan2(a, b, left, false, f32_format()))),
+        }
+    };
+    if y.is_sign_negative() { -r } else { r }
+}
+
+/// cbrt u, as `hi + lo`, of a `u` from 1 to below 8, within 2^-100 of it:
+/// Newton's iteration for `y^3 = u`, `y - (y^3 - u) / 3y^2`, which squares
+/// its error, five times in `f64` from a first guess within 10% (a third of
+/// the bits of `u` above 1's), to 2^-52; then once more in double-double,
+/// `y^3` within 2^-102 of it, and `u - y^3`'s high part exact, as they're
+/// within a factor of two (Sterbenz); what that leaves out, `(u - y^3)^2 /
+/// 9y^5`, is below 2^-104 of it.
+fn cbrt_core(u: f64) -> (f64, f64) with {} {
+    let mut y = f64::from_bits(
+        wrapping_sub(u.to_bits(), 0x3FF0_0000_0000_0000) / 3 + 0x3FF0_0000_0000_0000,
+    );
+    for _ in 0..5u32 {
+        y = y - (y * y * y - u) / (3.0 * y * y);
+    }
+    let (p, pe) = two_prod(y, y);
+    let (c, ce) = dd_mul(p, pe, y, 0.0);
+    fast_two_sum(y, (u - c - ce) / (3.0 * p))
+}
+
+/// For `cbrt` of `|x| = m · 2^e`, `m` from 1 to 2: `u = m · 2^r`, from 1 to
+/// below 8, and `k`, of `e = 3k + r`, `r` from 0 to 2, so `cbrt |x| = cbrt u
+/// · 2^k`.
+fn cbrt_reduce(a: f64) -> (f64, i32) with {} {
+    let (m, e) = parts(a);
+    let k = (e + 3075) / 3 - 1025;
+    let r = e - 3 * k;
+    (if r == 0 { m } else if r == 1 { 2.0 * m } else { 4.0 * m }, k)
+}
+
+/// The cube root, of a negative `x` too: exact where it's a float, and `x`
+/// itself of 0 and of the infinities.
+pub fn cbrt_f64(x: f64) -> f64 with {} {
+    let a = abs(x);
+    if !(a < f64::infinity()) || a == 0.0 {
+        return x + x;
+    }
+    let (u, k) = cbrt_reduce(a);
+    let (hi, lo) = cbrt_core(u);
+    let y = match decide64(hi, lo, ARC_EPS) {
+        Option::Some(y) => y,
+        Option::None => {
+            // The ends `decide64` rounded, next to each other: the root is
+            // on one side of their midpoint, as the cube of a number of 54
+            // bits has more than 53, and which, `u` says, exactly.
+            let err = abs(hi) * ARC_EPS;
+            let l = hi + (lo - err);
+            let h = hi + (lo + err);
+            if fix::cube_above(u, l, h) { h } else { l }
+        },
+    };
+    let r = scale(y, k);
+    if x < 0.0 { -r } else { r }
+}
+
+/// The cube root of an `f32`.
+pub fn cbrt_f32(x: f32) -> f32 with {} {
+    let a = abs(x as f64);
+    if !(a < f64::infinity()) || a == 0.0 {
+        return x + x;
+    }
+    let (u, k) = cbrt_reduce(a);
+    let (hi, lo) = cbrt_core(u);
+    let y = match decide32(hi, lo, ARC_EPS) {
+        Option::Some(y) => y,
+        Option::None => {
+            let (l, h) = ends32(hi, lo, ARC_EPS);
+            if fix::cube_above(u, l as f64, h as f64) { h } else { l }
+        },
+    };
+    let r = f32::nearest_f64(scale(y as f64, k));
+    if x < 0.0 { -r } else { r }
+}
+
+/// sqrt(x^2 + y^2), as `hi + lo`, of a `y` at most `x`, within 2^-103 of it:
+/// each square exactly, as two `f64`s, and their sum within 2^-105.
+fn hypot_core(x: f64, y: f64) -> (f64, f64) with {} {
+    let (p1, e1) = two_prod(x, x);
+    let (p2, e2) = two_prod(y, y);
+    let (s, se) = fast_two_sum(p1, p2);
+    let (h, l) = fast_two_sum(s, se + (e1 + e2));
+    dd_sqrt(h, l)
+}
+
+/// Of `hypot`'s two candidates `l` and `h`, next to each other, the one
+/// nearer `sqrt(x^2 + y^2)`, by the sign of `x^2 + y^2` less their
+/// midpoint's square, worked out exactly (`fix::square_side`); where it's
+/// 0, the one of them that's even.
+fn hypot_pick(x: f64, y: f64, l: f64, h: f64) -> f64 with {} {
+    let side = fix::square_side(x, y, l, h);
+    if side > 0 { h } else if side < 0 { l } else if l.to_bits() % 2 == 0 { l } else { h }
+}
+
+/// hypot of subnormal `a ≥ b`, as integers `A = a · 2^1074` and `B`, below
+/// 2^52: the float nearest `sqrt(A^2 + B^2) · 2^-1074` is the integer
+/// nearest the root, `N`, below 2^53, times 2^-1074, exactly, normal or not;
+/// never halfway, as `(N + 1/2)^2` isn't an integer. `x = a · 2^1022` and `y`
+/// are `A` and `B` over 2^52, less than 1, and the root, worked out to
+/// 2^-103 of it, gives `N` but where it's within that of halfway, which
+/// the exact comparison of both sides then settles.
+fn hypot_subnormal(a: f64, b: f64) -> f64 with {} {
+    let x = a * two_to(1022);
+    let y = b * two_to(1022);
+    let (hi, lo) = hypot_core(x, y);
+    let n0 = (hi * 4503599627370496.0 + lo * 4503599627370496.0).round();
+    let u = 2.220446049250313e-16;
+    let n = if fix::square_side(x, y, (n0 - 1.0) * u, n0 * u) < 0 {
+        n0 - 1.0
+    } else if fix::square_side(x, y, n0 * u, (n0 + 1.0) * u) > 0 {
+        n0 + 1.0
+    } else {
+        n0
+    };
+    n * 4.9406564584124654e-324
+}
+
+/// sqrt(x^2 + y^2), without overflowing or underflowing on the way, and
+/// exact where it's a float: +∞ if either is infinite, even where the
+/// other is a NaN (IEEE 754-2019, §9.2.1), and `|x|` where `|y|` is below
+/// 2^-27 of it, as `y^2/2x` is then below half its last bit. Else, of the
+/// greater `a = ma · 2^ea`, `ma` from 1 to 2, and the lesser `b`, scaled
+/// alike: `2^ea · hypot(ma, b · 2^-ea)`, each of them exactly; and where the
+/// fast path can't tell, the exact sum of the squares can, as of
+/// `hypot_pick`: halfway between two floats is possible, as `5` is of `3`
+/// and `4`.
+pub fn hypot_f64(x: f64, y: f64) -> f64 with {} {
+    let ax = abs(x);
+    let ay = abs(y);
+    let infinity = f64::infinity();
+    if ax == infinity || ay == infinity {
+        return infinity;
+    }
+    if x != x || y != y {
+        return x + y;
+    }
+    let (a, b) = if ax < ay { (ay, ax) } else { (ax, ay) };
+    // `abs` keeps a zero's sign: of two zeros, +0.0.
+    if a == 0.0 {
+        return 0.0;
+    }
+    if b == 0.0 {
+        return a;
+    }
+    if a < 2.2250738585072014e-308 {
+        return hypot_subnormal(a, b);
+    }
+    let (ma, ea) = parts(a);
+    let (mb0, eb) = parts(b);
+    let d = if ea - eb < 0 { 0 } else { ea - eb };
+    if d > 27 {
+        return a;
+    }
+    let mb = mb0 * two_to(-d);
+    let (hi, lo) = hypot_core(ma, mb);
+    let r = match decide64(hi, lo, ARC_EPS) {
+        Option::Some(r) => r,
+        Option::None => {
+            let err = abs(hi) * ARC_EPS;
+            hypot_pick(ma, mb, hi + (lo - err), hi + (lo + err))
+        },
+    };
+    // `scale` takes an exponent from -1021 up: of the least, half `r`.
+    if r >= 2.0 || ea < -1021 { scale(0.5 * r, ea + 1) } else { scale(r, ea) }
+}
+
+/// hypot of `f32`s: in `f64`s, where the squares and their sum are
+/// exact, as two `f64`s, and so is the square of the midpoint of two
+/// `f32`s, so the comparison where the fast path can't tell is too.
+pub fn hypot_f32(x: f32, y: f32) -> f32 with {} {
+    let ax = abs(x as f64);
+    let ay = abs(y as f64);
+    let infinity = f64::infinity();
+    if ax == infinity || ay == infinity {
+        return f32::infinity();
+    }
+    if x != x || y != y {
+        return x + y;
+    }
+    // Of two zeros, +0.0: `dd_sqrt` wants a sum above 0.
+    if ax == 0.0 && ay == 0.0 {
+        return 0.0;
+    }
+    let (p1, _) = two_prod(ax, ax);
+    let (p2, _) = two_prod(ay, ay);
+    let (s, se) = two_sum(p1, p2);
+    let (hi, lo) = dd_sqrt(s, se);
+    match decide32(hi, lo, ARC_EPS) {
+        Option::Some(r) => r,
+        Option::None => {
+            let (l, h) = ends32(hi, lo, ARC_EPS);
+            let m = (l as f64 + h as f64) * 0.5;
+            let d = m * m - s - se;
+            if d < 0.0 { h } else if d > 0.0 { l } else if l.to_bits() % 2 == 0 { l } else { h }
+        },
+    }
+}
+
+/// ln(1 + u), as `hi + lo`, of a `u = uh + ul` above 0, normalized: as
+/// `ln1p_core`, within `LN_EPS · |hi|` of it.
+fn ln1p_dd(uh: f64, ul: f64) -> (f64, f64) with {} {
+    if uh < 3.0517578125e-5 {
+        return ln1p_small(uh, ul);
+    }
+    let (s, e) = two_sum(1.0, uh);
+    let (h, l) = ln_core(s);
+    fast_two_sum(h, l + (e + ul) / s)
+}
+
+/// asinh a, as `hi + lo`, of an `a` from 2^-26 up, within `LN_EPS · |hi|`:
+/// to 2^28, `ln(1 + u)`, `u = a + a^2 / (1 + sqrt(1 + a^2))`, which is `a +
+/// sqrt(1 + a^2) - 1` without its cancelling, its terms all positive, so
+/// within 2^-100 of it, which `ln(1 + u)` is no more sensitive to; past
+/// 2^28, `ln a + ln 2 + 1/4a^2`, which leaves out less than 2^-114 of it.
+fn asinh_core(a: f64) -> (f64, f64) with {} {
+    if a > 268435456.0 {
+        let (h, l) = ln_core(a);
+        let (s, se) = fast_two_sum(h, LN2_H);
+        return fast_two_sum(s, se + (l + LN2_L + 0.25 / a / a));
+    }
+    let (p, pe) = two_prod(a, a);
+    let (q0, qe) = two_sum(1.0, p);
+    let (qh, ql) = fast_two_sum(q0, qe + pe);
+    let (rh, rl) = dd_sqrt(qh, ql);
+    let (d0, de) = two_sum(1.0, rh);
+    let (dh, dl) = fast_two_sum(d0, de + rl);
+    let (wh, wl) = dd_div(p, pe, dh, dl);
+    let (u0, ue) = two_sum(a, wh);
+    let (uh, ul) = fast_two_sum(u0, ue + wl);
+    ln1p_dd(uh, ul)
+}
+
+/// asinh x: `x` itself below 2^-26, where `x^3/6` is below half its last
+/// bit, and ±∞ of ±∞.
+pub fn asinh_f64(x: f64) -> f64 with {} {
+    let a = abs(x);
+    if !(a < f64::infinity()) {
+        return x + x;
+    }
+    if a < 1.4901161193847656e-8 {
+        return x;
+    }
+    let (hi, lo) = asinh_core(a);
+    match decide64(hi, lo, LN_EPS) {
+        Option::Some(y) => if x < 0.0 { -y } else { y },
+        Option::None => f64::from_bits(fix::asinh(a, x < 0.0, f64_format())),
+    }
+}
+
+/// asinh x of an `f32`: `x` below 2^-12.
+pub fn asinh_f32(x: f32) -> f32 with {} {
+    let a = abs(x as f64);
+    if !(a < f64::infinity()) {
+        return x + x;
+    }
+    if a < 0.000244140625 {
+        return x;
+    }
+    let (hi, lo) = asinh_core(a);
+    match decide32(hi, lo, LN_EPS) {
+        Option::Some(y) => if x < 0.0 { -y } else { y },
+        Option::None => f32::from_bits(wrap(fix::asinh(a, x < 0.0, f32_format()))),
+    }
+}
+
+/// acosh x, as `hi + lo`, of an `x` above 1, within `LN_EPS · |hi|`: below 2,
+/// `ln(1 + u)`, `u = t + sqrt(t (2 + t))`, of `t = x - 1`, exact, its terms
+/// positive; to 2^28, `ln(x + sqrt(x^2 - 1))`, `x^2 - 1` at least 3, so
+/// nothing cancels; past 2^28, `ln x + ln 2 - 1/4x^2`, which leaves out less
+/// than 2^-114 of it.
+fn acosh_core(x: f64) -> (f64, f64) with {} {
+    if x > 268435456.0 {
+        let (h, l) = ln_core(x);
+        let (s, se) = fast_two_sum(h, LN2_H);
+        return fast_two_sum(s, se + (l + LN2_L - 0.25 / x / x));
+    }
+    if x < 2.0 {
+        let t = x - 1.0;
+        let (gh, gl) = fast_two_sum(2.0, t);
+        let (ph, pl) = dd_mul(gh, gl, t, 0.0);
+        let (rh, rl) = dd_sqrt(ph, pl);
+        let (u0, ue) = fast_two_sum(rh, t);
+        let (uh, ul) = fast_two_sum(u0, ue + rl);
+        return ln1p_dd(uh, ul);
+    }
+    let (p, pe) = two_prod(x, x);
+    let (q0, qe) = fast_two_sum(p, -1.0);
+    let (qh, ql) = fast_two_sum(q0, qe + pe);
+    let (rh, rl) = dd_sqrt(qh, ql);
+    let (v0, ve) = fast_two_sum(x, rh);
+    let (vh, vl) = fast_two_sum(v0, ve + rl);
+    let (h, l) = ln_core(vh);
+    fast_two_sum(h, l + vl / vh)
+}
+
+/// acosh x: 0 of 1, a NaN below 1, and ∞ of ∞.
+pub fn acosh_f64(x: f64) -> f64 with {} {
+    if !(x > 1.0) || x == f64::infinity() {
+        return if x == 1.0 { 0.0 } else if x > 1.0 { x } else { f64::nan() + x };
+    }
+    let (hi, lo) = acosh_core(x);
+    match decide64(hi, lo, LN_EPS) {
+        Option::Some(y) => y,
+        Option::None => f64::from_bits(fix::acosh(x, f64_format())),
+    }
+}
+
+/// acosh x of an `f32`.
+pub fn acosh_f32(x: f32) -> f32 with {} {
+    if !(x > 1.0) || x == f32::infinity() {
+        return if x == 1.0 { 0.0 } else if x > 1.0 { x } else { f32::nan() + x };
+    }
+    let d = x as f64;
+    let (hi, lo) = acosh_core(d);
+    match decide32(hi, lo, LN_EPS) {
+        Option::Some(y) => y,
+        Option::None => f32::from_bits(wrap(fix::acosh(d, f32_format()))),
+    }
+}
+
+/// atanh a, as `hi + lo`, of an `a` from 2^-27 to below 1, within `LN_EPS ·
+/// |hi|`: `(ln(1 + a) - ln(1 - a)) / 2`, of terms of opposite signs, so a
+/// sum that cancels nothing, each within `LN_EPS` of it (`ln1p_core`).
+fn atanh_core(a: f64) -> (f64, f64) with {} {
+    let (ph, pl) = ln1p_core(a);
+    let (mh, ml) = ln1p_core(-a);
+    let (s, se) = two_sum(ph, -mh);
+    let (h, l) = fast_two_sum(s, se + (pl - ml));
+    (0.5 * h, 0.5 * l)
+}
+
+/// atanh x: ±∞ of ±1, a NaN past them, and `x` itself below 2^-27, where
+/// `x^3/3` is below half its last bit.
+pub fn atanh_f64(x: f64) -> f64 with {} {
+    let a = abs(x);
+    if !(a < 1.0) {
+        return if a == 1.0 { x * f64::infinity() } else { f64::nan() + x };
+    }
+    if a < 7.450580596923828e-9 {
+        return x;
+    }
+    let (hi, lo) = atanh_core(a);
+    match decide64(hi, lo, LN_EPS) {
+        Option::Some(y) => if x < 0.0 { -y } else { y },
+        Option::None => f64::from_bits(fix::atanh(a, x < 0.0, f64_format())),
+    }
+}
+
+/// atanh x of an `f32`: `x` below 2^-12.
+pub fn atanh_f32(x: f32) -> f32 with {} {
+    let a = abs(x as f64);
+    if !(a < 1.0) {
+        return if a == 1.0 { x * f32::infinity() } else { f32::nan() + x };
+    }
+    if a < 0.000244140625 {
+        return x;
+    }
+    let (hi, lo) = atanh_core(a);
+    match decide32(hi, lo, LN_EPS) {
+        Option::Some(y) => if x < 0.0 { -y } else { y },
+        Option::None => f32::from_bits(wrap(fix::atanh(a, x < 0.0, f32_format()))),
+    }
+}
+
+/// For `sin_pi` and `cos_pi`, of an `a` from 0 to below 2^52: `a = n + k/2 +
+/// r`, `n` an integer, `k` from 0 to 2 and `r` from -1/4 to 1/4, each exactly:
+/// `n` is `a`'s integer part, and `f = a - n`, from 0 to below 1, is exact,
+/// and so is `r = f - k/2`, as `k/2` is within a factor of two of `f`, or 0
+/// (Sterbenz); and the quarter turn `πa` is in, mod 4, `2n + k`, which `n`'s
+/// last bit says, as the last of `n + 2^52`, exact.
+fn pi_reduce(a: f64) -> (f64, { q: u32 | q < 4 }) with {} {
+    let n = a.trunc();
+    let f = a - n;
+    let odd = (n + 4503599627370496.0).to_bits() % 2 == 1;
+    let (r, k) = if f <= 0.25 { (f, 0) } else if f < 0.75 { (f - 0.5, 1) } else { (f - 1.0, 2) };
+    (r, (if odd { 2 } else { 0 } + k) % 4)
+}
+
+/// `sin πr` and `cos πr`, each as `hi + lo`, of a nonzero `r` from -1/4
+/// to 1/4 and of magnitude at least 2^-200: `πr` in double-double, within
+/// 2^-104 of it, then `sincos_core`, within 2^-90 of each, and below 1/128,
+/// where its table isn't used, within that of each relatively: so at most
+/// 2^-82 of each (MPFR finds 2^-82.3), well within `TRIG_EPS`.
+fn sincos_pi(r: f64) -> (f64, f64, f64, f64) with {} {
+    let (ph, pl) = two_prod(PI_H, r);
+    sincos_core(ph, pl + PI_L * r)
+}
+
+/// sin πx, worked out from `x` exactly, so precise where `x` is big, where
+/// `(π * x).sin()` isn't: 0 of an integer, with `x`'s sign (IEEE 754-2019,
+/// §9.2.1), ±1 halfway between two, and a NaN of an infinity. Below 2^-52
+/// it's `πx`, but for less than 2^-102 of it: of `x = m · 2^e`, `m` from 1 to
+/// 2, it's `(π/4 · m) · 2^(e + 2)`, each in double-double.
+pub fn sin_pi_f64(x: f64) -> f64 with {} {
+    let a = abs(x);
+    if !(a < 4503599627370496.0) {
+        return if x != x || a == f64::infinity() { x - x } else { 0.0 * x };
+    }
+    if a < 2.220446049250313e-16 {
+        if a == 0.0 {
+            return x;
+        }
+        let (m, e) = parts(a);
+        let (ph, pl) = two_prod(PIO4_H, m);
+        if e > -1023 {
+            match decide64(ph, pl + PIO4_L * m, ARC_EPS) {
+                Option::Some(y) => return if x < 0.0 { -scale(y, e + 2) } else { scale(y, e + 2) },
+                Option::None => {},
+            }
+        }
+        return f64::from_bits(fix::sin_pi_tiny(a, x < 0.0, f64_format()));
+    }
+    let (r, q) = pi_reduce(a);
+    let y = if r == 0.0 {
+        if q == 1 { 1.0 } else if q == 3 { -1.0 } else { 0.0 }
+    } else {
+        let (sh, sl, ch, cl) = sincos_pi(r);
+        let (hi, lo) = match q {
+            0 => (sh, sl),
+            1 => (ch, cl),
+            2 => (-sh, -sl),
+            _ => (-ch, -cl),
+        };
+        match decide64(hi, lo, TRIG_EPS) {
+            Option::Some(y) => y,
+            Option::None => f64::from_bits(fix::sin_cos_pi(r, q, false, f64_format())),
+        }
+    };
+    if x < 0.0 { -y } else { y }
+}
+
+/// cos πx: 1 of an even integer, -1 of an odd one, and +0 halfway between
+/// two (IEEE 754-2019, §9.2.1); 1 below 2^-29, where `(πx)^2/2` is below half
+/// the last bit below 1.
+pub fn cos_pi_f64(x: f64) -> f64 with {} {
+    let a = abs(x);
+    if !(a < 4503599627370496.0) {
+        if x != x || a == f64::infinity() {
+            return x - x;
+        }
+        // An integer, of 53 bits or more, so even, or its last bit says.
+        return if a < 9007199254740992.0 && a.to_bits() % 2 == 1 { -1.0 } else { 1.0 };
+    }
+    if a < 1.862645149230957e-9 {
+        return 1.0;
+    }
+    let (r, q) = pi_reduce(a);
+    if r == 0.0 {
+        return if q == 0 { 1.0 } else if q == 2 { -1.0 } else { 0.0 };
+    }
+    let (sh, sl, ch, cl) = sincos_pi(r);
+    let (hi, lo) = match q {
+        0 => (ch, cl),
+        1 => (-sh, -sl),
+        2 => (-ch, -cl),
+        _ => (sh, sl),
+    };
+    match decide64(hi, lo, TRIG_EPS) {
+        Option::Some(y) => y,
+        Option::None => f64::from_bits(fix::sin_cos_pi(r, q, true, f64_format())),
+    }
+}
+
+/// sin πx of an `f32`, of which none is below 2^-149, so `πr` is never
+/// subnormal as an `f64`.
+pub fn sin_pi_f32(x: f32) -> f32 with {} {
+    let d = x as f64;
+    let a = abs(d);
+    if !(a < 4503599627370496.0) {
+        return if x != x || a == f64::infinity() { x - x } else { 0.0 * x };
+    }
+    if a == 0.0 {
+        return x;
+    }
+    let (r, q) = pi_reduce(a);
+    let y: f32 = if r == 0.0 {
+        if q == 1 { 1.0 } else if q == 3 { -1.0 } else { 0.0 }
+    } else {
+        let (sh, sl, ch, cl) = sincos_pi(r);
+        let (hi, lo) = match q {
+            0 => (sh, sl),
+            1 => (ch, cl),
+            2 => (-sh, -sl),
+            _ => (-ch, -cl),
+        };
+        match decide32(hi, lo, TRIG_EPS) {
+            Option::Some(y) => y,
+            Option::None => f32::from_bits(wrap(fix::sin_cos_pi(r, q, false, f32_format()))),
+        }
+    };
+    if x < 0.0 { -y } else { y }
+}
+
+/// cos πx of an `f32`: 1 below 2^-14.
+pub fn cos_pi_f32(x: f32) -> f32 with {} {
+    let d = x as f64;
+    let a = abs(d);
+    if !(a < 4503599627370496.0) {
+        if x != x || a == f64::infinity() {
+            return x - x;
+        }
+        return 1.0;
+    }
+    if a < 0.00006103515625 {
+        return 1.0;
+    }
+    let (r, q) = pi_reduce(a);
+    if r == 0.0 {
+        return if q == 0 { 1.0 } else if q == 2 { -1.0 } else { 0.0 };
+    }
+    let (sh, sl, ch, cl) = sincos_pi(r);
+    let (hi, lo) = match q {
+        0 => (ch, cl),
+        1 => (-sh, -sl),
+        2 => (-ch, -cl),
+        _ => (sh, sl),
+    };
+    match decide32(hi, lo, TRIG_EPS) {
+        Option::Some(y) => y,
+        Option::None => f32::from_bits(wrap(fix::sin_cos_pi(r, q, true, f32_format()))),
+    }
 }

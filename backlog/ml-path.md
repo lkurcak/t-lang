@@ -11,8 +11,9 @@ refinements prove the indices (no bounds checks on the device), and disjoint per
 writes are a typing rule.
 
 1. Floats: done, 0.109.0.
-2. Math functions in T, correctly rounded: done for `exp`, `ln`, `pow`, `sin`, `cos`,
-   `tanh` and eight more in 0.110.0 (`docs/102-math.md`); the other nine in step 103.
+2. Math functions in T, correctly rounded: done, 0.110.0 (`exp`, `ln`, `pow`, `sin`, `cos`,
+   `tanh` and eight more, `docs/102-math.md`) and 0.111.0 (the inverses, `cbrt`, `hypot`,
+   `sin_pi` and `cos_pi`, `docs/103-more-math.md`).
 3. CPU float speed, measured before it's tuned: n-body, spectral-norm, mandelbrot, a dot
    product, and a naive and a tiled matrix multiply, in T, Rust and C on this machine; then
    fix what the numbers show. Rust has T's float rules (no fast-math, no fusing), so it's the
