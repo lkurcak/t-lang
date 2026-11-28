@@ -2221,7 +2221,7 @@ const PIO4_L: f64 = 3.061616997868383e-17;
 /// 2^-76: the error the functions of step 103 decide with, but for the
 /// inverse hyperbolic ones, which are `ln`'s and decide with `LN_EPS`, and
 /// `sin_pi` and `cos_pi`, which are `sin`'s and decide with `TRIG_EPS`. Each
-/// says its own, which is below 2^-95 (lemma M1): this is far wider, so
+/// says its own, which is below 2^-92 (lemma M1): this is far wider, so
 /// that the hardest of random inputs, which the tests carry, go the slow
 /// way and check it, at a cost of once in about 2^22 calls.
 const ARC_EPS: f64 = 1.3234889800848443e-23;
@@ -2404,16 +2404,18 @@ const ATAN: [u64; 130] = [
 ];
 
 /// atan t, as `hi + lo`, of a `t = th + tl` from 0 to 1 and a little, its
-/// low part at most its high one's last bit: within 2^-97 of it (lemma
-/// M1). `t = c + d`, `c = j/64` the nearest, so `|d| ≤ 1/128` and a
-/// little, and `atan t = atan c + atan u`, `u = (t - c) / (1 + tc)`, `|u| ≤
-/// |d|`, within 2^-99 of it: `th - c` is exact, as `c` has 7 bits and is
-/// within a factor of two of `th`, or 0. Then `atan u = u - u^3 Q`, `Q =
-/// 1/3 - u^2/5 + u^4/7 - .. - u^10/13`, which leaves out less than 2^-101
-/// of it; `u^3 Q` is at most 2^-15.6 of `u`, so `Q` must be known to
-/// 2^-82 of itself: its first two terms in double-double, the rest, below
-/// 2^-30.8 of it, in `f64`. Where `j ≥ 1`, `|atan u|` is at most half
-/// `atan c`, so their sum isn't less than half of either.
+/// low part at most its high one's last bit: within 2^-93 of it (lemma M1;
+/// MPFR finds at most 2^-95.2). `t = c + d`, `c = j/64` the nearest, so
+/// `|d| ≤ 1/128` and a little, and `atan t = atan c + atan u`, `u = (t - c)
+/// / (1 + tc)`, `|u| ≤ |d|`, within 2^-99 of it: `th - c` is exact, as `c`
+/// has 7 bits and is within a factor of two of `th`, or 0. Then `atan u = u
+/// - u^3 Q`, `Q = 1/3 - u^2/5 + u^4/7 - .. - u^10/13`, which leaves out
+/// less than 2^-101 of it; `u^3 Q` is at most 2^-15.6 of `u`: `Q`'s first
+/// two terms in double-double, the rest, below 2^-30.8 of it, in `f64`, a
+/// few of its last bits off, so `Q` within 2^-79 of itself and `atan u`
+/// within 2^-94.6. Where `j ≥ 1`, `|atan u|` is at most half `atan c`, so
+/// their sum isn't less than half of either, and cancels at most one more
+/// bit.
 fn atan_core(th: f64, tl: f64) -> (f64, f64) with {} {
     let jf = th * 64.0 + SHIFTER;
     let j0 = fix::clamp(wrap(jf.to_bits()), 64);
@@ -2452,7 +2454,7 @@ fn atan_core(th: f64, tl: f64) -> (f64, f64) with {} {
     fast_two_sum(sh, se + (bl + al))
 }
 
-/// atan a, as `hi + lo`, of an `a` above 0, within 2^-96 of it: to 1,
+/// atan a, as `hi + lo`, of an `a` above 0, within 2^-93 of it: to 1,
 /// `atan_core`; then `π/2 - atan(1/a)`, `1/a` within 2^-100 of it, and
 /// atan's error no more than its argument's, relatively; past 2^100, `π/2
 /// - 1/a`, as what that leaves out, `1/3a^3`, is below 2^-300.
@@ -2517,7 +2519,7 @@ fn sqrt_one_less_square(a: f64) -> (f64, f64) with {} {
     dd_sqrt(h, l)
 }
 
-/// asin a, as `hi + lo`, of an `a` from 2^-26 to below 1, within 2^-96 of
+/// asin a, as `hi + lo`, of an `a` from 2^-26 to below 1, within 2^-92 of
 /// it: `atan(a / s)`, `s = sqrt(1 - a^2)`, where `a ≤ s`, else `π/2 - atan(s
 /// / a)`, which is at least π/4; the quotient within 2^-100 of it, and
 /// `s`'s error, 2^-103, besides.
@@ -2575,7 +2577,7 @@ pub fn asin_f32(x: f32) -> f32 with {} {
 }
 
 /// acos x, as `hi + lo`, of an `x` of magnitude `a` from 2^-60 to below 1,
-/// within 2^-96 of it: of `asin`'s parts, `π/2 ∓ atan(a / s)` where `a ≤ s`,
+/// within 2^-92 of it: of `asin`'s parts, `π/2 ∓ atan(a / s)` where `a ≤ s`,
 /// at least π/4, else `atan(s / a)` of an `x` above 0, and `π - atan(s / a)`,
 /// at least 3π/4, below.
 fn acos_core(x: f64) -> (f64, f64) with {} {
@@ -2627,7 +2629,7 @@ pub fn acos_f32(x: f32) -> f32 with {} {
 }
 
 /// atan(a / b), or `π - atan(a / b)` if `left`, the angle of the point `(±b,
-/// a)`, of finite `a` and `b` above 0, as `(hi + lo) · 2^m`, within 2^-96 of
+/// a)`, of finite `a` and `b` above 0, as `(hi + lo) · 2^m`, within 2^-92 of
 /// it. With `a = ma · 2^ea` and `b = mb · 2^eb`, `ma` and `mb` from 1 to 2:
 /// where `ea - eb` is over 60, `a / b` is above 2^59, and the angle `π/2 ∓ b
 /// / a`, as `atan(a / b) = π/2 - atan(b / a)` and `b / a` is below 2^-59;
@@ -3114,9 +3116,11 @@ fn pi_reduce(a: f64) -> (f64, { q: u32 | q < 4 }) with {} {
     (r, (if odd { 2 } else { 0 } + k) % 4)
 }
 
-/// `sin πr` and `cos πr`, each as `hi + lo`, within 2^-89 of them, of a
-/// nonzero `r` from -1/4 to 1/4 and of magnitude at least 2^-200: `πr` in
-/// double-double, within 2^-104 of it, then `sincos_core`.
+/// `sin πr` and `cos πr`, each as `hi + lo`, of a nonzero `r` from -1/4
+/// to 1/4 and of magnitude at least 2^-200: `πr` in double-double, within
+/// 2^-104 of it, then `sincos_core`, within 2^-90 of each, and below 1/128,
+/// where its table isn't used, within that of each relatively: so at most
+/// 2^-82 of each (MPFR finds 2^-82.3), well within `TRIG_EPS`.
 fn sincos_pi(r: f64) -> (f64, f64, f64, f64) with {} {
     let (ph, pl) = two_prod(PI_H, r);
     sincos_core(ph, pl + PI_L * r)

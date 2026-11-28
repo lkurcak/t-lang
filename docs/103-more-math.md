@@ -167,16 +167,21 @@ panic) and M6 (the same bits everywhere). Of their own:
   decides with, `ARC_EPS`, 2^-76, by far more than step 102's margin of 8:
   so that the hardest of random inputs, which the tests carry, are
   decided by the slow paths and the comparisons, and test them, as step
-  102's do theirs. Each fast path's own: `atan_core`'s
-  2^-97, from the series it leaves out, 2^-101, and its operations'
-  roundings; `asin_pos`'s and `atan2`'s, the quotient's 2^-100 and the
-  square root's 2^-103 more, as `atan`'s relative error is at most its
+  102's do theirs. Each fast path's own: `atan_core`'s 2^-93, the series
+  it leaves out, 2^-101, and its tail's roundings in `f64`, a few of their
+  last bits, of a term 2^-31 of `Q`'s and `Q`'s 2^-15.6 of `u`'s;
+  `asin_pos`'s and `atan2`'s 2^-92, the quotient's 2^-100 and the square
+  root's 2^-103 more, as `atan`'s relative error is at most its
   argument's (`d atan t / atan t ≤ dt / t`); `cbrt_core`'s 2^-100, of a
   last Newton step whose cube is within 2^-102; `hypot_core`'s 2^-103.
   The inverse hyperbolic ones are `ln_core`'s, and decide with its
   `LN_EPS`, 2^-78: what they add is below 2^-99, of sums whose terms are
   all of one sign, and `ln(1 + u)` is no more sensitive to `u` than `u`
-  is. Measured against MPFR: .
+  is; `sin_pi` and `cos_pi` are `sincos_core`'s, and decide with
+  `TRIG_EPS`, 2^-74. Measured against MPFR, the greatest error of 400,000
+  inputs in each range: `atan`'s 2^-95.4, `asin`'s 2^-95.5, `acos`'s
+  2^-96.6, `cbrt`'s 2^-103.6, `asinh`'s 2^-83.0, `acosh`'s 2^-88.4,
+  `atanh`'s 2^-81.8 and `sin_pi`'s 2^-82.3.
 - **R1 (`cbrt` and `hypot` by comparison).** Where `decide64` fails, the
   ends it rounded, `l` and `h`, are floats next to each other, as its
   interval is far narrower than an ulp, and the exact value is between
