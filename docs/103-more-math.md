@@ -150,8 +150,16 @@ That found the one bug, in step 102's `fix::quotient`, which gave half of
 two such, and `atan`'s and `asinh`'s slow paths do.
 
 The tests carry the hardest inputs of each function MPFR found among 300
-million drawn at random, with its answers, now with the infinities and a
-NaN among the edges of every function (`tests/generated/math.rs`).
+million drawn at random, with its answers (`tests/generated/math.rs`),
+and now besides: the infinities and a NaN among every function's edges,
+and of `atan2`, `hypot` and `pow` each zero, infinity and NaN against each;
+an input in each interval of `atan`'s table; and a second search of
+`atan`, `asinh` and `acosh` nearer 1, as none of the hardest of their wide
+ranges was where their slow paths branch, `atan`'s from -1 to 1 and
+`acosh`'s below 2. Each of these was added after breaking the functions on
+purpose: a table entry wrong in its last bit, or `acosh`'s slow path off
+by `ln 2` past 2√2, passed the tests until then. The edges found `hypot`
+of two zeros wrong, a NaN of `f32`s and `-0.0` of `f64`s.
 
 ## Speed
 

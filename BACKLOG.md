@@ -39,6 +39,10 @@
   neural-network library in t-libs, tested on MNIST from a linear model to a small residual
   net; an agent that learns to play a T game such as t-maze; then FFI with pointers and
   linking shared libraries; GPU kernels later.
+- The math vectors (`scripts/math/vectors.c`) for step 102's functions as step 103's have: an
+  input in each interval of `EXP2`, `LN1`, `LN2` and `SINCOS`, as random ones leave most out
+  and CI misses an entry wrong in its last bit; and a second search for any branch of a slow
+  path that none of the hardest reach.
 - IEEE 754's other functions in turns, `tan_pi`, `asin_pi`, `acos_pi`, `atan_pi` and
   `atan2_pi`, once a program wants one (D3 of `docs/103-more-math.md`).
 - Floats, what step 101 left out (`docs/101-floats.md`): refinements of floats (measures like
