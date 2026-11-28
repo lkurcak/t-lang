@@ -382,7 +382,7 @@ fn main() {
 fn proof_details_survive_closure_effect_checking() {
     let (_, rendered) = rejected(
         "\
-fn use_it<F: Fn(i64) -> i64 + Discard>(f: F) { let _ = f(1); }
+fn use_it<F: Fn(i64) -> i64 with {} + Discard>(f: F) { let _ = f(1); }
 fn main() { use_it(|n| n + 1); }
 ",
     );

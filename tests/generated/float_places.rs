@@ -187,7 +187,7 @@ fn id<T>(t: T) -> T {{ t }}
 
 fn by_bound<T: Give>(t: &T) -> F {{ t.give() }}
 
-fn made(x: F) -> impl Fn() -> F + Discard {{ move || x }}
+fn made(x: F) -> impl Fn() -> F with {{}} + Discard {{ move || x }}
 
 fn get(x: F) -> F {{ x }}
 

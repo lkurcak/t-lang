@@ -369,10 +369,12 @@ result such as `-> impl Fn() -> i64`.
 Generic code can use only the operations its bounds permit. `T: Copy`
 permits copying `T`; `T: Discard` permits ignoring it. Associated types
 such as `I::Item` come from trait bounds. Closures' effects are inferred
-from their bodies and constrained by the bound at a call:
+from their bodies and constrained by the bound at a call. An `Fn` bound
+with no `with` leaves them open: calls of an `F` do `F::e`, which each
+use decides by what its argument's calls do:
 
 ```rust
-fn apply<effect e, F: Fn() -> i64 with e + Discard>(f: F) -> i64 with e { f() }
+fn apply<F: Fn() -> i64 + Discard>(f: F) -> i64 with F::e { f() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
@@ -383,8 +385,14 @@ fn main(os: std::Os) -> Result<(), std::io::Error> {
 ```
 
 `Discard` is needed here because calling `f` through `Fn` borrows it,
-and `apply` then drops it. `F: Fn() -> i64` without `with e` permits no
-effects from the call. A closure parameter written `x: &i64` can accept
+and `apply` then drops it. `F: Fn() -> i64 with {}` permits no effects
+from the call, and `with X` at most `X`. `F::e` is `<F as FnOnce>::e`;
+a function whose effects are inferred has it with nothing written. An
+opaque result's bound, `-> impl Fn() -> i64`, leaves them open too, which
+no `with` of a caller can name: say `impl Fn() -> i64 with {}` for none.
+A field of a struct can't name `F::e`, and an impl's method's bound is
+open exactly where its trait's is (see [open `Fn`
+bounds](104-open-fn-bounds.md)). A closure parameter written `x: &i64` can accept
 a reference of any lifetime; an omitted result lifetime is inferred from
 what its body returns, then checked. Returning a reference does not
 extend the lifetime of what it borrows.

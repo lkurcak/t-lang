@@ -162,7 +162,7 @@ of `c`. A `move` closure's `d` is its own copy, of the value `d` had when
 it was made; what `d` is at the call doesn't matter:
 
 ```rust,error
-fn apply<F: FnMut() -> i64 + Discard>(mut f: F) -> i64 { f() }
+fn apply<F: FnMut() -> i64 with {} + Discard>(mut f: F) -> i64 { f() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;

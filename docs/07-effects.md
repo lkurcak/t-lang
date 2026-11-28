@@ -126,8 +126,10 @@ is.
 A closure has no signature to say its effects in, so they're worked out
 from its body, as its captures are. A bound says what a closure, or
 anything else called through a type parameter, may do, *at most*: `F:
-Fn(i64) -> i64` holds of what can't panic, and `F: Fn(i64) -> i64 with
-panic` of what may or mayn't.
+Fn(i64) -> i64 with {}` holds of what can't panic, and `F: Fn(i64) -> i64
+with panic` of what may or mayn't. Since step 104, one that says no `with`
+leaves it open, `F::e`, an effect parameter of its own, which each call
+decides as it does `e` below (docs/104-open-fn-bounds.md).
 
 What a higher-order function does depends on what it's given, so it's
 generic in that: `e` in `twice` is an *effect parameter*, declared with

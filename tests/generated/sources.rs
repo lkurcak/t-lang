@@ -310,9 +310,9 @@ struct Ad<I, F> {{ iter: I, f: F }}
 
 impl<@I@, F: @FB@> Iterator for Ad<I, F> where I::Item: Discard {{
     type Item = I::Item;
-    effect e = I::e;
+    effect e = {{I::e, F::e}};
 
-    fn next(&mut self) -> Option<I::Item> with I::e {{
+    fn next(&mut self) -> Option<I::Item> with {{I::e, F::e}} {{
         @BODY@
     }}
 }}
@@ -440,9 +440,9 @@ struct Ad<I, F, G> {{ iter: I, f: F, g: G }}
 
 impl<I: Iterator, U, @FB@> Iterator for Ad<I, F, G> where U: Discard {{
     type Item = U;
-    effect e = I::e;
+    effect e = {{I::e, F::e, G::e}};
 
-    fn next(&mut self) -> Option<U> with I::e {{
+    fn next(&mut self) -> Option<U> with {{I::e, F::e, G::e}} {{
         @BODY@
     }}
 }}
@@ -577,9 +577,9 @@ struct Each<I, F> { iter: I, f: F }
 
 impl<I: Iterator, F: FnMut(I::Item) -> bool> Iterator for Each<I, F> where I::Item: Discard {
     type Item = I::Item;
-    effect e = I::e;
+    effect e = {I::e, F::e};
 
-    fn next(&mut self) -> Option<I::Item> with I::e { self.iter.next() }
+    fn next(&mut self) -> Option<I::Item> with {I::e, F::e} { self.iter.next() }
 }
 
 impl<I, F> Each<I, F> {
@@ -603,9 +603,9 @@ fn main() {
 
     impl<I: Iterator, F: FnMut(I::Item)> Iterator for Each<I, F> where I::Item: Discard {
         type Item = I::Item;
-        effect e = I::e;
+        effect e = {I::e, F::e};
 
-        fn next(&mut self) -> Option<I::Item> with I::e {
+        fn next(&mut self) -> Option<I::Item> with {I::e, F::e} {
             match self.iter.next() {
                 Some(x) => {
                     (self.f)(x);
@@ -769,9 +769,9 @@ fn main() {
 
     impl<I: Iterator<Item = usize>, F: FnMut(usize)> Iterator for Each<I, F> {
         type Item = usize;
-        effect e = I::e;
+        effect e = {I::e, F::e};
 
-        fn next(&mut self) -> Option<usize> with I::e {
+        fn next(&mut self) -> Option<usize> with {I::e, F::e} {
             match self.iter.next() {
                 Some(_x) => {
                     (self.f)(100);
@@ -799,9 +799,9 @@ fn main() {
 
     impl<I: Iterator, F: FnMut(I::Item)> Iterator for Each<I, F> where I::Item: Discard {
         type Item = I::Item;
-        effect e = I::e;
+        effect e = {I::e, F::e};
 
-        fn next(&mut self) -> Option<I::Item> with I::e {
+        fn next(&mut self) -> Option<I::Item> with {I::e, F::e} {
             match self.iter.next() {
                 Some(x) => {
                     (self.f)(x);
@@ -839,9 +839,9 @@ fn main() {
 
     impl<I: Iterator, J: Iterator, F: FnMut(J::Item)> Iterator for Each<I, J, F> where J::Item: Discard {
         type Item = J::Item;
-        effect e = J::e;
+        effect e = {J::e, F::e};
 
-        fn next(&mut self) -> Option<J::Item> with J::e {
+        fn next(&mut self) -> Option<J::Item> with {J::e, F::e} {
             match self.other.next() {
                 Some(x) => {
                     (self.f)(x);
@@ -871,9 +871,9 @@ fn main() {
 
     impl<I: Iterator<Item = usize>, F: FnMut(I::Item)> Iterator for Each<I, F> {
         type Item = usize;
-        effect e = I::e;
+        effect e = {I::e, F::e};
 
-        fn next(&mut self) -> Option<usize> with I::e {
+        fn next(&mut self) -> Option<usize> with {I::e, F::e} {
             match self.iter.next() {
                 Some(_x) => {
                     (self.f)(100);
@@ -961,9 +961,9 @@ struct Ad<I, F, G> { iter: I, f: F, g: G }
 
 impl<I: Iterator, U, F: FnMut(I::Item) -> U, G: FnMut(&mut U)> Iterator for Ad<I, F, G> where U: Discard {
     type Item = U;
-    effect e = I::e;
+    effect e = {I::e, F::e, G::e};
 
-    fn next(&mut self) -> Option<U> with I::e {
+    fn next(&mut self) -> Option<U> with {I::e, F::e, G::e} {
         match self.iter.next() {
             Some(x) => {
                 let mut u = (self.f)(x);
@@ -1090,9 +1090,9 @@ struct Gen<T, F> { v: Option<T>, f: F }
 
 impl<T: Discard, F: FnMut() -> T> Iterator for Gen<T, F> {
     type Item = T;
-    effect e = {};
+    effect e = F::e;
 
-    fn next(&mut self) -> Option<T> {
+    fn next(&mut self) -> Option<T> with F::e {
         let _ = core::mem::replace(&mut self.v, None);
         Some((self.f)())
     }
@@ -1214,9 +1214,9 @@ fn main() {
 
     impl<I: Iterator, F: FnMut(I::Item) -> usize> Iterator for Each<I, F> {{
         type Item = usize;
-        effect e = I::e;
+        effect e = {{I::e, F::e}};
 
-        fn next(&mut self) -> Option<usize> with I::e {{
+        fn next(&mut self) -> Option<usize> with {{I::e, F::e}} {{
             match self.iter.next() {{
                 Some(x) => Some((self.f)(x)),
                 None => None,

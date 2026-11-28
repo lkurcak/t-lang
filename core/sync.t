@@ -159,7 +159,7 @@ impl<T> Mutex<T> {
     /// Waits until no other thread has the mutex, then calls `f` with what's
     /// in it, and gives back what `f` does. No other thread has it until
     /// `f` is done.
-    export fn lock<R, effect e, F: FnOnce(&mut T) -> R with e>(&self, f: F) -> R with e {
+    export fn lock<R, F: FnOnce(&mut T) -> R>(&self, f: F) -> R with F::e {
         while self.locked.swap(true) {
             spin();
         }

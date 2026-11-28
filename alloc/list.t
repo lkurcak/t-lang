@@ -173,7 +173,7 @@ impl<T> List<T> {
     { self.as_mut_slice().swap(i, j) }
 
     /// Gives each value, front to back, to `f`, and then the buffer back.
-    export fn free_with<effect e, F: FnMut(T) with e + Discard>(mut self, mut f: F) with e {
+    export fn free_with<F: FnMut(T) + Discard>(mut self, mut f: F) with F::e {
         let mut i: usize = 0;
         while i < self.len {
             // SAFETY: slots `i..len` still hold values, and slot `i` is

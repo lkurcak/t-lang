@@ -122,7 +122,7 @@ is checked against `Pair`'s bound.
 
 ```rust,error
 #[derive(Discard, Copy where F: Copy)]
-struct Pair<F: Fn(u8) -> u8> { f: F, n: u8 }
+struct Pair<F: Fn(u8) -> u8 with {}> { f: F, n: u8 }
 
 fn main() with panic {
     let _p = Pair { f: |x: u8| x / (x - x), n: 9 };

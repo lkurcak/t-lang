@@ -29,9 +29,7 @@ impl<T, E> Result<T, E> {
     }
 
     /// `f` of what's in an `Ok`.
-    export fn map<U, effect e, F: FnOnce(T) -> U with e + Discard>(self, f: F) -> Result<U, E>
-    with e
-    {
+    export fn map<U, F: FnOnce(T) -> U + Discard>(self, f: F) -> Result<U, E> with F::e {
         match self {
             Ok(x) => Ok(f(x)),
             Err(e) => Err(e),
@@ -39,10 +37,9 @@ impl<T, E> Result<T, E> {
     }
 
     /// `f` of what's in an `Ok`, which may itself fail.
-    export fn and_then<U, effect e, F: FnOnce(T) -> Result<U, E> with e + Discard>(
-        self,
-        f: F,
-    ) -> Result<U, E> with e {
+    export fn and_then<U, F: FnOnce(T) -> Result<U, E> + Discard>(self, f: F) -> Result<U, E>
+    with F::e
+    {
         match self {
             Ok(x) => f(x),
             Err(e) => Err(e),
@@ -50,9 +47,7 @@ impl<T, E> Result<T, E> {
     }
 
     /// `f` of what's in an `Err`.
-    export fn map_err<G, effect e, F: FnOnce(E) -> G with e + Discard>(self, f: F) -> Result<T, G>
-    with e
-    {
+    export fn map_err<G, F: FnOnce(E) -> G + Discard>(self, f: F) -> Result<T, G> with F::e {
         match self {
             Ok(x) => Ok(x),
             Err(e) => Err(f(e)),
@@ -62,7 +57,7 @@ impl<T, E> Result<T, E> {
     /// What's in an `Ok`, or else `f` of the error. The error goes to `f`
     /// rather than being thrown away, so neither `T` nor `E` need be
     /// `Discard`.
-    export fn unwrap_or_else<effect e, F: FnOnce(E) -> T with e + Discard>(self, f: F) -> T with e {
+    export fn unwrap_or_else<F: FnOnce(E) -> T + Discard>(self, f: F) -> T with F::e {
         match self {
             Ok(x) => x,
             Err(e) => f(e),
@@ -71,10 +66,9 @@ impl<T, E> Result<T, E> {
 
     /// `f` of what's in an `Err`, which may recover from it, or fail with
     /// an error of another type. An `Ok` is kept, and `f` thrown away.
-    export fn or_else<G, effect e, F: FnOnce(E) -> Result<T, G> with e + Discard>(
-        self,
-        f: F,
-    ) -> Result<T, G> with e {
+    export fn or_else<G, F: FnOnce(E) -> Result<T, G> + Discard>(self, f: F) -> Result<T, G>
+    with F::e
+    {
         match self {
             Ok(x) => Ok(x),
             Err(e) => f(e),

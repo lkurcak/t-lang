@@ -24,11 +24,11 @@ fn quiet() -> u8 with {} {
     a / b
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with {alloc, panic} {
+fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;
     let (x, y) = twice(|| Box::new(20u8));
     out.line(&(*x + *y))?; // expect: 40
-    out.line(&quiet())?; // expect: 1
+    out.line(&quiet())?;   // expect: 1
     Ok(())
 }
 ```
@@ -119,7 +119,7 @@ impl<T, F: FnMut() -> Option<T>> Iterator for FromFn<F> {
     fn next(&mut self) -> Option<T> with F::e { (self.f)() }
 }
 
-fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
+fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let mut n = 0u8;
     let it = FromFn {
@@ -157,9 +157,7 @@ call what it returns. The function can say what its calls may do instead:
 ```rust
 fn adder(n: i64) -> impl Fn(i64) -> i64 + Discard { move |x| x + n }
 
-fn quiet(n: i64) -> impl Fn(i64) -> i64 with {} + Discard {
-    move |x| if x < n { n } else { x }
-}
+fn quiet(n: i64) -> impl Fn(i64) -> i64 with {} + Discard { move |x| if x < n { n } else { x } }
 
 fn wrap<F: Fn(i64) -> i64 + Discard>(f: F) -> impl Fn(i64) -> i64 with F::e + Discard {
     move |x| f(x)
@@ -168,13 +166,13 @@ fn wrap<F: Fn(i64) -> i64 + Discard>(f: F) -> impl Fn(i64) -> i64 with F::e + Di
 fn none() -> i64 with {} {
     let q = quiet(3);
     let w = wrap(|x| if x < 0 { 0 } else { x });
-    q(1) + w(0) - 3
+    if q(1) > w(0) { 0 } else { 1 }
 }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
     let a = adder(2);
-    out.line(&a(1))?; // expect: 3
+    out.line(&a(1))?;   // expect: 3
     out.line(&none())?; // expect: 0
     Ok(())
 }
@@ -192,10 +190,7 @@ bound, `F: Fn() with alloc`, it would be `{alloc}`, and a value made there
 could then be read where `F` is a closure that does nothing:
 
 ```rust,error
-struct S<F: Fn()> {
-    f: F,
-    h: fn() with F::e,
-}
+struct S<F: Fn()> { f: F, h: fn() with F::e }
 // error: a field can't have what calls of `F` do, `F::e`, in its type
 ```
 
@@ -335,5 +330,3 @@ must spell out every effect" in t-fmt's `FRICTION.md`:
   effects relative to its arguments', which an open bound is.
 - Daan Leijen, *Koka: Programming with Row Polymorphic Effect Types*
   (2014): every function generic in the effects of what it's given.
-- Matija Pretnar and others, *Explicit Effect Subtyping* (ESOP 2018): why
-  the effects of what a function is given are decided where it's called.
