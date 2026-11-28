@@ -2883,6 +2883,10 @@ pub fn hypot_f64(x: f64, y: f64) -> f64 with {} {
         return x + y;
     }
     let (a, b) = if ax < ay { (ay, ax) } else { (ax, ay) };
+    // `abs` keeps a zero's sign: of two zeros, +0.0.
+    if a == 0.0 {
+        return 0.0;
+    }
     if b == 0.0 {
         return a;
     }
@@ -2920,6 +2924,10 @@ pub fn hypot_f32(x: f32, y: f32) -> f32 with {} {
     }
     if x != x || y != y {
         return x + y;
+    }
+    // Of two zeros, +0.0: `dd_sqrt` wants a sum above 0.
+    if ax == 0.0 && ay == 0.0 {
+        return 0.0;
     }
     let (p1, _) = two_prod(ax, ax);
     let (p2, _) = two_prod(ay, ay);

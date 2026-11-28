@@ -65,7 +65,7 @@ What IEEE 754-2019 says (§9.2.1), which C's Annex F says too:
 - `cbrt` of ±0 and ±∞ is itself.
 - `x.hypot(y)` is +∞ if either is infinite, even where the other is a
   NaN, as the answer is ∞ whatever the NaN stands for; else a NaN if
-  either is.
+  either is. Of two zeros it's `+0.0`, whatever their signs.
 - `sin_pi` of an integer is 0, with the integer's sign, `(-2.0).sin_pi()`
   `-0.0`, so that `sin_pi(-x)` is always `-sin_pi(x)`; `cos_pi` is +0
   halfway between two integers, `cos_pi(n + 1/2)` for every `n`.
