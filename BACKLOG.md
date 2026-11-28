@@ -2,12 +2,10 @@
 
 ## Now
 
-1. Owner: decide how a generic helper that takes a closure says its effects. Today it spells
-   out every one (`effect e`, `F: .. with e + Discard`, then `with {alloc, panic, e}` in
-   full). In a private function, either the rest is inferred beside a written `e`, or an `F:
-   FnMut(..)` bound that names no effect gets an inferred one (see "Generic helpers over
-   closures" in t-fmt's `FRICTION.md`).
-1. Step 104, CPU float speed, measured before it's tuned: n-body, spectral-norm, mandelbrot, a
+1. [Step 104, `Fn` bounds leave a closure's effects open](backlog/fn-bound-effects.md): with no
+   `with`, `F: FnMut() -> T` may do what its argument does, named `F::e`, and `with {}` says
+   none; so a helper that takes a closure needs no `effect e`.
+1. Step 105, CPU float speed, measured before it's tuned: n-body, spectral-norm, mandelbrot, a
    dot product and matrix multiplies in T, Rust and C, then what the numbers show (item 3 of
    [the ML and GPU path](backlog/ml-path.md)).
 
@@ -133,6 +131,8 @@
 - Step 103 (0.111.0): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`,
   `hypot`, `sin_pi` and `cos_pi`, correctly rounded; `cbrt` and `hypot` decided exactly by a
   midpoint's cube or square; each slow path checked on its own against MPFR (#PR).
+- Owner's decision: an `Fn` bound that says no `with` leaves what its calls do open, named
+  `F::e`, rather than saying they do nothing; step 104 does it (#165).
 - Checking a program copies and walks less of the libraries: an empty one's check is half as
   long (52 ms to 27 in the test profile), their notes shared, lints and searches for nested
   items skipping them (#164).
@@ -158,5 +158,3 @@
   for every T file in this repo's tests, examples and libraries; its CI compares the two.
 - Step 99 (0.107.3, #151): a refinement proved of a value in one branch is no longer known in
   the other branch or after the branches meet (a soundness hole since 0.77.0).
-- Step 98 (0.107.2, #150): checking time no longer doubles with each level of nested `if`s
-  and `match`es. A function of t-fmt took 28 seconds to check, now a quarter of one.
