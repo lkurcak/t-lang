@@ -155,7 +155,27 @@ NaN among the edges of every function (`tests/generated/math.rs`).
 
 ## Speed
 
+Slower than the C library's, as step 102's are: of 4,096 inputs in each
+one's usual range, a call took on this machine `atan` 57 ns to glibc's
+6.6, `asin` 81 to 4.2, `acos` 83 to 4.6, `atan2` 62 to 9.4, `asinh` 72 to
+6.9, `acosh` 48 to 7.2, `atanh` 57 to 6.9, `cbrt` 40 to 6.8, `hypot` 22 to
+3.1, and `sin_pi` 43 to the 7.5 of glibc's `sin(πx)`, which isn't the same
+function. An `f32`'s takes as long as an `f64`'s, as it's the same path.
+Without FMA every exact product is Dekker's, seventeen operations, and
+the arc functions take several of them and a division in double-double;
+the next step measures the CPU's float speed before any of it is tuned
+(`BACKLOG.md`).
+
 ## Checking stays quick
+
+The functions are about 1,570 more lines of core, 14% more of the
+libraries, which every `t check` reads and types as far as their
+signatures (lemma Q1 of docs/102-math.md), though most programs call
+none of them. `t check` of an empty program takes 115 ms on this
+machine, of t-chess 377: 8 and 9 ms more than before this step, which is
+about what 14% more lines cost, and less than 0.110.0's 135 and 415, as
+#164 came between. The cost grows with the libraries, not with the
+program, until each library's check is kept on disk (`BACKLOG.md`).
 
 ## Why it's right
 

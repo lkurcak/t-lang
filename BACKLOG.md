@@ -17,7 +17,8 @@
   the parsed libraries copied when a program is read.
 - [Checking faster](backlog/compile-time.md): a cache of each package's check on disk, then
   function bodies checked in parallel. Due at the first program over about 10,000 lines or a
-  check over a few seconds, and t-fmt is 9,600 lines that take 6 seconds to check.
+  check over a few seconds, and t-fmt is 9,600 lines that take 6 seconds to check. Every
+  `t check` pays for the libraries' lines too: step 103's 1,570 added 8 ms, to 115.
 - [Checking time still doubles](backlog/joins-by-reference.md) with each `if let` in a row
   that sets the same variable (fourteen take 15 seconds): where branches meet, name a
   branch's value rather than copy what's known of it (#150; "What it doesn't do" in
@@ -130,7 +131,7 @@
 
 - Step 103 (0.111.0): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`,
   `hypot`, `sin_pi` and `cos_pi`, correctly rounded; `cbrt` and `hypot` decided exactly by a
-  midpoint's cube or square; each slow path checked on its own against MPFR (#PR).
+  midpoint's cube or square; each slow path checked on its own against MPFR (#166).
 - Owner's decision: an `Fn` bound that says no `with` leaves what its calls do open, named
   `F::e`, rather than saying they do nothing; step 104 does it (#165).
 - Checking a program copies and walks less of the libraries: an empty one's check is half as
