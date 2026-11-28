@@ -140,7 +140,7 @@
 - Step 104 (0.112.0): an `Fn` bound with no `with` leaves what its calls do open, `F::e`, an
   effect parameter of its own decided where it's called; opaque results' bounds too; core,
   alloc, std, t-libs, t-fmt and t-life name no effect parameter one bound uses; a recursive
-  function passing its effect parameter on is no longer polymorphic recursion.
+  function passing its effect parameter on is no longer polymorphic recursion (#168).
 - Step 103 (0.111.0): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`,
   `hypot`, `sin_pi` and `cos_pi`, correctly rounded; `cbrt` and `hypot` decided exactly by a
   midpoint's cube or square; each slow path checked on its own against MPFR (#166).
