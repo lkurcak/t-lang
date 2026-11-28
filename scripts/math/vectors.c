@@ -10,6 +10,7 @@
  * random; the edges; and `pow`'s exact and halfway values. A line is `name
  * type x [y] want`, in hex bits. The same seeds give the same file, in
  * about 25 minutes on 32 threads. */
+#include <math.h>
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -36,7 +37,10 @@ static const struct {
     {"exp", -745, 710},  {"exp2", -1075, 1024}, {"exp_m1", -40, 710}, {"ln", 0, 4},
     {"log2", 0, 4},      {"log10", 0, 4},       {"ln_1p", -1, 3},     {"sin", -20, 20},
     {"cos", -20, 20},    {"tan", -20, 20},      {"sinh", -712, 712},  {"cosh", -712, 712},
-    {"tanh", -20, 20},   {"pow", 0, 4, -60, 60},
+    {"tanh", -20, 20},   {"pow", 0, 4, -60, 60},  {"asin", -1, 1},       {"acos", -1, 1},
+    {"atan", -20, 20},   {"atan2", -20, 20, -20, 20},                 {"asinh", -20, 20},
+    {"acosh", 1, 20},    {"atanh", -1, 1},      {"cbrt", -100, 100},  {"hypot", -20, 20, -20, 20},
+    {"sin_pi", -20, 20}, {"cos_pi", -20, 20},
 };
 enum { N_RANGES = sizeof RANGES / sizeof RANGES[0] };
 
@@ -98,7 +102,7 @@ int main(int argc, char **argv) {
     draws = argc > 1 ? strtoull(argv[1], 0, 10) : 300000000;
     static const double EDGES[] = {0.0, -0.0, 1.0, -1.0, 0.5, 2.0, 10.0, 1e-300, -1e-300,
                                    5e-324, 1e300, -1e300, 0.1, 3.0, -3.0, 709.8, -745.2,
-                                   88.7, -104.0, 1e22, 1048576.5};
+                                   88.7, -104.0, 1e22, 1048576.5, INFINITY, -INFINITY, NAN};
     for (range = 0; range < N_RANGES; range++) {
         f = function_named(RANGES[range].name);
         for (type = F32; type <= F64; type++) {

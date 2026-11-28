@@ -185,6 +185,45 @@ export sealed trait Float: Copy {
     /// The hyperbolic tangent: ±1 past about 19.1 (9.1 of an `f32`).
     fn tanh(self) -> Self;
 
+    /// The arcsine, in radians, from -π/2 to π/2: a NaN past ±1.
+    fn asin(self) -> Self;
+
+    /// The arccosine, in radians, from 0 to π: a NaN past ±1.
+    fn acos(self) -> Self;
+
+    /// The arctangent, in radians, from -π/2 to π/2.
+    fn atan(self) -> Self;
+
+    /// The angle of the point `(x, y)`, of `y.atan2(x)`, in radians, from -π
+    /// to π, its sign `y`'s: IEEE 754's (C's) where either is 0 or infinite,
+    /// so `0.0.atan2(-0.0)` is π and `(-0.0).atan2(1.0)` is `-0.0`.
+    fn atan2(self, x: Self) -> Self;
+
+    /// The inverse hyperbolic sine.
+    fn asinh(self) -> Self;
+
+    /// The inverse hyperbolic cosine: a NaN below 1.
+    fn acosh(self) -> Self;
+
+    /// The inverse hyperbolic tangent: ±infinity of ±1, a NaN past them.
+    fn atanh(self) -> Self;
+
+    /// The cube root, of a negative number too: exact where it's a float.
+    fn cbrt(self) -> Self;
+
+    /// sqrt(x^2 + y^2), of `x.hypot(y)`, with no overflow or underflow on the
+    /// way: exact where it's a float, and infinity if either is, even where
+    /// the other is a NaN.
+    fn hypot(self, y: Self) -> Self;
+
+    /// sin(πx), worked out from `x` itself, so exact at every multiple of
+    /// 1/2 and precise however big `x` is, which the sine of `x` times π isn't: 0 of
+    /// an integer, with `x`'s sign.
+    fn sin_pi(self) -> Self;
+
+    /// cos(πx): ±1 of an integer, and 0 halfway between two.
+    fn cos_pi(self) -> Self;
+
     /// The lesser of it and `other`: a NaN if either is, and `-0.0` of
     /// `0.0` and `-0.0` (IEEE 754-2019's `minimum`).
     fn min(self, other: Self) -> Self {

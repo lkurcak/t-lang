@@ -1,7 +1,8 @@
-//! The math functions of `Float` (docs/102-math.md) against MPFR's answers,
-//! which `tests/math/vectors.txt` holds: for each function of each type,
-//! the inputs MPFR found hardest to round among millions, which go the
-//! slow way, random ones, and the edges (`scripts/math/vectors.c`). Each
+//! The math functions of `Float` (docs/102-math.md, docs/103-more-math.md)
+//! against MPFR's answers, which `tests/math/vectors.txt` holds: for each
+//! function of each type, the inputs MPFR found hardest to round among
+//! millions, which go the slow way, random ones, and the edges, the
+//! infinities and a NaN too (`scripts/math/vectors.c`). Each
 //! function's are run in the interpreter and, compiled through C,
 //! natively, which must agree, bit for bit, and give MPFR's answer: the
 //! same bits, but for a NaN's, which aren't said.
@@ -97,7 +98,7 @@ fn check(ty: &str) {
         if t != ty {
             continue;
         }
-        let two = name == "pow";
+        let two = matches!(name.as_str(), "pow" | "atan2" | "hypot");
         let xs: Vec<String> = cases.iter().map(|c| c.x.to_string()).collect();
         let ys: Vec<String> = cases.iter().map(|c| c.y.to_string()).collect();
         let n = cases.len();

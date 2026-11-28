@@ -127,6 +127,19 @@ int main(int argc, char **argv) {
             printf("\n");
             mpfr_clears(s, c, a, (mpfr_ptr)0);
         }
+    } else if (strcmp(t, "atan") == 0) {
+        /* atan(j/64), j from 0 to 64, as hi + lo. */
+        for (int j = 0; j <= 64; j++) {
+            mpfr_set_ui(v, j, MPFR_RNDN);
+            mpfr_div_ui(v, v, 64, MPFR_RNDN);
+            mpfr_atan(v, v, MPFR_RNDN);
+            double hi = mpfr_get_d(v, MPFR_RNDN);
+            mpfr_sub_d(w, v, hi, MPFR_RNDN);
+            printf("    ");
+            hex(hi);
+            hex(mpfr_get_d(w, MPFR_RNDN));
+            printf("\n");
+        }
     } else if (strcmp(t, "bits") == 0 && argc > 3) {
         /* The bits of 2/pi or pi/2 after the point, `n` words of 32, the
          * first word's top bit the first bit after the point. */

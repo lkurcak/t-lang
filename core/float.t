@@ -132,6 +132,28 @@ impl Float for f64 {
 
     fn pow(self, y: f64) -> f64 { math::pow_f64(self, y) }
 
+    fn asin(self) -> f64 { math::asin_f64(self) }
+
+    fn acos(self) -> f64 { math::acos_f64(self) }
+
+    fn atan(self) -> f64 { math::atan_f64(self) }
+
+    fn atan2(self, x: f64) -> f64 { math::atan2_f64(self, x) }
+
+    fn asinh(self) -> f64 { math::asinh_f64(self) }
+
+    fn acosh(self) -> f64 { math::acosh_f64(self) }
+
+    fn atanh(self) -> f64 { math::atanh_f64(self) }
+
+    fn cbrt(self) -> f64 { math::cbrt_f64(self) }
+
+    fn hypot(self, y: f64) -> f64 { math::hypot_f64(self, y) }
+
+    fn sin_pi(self) -> f64 { math::sin_pi_f64(self) }
+
+    fn cos_pi(self) -> f64 { math::cos_pi_f64(self) }
+
     fn total_cmp(&self, other: &f64) -> Ordering {
         let sign = 0x8000_0000_0000_0000;
         by_keys(order_key(self.to_bits(), sign), order_key(other.to_bits(), sign))
@@ -186,6 +208,28 @@ impl Float for f32 {
     fn tanh(self) -> f32 { math::tanh_f32(self) }
 
     fn pow(self, y: f32) -> f32 { math::pow_f32(self, y) }
+
+    fn asin(self) -> f32 { math::asin_f32(self) }
+
+    fn acos(self) -> f32 { math::acos_f32(self) }
+
+    fn atan(self) -> f32 { math::atan_f32(self) }
+
+    fn atan2(self, x: f32) -> f32 { math::atan2_f32(self, x) }
+
+    fn asinh(self) -> f32 { math::asinh_f32(self) }
+
+    fn acosh(self) -> f32 { math::acosh_f32(self) }
+
+    fn atanh(self) -> f32 { math::atanh_f32(self) }
+
+    fn cbrt(self) -> f32 { math::cbrt_f32(self) }
+
+    fn hypot(self, y: f32) -> f32 { math::hypot_f32(self, y) }
+
+    fn sin_pi(self) -> f32 { math::sin_pi_f32(self) }
+
+    fn cos_pi(self) -> f32 { math::cos_pi_f32(self) }
 
     fn total_cmp(&self, other: &f32) -> Ordering {
         let sign = 0x8000_0000;
