@@ -133,7 +133,23 @@ impl Checker {
                         let mut lts = Lifetimes::Assoc {
                             declared: lifetimes,
                         };
-                        let rhs = self.resolve_with(&written, params, &mut lts)?;
+                        let mut rhs = self.resolve_with(&written, params, &mut lts)?;
+                        // With no `with`, an opaque type's or a type's
+                        // parameter's: what its calls do is what they do,
+                        // `<F as FnOnce>::e`, and nothing more is said
+                        // (lemmas O3 and O4 of docs/104-open-fn-bounds.md).
+                        // A function's, an impl's and a method's have an
+                        // effect parameter of their own by now
+                        // (`modules::Rewrite::open_effects`).
+                        if b.effects.is_none()
+                            && let Type::Fn(f) = &mut rhs
+                        {
+                            *f.effects = Type::effects([Type::Proj(
+                                Box::new(ty.clone()),
+                                FN_ONCE.into(),
+                                crate::traits::CALLS.into(),
+                            )]);
+                        }
                         let lhs = Type::Proj(
                             Box::new(ty.clone()),
                             FN_ONCE.into(),

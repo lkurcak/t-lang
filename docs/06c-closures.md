@@ -7,9 +7,9 @@ body) and `src/borrowck/build.rs` (making a closure, and calling one),
 `src/lift.rs` and `src/interp.rs` (`Closure`).
 
 ```rust
-fn apply<effect e, F: Fn(i64) -> i64 with e + Discard>(f: F, x: i64) -> i64 with e { f(x) }
+fn apply<F: Fn(i64) -> i64 + Discard>(f: F, x: i64) -> i64 with F::e { f(x) }
 
-fn count<effect e, F: FnMut() with e + Discard>(mut tick: F) with e {
+fn count<F: FnMut() + Discard>(mut tick: F) {
     tick();
     tick();
 }
@@ -59,8 +59,10 @@ Calling it is what a trait says. There are three, built in:
 `F: Fn(i64) -> i64` is a bound, as `T: Show` is, and it's how generic code
 takes a closure. What a call takes and gives is an equality bound on an
 associated type of `FnOnce` that nothing else can name: `F: Fn(i64) -> i64`
-is `F: Fn<(signature) = fn(i64) -> i64>`, worked out and checked as in
-docs/06b-associated-types.md. Inside `apply`, `f(x)` is `F`'s call, with
+is `F: Fn<(signature) = fn(i64) -> i64 with F::e>`, worked out and checked
+as in docs/06b-associated-types.md. `F::e`, what its calls do, is left open:
+an effect parameter of its own, which each call of `apply` decides by the
+closure it's given (docs/104-open-fn-bounds.md). Inside `apply`, `f(x)` is `F`'s call, with
 `F`'s signature.
 
 Functions keep their function types, and implement all three traits, so
@@ -171,7 +173,7 @@ Which trait a closure implements follows from what its body does:
 - `Fn` otherwise.
 
 ```rust,error
-fn twice<effect e, F: Fn() -> i64 with e + Discard>(f: F) -> i64 with {panic, e} { f() + f() }
+fn twice<F: Fn() -> i64 + Discard>(f: F) -> i64 with {panic, F::e} { f() + f() }
 
 fn main() {
     let mut n = 0;
@@ -259,7 +261,7 @@ implementations that aren't closures.
 can be lent to a function and called again after:
 
 ```rust
-fn apply<effect e, F: Fn(i64) -> i64 with e>(f: &F, x: i64) -> i64 with e { f(x) }
+fn apply<F: Fn(i64) -> i64>(f: &F, x: i64) -> i64 with F::e { f(x) }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;

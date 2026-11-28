@@ -7,7 +7,7 @@ fn take(b: B) -> i64 {
     x
 }
 
-fn twice<F: Fn() -> i64 + Discard>(f: F) -> i64 with panic { f() + f() }
+fn twice<F: Fn() -> i64 with {} + Discard>(f: F) -> i64 with panic { f() + f() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;

@@ -65,7 +65,7 @@ impl<T> Option<T> {
 
     /// `f` of what's in it, if anything. On `None`, `f` is thrown away
     /// uncalled, so it must be `Discard`.
-    export fn map<U, effect e, F: FnOnce(T) -> U with e + Discard>(self, f: F) -> Option<U> with e {
+    export fn map<U, F: FnOnce(T) -> U + Discard>(self, f: F) -> Option<U> with F::e {
         match self {
             Some(x) => Some(f(x)),
             None => None,
@@ -74,10 +74,7 @@ impl<T> Option<T> {
 
     /// `f` of what's in it, if anything, which may itself be `None`. On
     /// `None`, `f` is thrown away uncalled.
-    export fn and_then<U, effect e, F: FnOnce(T) -> Option<U> with e + Discard>(
-        self,
-        f: F,
-    ) -> Option<U> with e {
+    export fn and_then<U, F: FnOnce(T) -> Option<U> + Discard>(self, f: F) -> Option<U> with F::e {
         match self {
             Some(x) => f(x),
             None => None,
@@ -86,7 +83,7 @@ impl<T> Option<T> {
 
     /// What's in it, or else what `f` makes. Nothing is thrown away but
     /// `f`, uncalled, so `T` needn't be `Discard`.
-    export fn unwrap_or_else<effect e, F: FnOnce() -> T with e + Discard>(self, f: F) -> T with e {
+    export fn unwrap_or_else<F: FnOnce() -> T + Discard>(self, f: F) -> T with F::e {
         match self {
             Some(x) => x,
             None => f(),
@@ -95,9 +92,7 @@ impl<T> Option<T> {
 
     /// What's in it, or else what `f` gives, which may be `None` too. On
     /// `Some`, `f` is thrown away uncalled.
-    export fn or_else<effect e, F: FnOnce() -> Option<T> with e + Discard>(self, f: F) -> Option<T>
-    with e
-    {
+    export fn or_else<F: FnOnce() -> Option<T> + Discard>(self, f: F) -> Option<T> with F::e {
         match self {
             Some(x) => Some(x),
             None => f(),

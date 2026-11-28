@@ -267,9 +267,9 @@ mod each {
 
     impl<I: Iterator, F: FnMut(I::Item) -> u8> Iterator for Each<I, F> {
         type Item = u8;
-        effect e = I::e;
+        effect e = {I::e, F::e};
 
-        fn next(&mut self) -> Option<u8> with I::e {
+        fn next(&mut self) -> Option<u8> with {I::e, F::e} {
             match self.iter.next() {
                 Some(x) => Some((self.f)(x)),
                 None => None,

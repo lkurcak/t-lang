@@ -1,5 +1,42 @@
 # Changelog
 
+## 0.112.0 (2026-11-28)
+
+Step 104: `Fn` bounds leave what calls do open. See
+[docs/104-open-fn-bounds.md](docs/104-open-fn-bounds.md).
+
+### Changed
+
+- An `Fn`, `FnMut` or `FnOnce` bound that says no `with` leaves what its
+  calls do open, as `I: Iterator` leaves `I::e`: `F::e`, short for `<F as
+  FnOnce>::e`. A function whose effects are inferred has it where it calls
+  an `F`, with nothing written, so `fn twice<T, F: FnMut() -> T>(mut f: F)`
+  does what its closure does; an exported one says `with F::e`. `with {}`
+  says the calls do nothing, which is what no `with` used to mean. A
+  program that counted on that says `with {}`; one that was refused for
+  giving such a bound a closure that may do something is accepted.
+- So does an opaque result's bound, `-> impl Fn(i64) -> i64`: a caller sees
+  `<impl Fn(i64) -> i64 as FnOnce>::e`, which only a function whose effects
+  are inferred can have. `impl Fn(i64) -> i64 with {}` says none.
+- A struct's or enum's `Fn` bound with no `with` says nothing of its calls'
+  effects, and a field can't name `F::e`.
+- An impl's method's `Fn` bound says no `with` exactly where its trait's
+  method's does.
+- core, alloc and std name no effect parameter only one bound uses:
+  `Option::map` is `map<U, F: FnOnce(T) -> U + Discard>(self, f: F) ->
+  Option<U> with F::e`, and so on, and the iterator adapters' effects are
+  `{I::e, F::e}`. Explicit type arguments of them leave out the `_` that
+  was written for the effect parameter.
+
+### Fixed
+
+- A function that called itself, passing its own effect parameter on, was
+  refused as polymorphic recursion, `{e}` counted as bigger than `e`.
+- A function that isn't exported and says a `with` that misses an effect
+  is also offered dropping the `with`, to have its body's effects; a call
+  of an opaque result that does what no `with` can name says where its
+  bound can say it.
+
 ## 0.111.0 (2026-11-28)
 
 Step 103: more math functions. See

@@ -2,7 +2,7 @@
 // closure holds `x`, so the result can't outlive what `x` points to.
 fn reader<'a>(x: &'a i64) -> impl Fn() -> i64 with panic + Discard { move || *x }
 
-fn pick<'a>(x: &'a i64) -> impl Fn() -> &'a i64 + Discard { move || x }
+fn pick<'a>(x: &'a i64) -> impl Fn() -> &'a i64 with {} + Discard { move || x }
 
 fn both<'a, 'b>(x: &'a i64, y: &'b i64) -> impl Fn() -> i64 with panic + Discard { move || *x + *y }
 

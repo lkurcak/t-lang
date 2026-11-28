@@ -5,9 +5,9 @@ struct Redo<I, F> { iter: I, f: F }
 
 impl<I: Iterator, F: FnMut(&mut I)> Iterator for Redo<I, F> {
     type Item = I::Item;
-    effect e = I::e;
+    effect e = {I::e, F::e};
 
-    fn next(&mut self) -> Option<I::Item> with I::e {
+    fn next(&mut self) -> Option<I::Item> with {I::e, F::e} {
         (self.f)(&mut self.iter);
         self.iter.next()
     }

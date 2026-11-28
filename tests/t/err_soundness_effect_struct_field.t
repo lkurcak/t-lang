@@ -1,9 +1,9 @@
-// A struct's type parameter bounded by `Fn` with no `with` holds only
+// A struct's type parameter bounded by `Fn` with `with {}` holds only
 // closures that can't panic.
 #[derive(Discard where F: Discard)]
-struct Holder<F: Fn() -> i64> { f: F }
+struct Holder<F: Fn() -> i64 with {}> { f: F }
 
-fn call<F: Fn() -> i64>(h: &Holder<F>) -> i64 { (h.f)() }
+fn call<F: Fn() -> i64 with {}>(h: &Holder<F>) -> i64 { (h.f)() }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with panic {
     let mut out = os.stdout;

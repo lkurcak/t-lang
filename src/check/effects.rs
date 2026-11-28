@@ -549,9 +549,16 @@ impl Checker {
             if w.discharged {
                 sub = without_unsafe(&sub);
             }
-            let subject = match self.owner(&w.sub) {
-                Some(_) => "this closure".to_string(),
-                None => "this function".to_string(),
+            // Calls of a type parameter whose `Fn` bound says no `with`
+            // have its effect parameter, `F::e`.
+            let open = match sub.effect_items() {
+                [Type::Param(p, _)] => p.strip_suffix("::e").filter(|_| p.contains("::")),
+                _ => None,
+            };
+            let subject = match (self.owner(&w.sub), open) {
+                (Some(_), _) => "this closure".to_string(),
+                (None, Some(f)) => format!("calls of `{f}`"),
+                (None, None) => "this function".to_string(),
             };
             let span = match (&w.why, self.owner(&w.sub)) {
                 (Why::Bound { .. }, Some(at)) => at,
@@ -653,6 +660,32 @@ impl Checker {
         } else {
             error
         })
+    }
+
+    /// What to say of effect `e`, if it's an opaque type's associated
+    /// effect, which no `with` can name: the function that returns it can
+    /// say what it is at most, in the opaque type's bound.
+    fn unwritable(&self, e: &Type) -> Option<(Span, String)> {
+        let Type::Proj(base, tr, n) = e else {
+            return None;
+        };
+        let Type::Opaque(symbol, ..) = &**base else {
+            return None;
+        };
+        let d = self.traits.opaques.get(symbol)?;
+        let owner = crate::check::source_name(&d.owner_name);
+        let text = crate::types::opaque_text(symbol);
+        let note = match tr == crate::traits::FN_ONCE && n == crate::traits::CALLS {
+            true => format!(
+                "a `with` can't name what calls of what `{owner}` returns do; its type, \
+                 `{text}`, can say what they may do, as in `with {{panic}}` after its `Fn` bound"
+            ),
+            false => format!(
+                "a `with` can't name `{e}`; `{owner}`'s result type, `{text}`, can say what it may \
+                 be, as in `{n} = {{panic}}` in its bound"
+            ),
+        };
+        Some((d.span, note))
     }
 
     /// Where the closure is whose effects `t` is, if it's a closure's.
@@ -810,6 +843,11 @@ impl Checker {
                      `with unsafe`",
                     s.what, f.name.name,
                 ),
+                _ if self.unwritable(first).is_some() => format!(
+                    "{}, which `{}`'s `with` can't name",
+                    says(&s.what, &Type::effects([first.clone()])),
+                    f.name.name,
+                ),
                 _ => format!(
                     "{}, but `{}` doesn't say `with {}`",
                     says(&s.what, &Type::effects([first.clone()])),
@@ -837,14 +875,38 @@ impl Checker {
                 true => effects_text(&all),
                 false => written_with(f, &all),
             };
-            let fix = Fix::new(
-                format!("say `with {label}`"),
-                vec![Edit {
-                    span: effects_span(f),
-                    text: format!(" with {}", written_with(f, &all)),
-                }],
-            );
-            let mut err = Error::ty(s.span, message).with_fix(fix);
+            let mut err = Error::ty(s.span, message);
+            match self.unwritable(first) {
+                // An opaque type's, which can't be written: where it's
+                // returned, its bound can say what it is.
+                Some((at, note)) => err = err.with_note(at, note),
+                None => {
+                    err = err.with_fix(Fix::new(
+                        format!("say `with {label}`"),
+                        vec![Edit {
+                            span: effects_span(f),
+                            text: format!(" with {}", written_with(f, &all)),
+                        }],
+                    ))
+                }
+            }
+            // Or, of one whose effects can be inferred, the `with` dropped:
+            // then it has its body's (docs/24-visibility.md).
+            let nested = self.fns[id.0].parent.is_some();
+            if f.effects.is_some()
+                && !f.vis.is_export()
+                && !f.is_const()
+                && f.measure.is_none()
+                && (nested || !self.in_trait_method)
+            {
+                err = err.with_fix(Fix::new(
+                    "or drop the `with`: it isn't exported, so it can have its body's effects",
+                    vec![Edit {
+                        span: effects_span(f),
+                        text: String::new(),
+                    }],
+                ));
+            }
             // Why what it calls has it, if that's inferred, as it's
             // nowhere written.
             if let Some(callee) = &s.callee {

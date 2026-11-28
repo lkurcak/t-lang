@@ -12,7 +12,7 @@ struct Test<P> {
     p: P,
 }
 
-impl<P: Fn(&i64) -> bool> Check for Test<P> {
+impl<P: Fn(&i64) -> bool with {}> Check for Test<P> {
     fn passes(&self, x: &i64) -> bool {
         (self.p)(x)
     }

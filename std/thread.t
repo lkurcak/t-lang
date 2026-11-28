@@ -37,10 +37,10 @@ impl Threads {
     ///
     /// `f` and what it gives back go from one thread to another, so they
     /// must be `Send`; and they must live as long as the handle does.
-    export fn spawn<'a, R: Send + 'a, effect e, F: FnOnce() -> R with e + Send + 'a>(
+    export fn spawn<'a, R: Send + 'a, F: FnOnce() -> R + Send + 'a>(
         &self,
         f: F,
-    ) -> JoinHandle<'a, R> with {alloc, e} { start(f, run) }
+    ) -> JoinHandle<'a, R> with {alloc, F::e} { start(f, run) }
 
     /// How many threads the machine can run at once, for this program:
     /// its cores, or those of them it may run on. At least 1. Starting
@@ -63,7 +63,7 @@ impl<'a, R> JoinHandle<'a, R> {
 }
 
 /// What a new thread runs: `f`.
-fn run<R, effect e, F: FnOnce() -> R with e>(f: F) -> R with e { f() }
+fn run<R, F: FnOnce() -> R>(f: F) -> R with F::e { f() }
 
 /// Starts a thread that runs `run(f)`.
 #[intrinsic]

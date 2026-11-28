@@ -1,7 +1,7 @@
 // A closure given to a function that gives it back can't count on what the
 // function's other arguments say of its parameter: whoever gets it back
 // can call it with anything.
-fn keep<A, F: Fn(A) -> i64 + Discard>(f: F, a: A) -> (F, A) { (f, a) }
+fn keep<A, F: Fn(A) -> i64 with {} + Discard>(f: F, a: A) -> (F, A) { (f, a) }
 
 fn main() {
     let (f, _) = keep(|x: i64| x * 2, 3);

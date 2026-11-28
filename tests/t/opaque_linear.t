@@ -3,7 +3,7 @@
 
 use alloc::boxed::Box;
 
-fn once(b: Box<i64>) -> impl FnOnce() -> i64 { move || *b }
+fn once(b: Box<i64>) -> impl FnOnce() -> i64 with {} { move || *b }
 
 fn main(os: std::Os) -> Result<(), std::io::Error> with alloc {
     let mut out = os.stdout;

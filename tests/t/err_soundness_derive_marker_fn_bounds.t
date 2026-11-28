@@ -2,9 +2,9 @@
 // every type that's well-formed: so a pair of a closure that may panic is
 // refused where it's made, before it's ever copied.
 #[derive(Discard, Copy where F: Copy)]
-struct Pair<F: Fn(u8) -> u8> { f: F, n: u8 }
+struct Pair<F: Fn(u8) -> u8 with {}> { f: F, n: u8 }
 
-fn use_pair<F: Fn(u8) -> u8 + Copy>(p: Pair<F>) -> u8 { (p.f)(p.n) }
+fn use_pair<F: Fn(u8) -> u8 with {} + Copy>(p: Pair<F>) -> u8 { (p.f)(p.n) }
 
 fn main() with panic {
     // `x / (x - x)` divides by zero.

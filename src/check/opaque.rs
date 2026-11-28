@@ -178,10 +178,13 @@ impl Checker {
             };
             self.oblige(pred, d.span, traits::Why::Returns(name.to_string()))?;
         }
+        // An `Fn` bound with no `with` says its calls do what they do,
+        // `<impl Fn() as FnOnce>::e`: of what it stands for, what calls of
+        // that do (lemma O3 of docs/104-open-fn-bounds.md).
         for (lhs, rhs) in &d.eqs {
             self.require_eq(
                 swap(lhs),
-                rhs.clone(),
+                swap(rhs),
                 d.span,
                 &format!("{name}'s return type"),
             )?;

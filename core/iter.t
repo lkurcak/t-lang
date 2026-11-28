@@ -15,13 +15,11 @@ export trait Iterator {
     fn next(&mut self) -> Option<Self::Item> with Self::e;
 
     /// Gives `f` of each value. Nothing is called until it's iterated.
-    fn map<U, effect fx, F: FnMut(Self::Item) -> U with fx>(self, f: F) -> Map<Self, F> {
-        Map { iter: self, f }
-    }
+    fn map<U, F: FnMut(Self::Item) -> U>(self, f: F) -> Map<Self, F> { Map { iter: self, f } }
 
     /// The values `p` says `true` of, throwing the rest away. `p` takes each
     /// by `&`, for as long as the call, so `|x: &i64| *x > 0` will do.
-    fn filter<effect px, P: FnMut(&Self::Item) -> bool with px>(self, p: P) -> Filter<Self, P>
+    fn filter<P: FnMut(&Self::Item) -> bool>(self, p: P) -> Filter<Self, P>
     where
         Self::Item: Discard,
     { Filter { iter: self, p } }
@@ -29,11 +27,11 @@ export trait Iterator {
     /// `f(..f(f(init, a), b).., z)` of the values `a`, `b`, .. `z`. It
     /// throws itself, and `f`, away at the end.
     #[blame_caller]
-    fn fold<B, effect fx, F: FnMut(B, Self::Item) -> B with fx + Discard>(
-        mut self,
-        init: B,
-        mut f: F,
-    ) -> B with {Self::e, fx} where Self: Discard {
+    fn fold<B, F: FnMut(B, Self::Item) -> B + Discard>(mut self, init: B, mut f: F) -> B
+    with {Self::e, F::e}
+    where
+        Self: Discard,
+    {
         let mut acc = init;
         loop {
             match self.next() {
@@ -81,8 +79,8 @@ export trait Iterator {
     /// Whether `p` says `true` of any value. It stops at the first it does,
     /// leaving the rest to iterate, and is `false` of none.
     #[blame_caller]
-    fn any<effect px, P: FnMut(Self::Item) -> bool with px + Discard>(&mut self, mut p: P) -> bool
-    with {Self::e, px}
+    fn any<P: FnMut(Self::Item) -> bool + Discard>(&mut self, mut p: P) -> bool
+    with {Self::e, P::e}
     {
         loop {
             match self.next() {
@@ -99,8 +97,8 @@ export trait Iterator {
     /// Whether `p` says `true` of every value. It stops at the first it
     /// doesn't, leaving the rest to iterate, and is `true` of none.
     #[blame_caller]
-    fn all<effect px, P: FnMut(Self::Item) -> bool with px + Discard>(&mut self, mut p: P) -> bool
-    with {Self::e, px}
+    fn all<P: FnMut(Self::Item) -> bool + Discard>(&mut self, mut p: P) -> bool
+    with {Self::e, P::e}
     {
         loop {
             match self.next() {
@@ -162,7 +160,7 @@ export trait BoundedIterator: Iterator {
         self.most() <= old(self.most());
 
     /// `f` of each: as many.
-    law fn map<U, effect fx, F: FnMut(Self::Item) -> U with fx>(
+    law fn map<U, F: FnMut(Self::Item) -> U>(
         self,
         f: F,
     ) -> { m: Map<Self, F> | m.most() == self.most() };
@@ -240,12 +238,12 @@ impl<'a, I: Iterator> Iterator for &'a mut I {
 export struct Map<I, F> { iter: I, f: F }
 
 /// Its values are `U`s, what `f` gives, which `F`'s bound decides.
-impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map<I, F> {
+impl<U, I: Iterator, F: FnMut(I::Item) -> U> Iterator for Map<I, F> {
     type Item = U;
-    effect e = {I::e, fx};
+    effect e = {I::e, F::e};
 
     #[blame_caller]
-    fn next(&mut self) -> Option<U> with {I::e, fx} {
+    fn next(&mut self) -> Option<U> with {I::e, F::e} {
         match self.iter.next() {
             Some(x) => Some((self.f)(x)),
             None => None,
@@ -254,14 +252,9 @@ impl<U, effect fx, I: Iterator, F: FnMut(I::Item) -> U with fx> Iterator for Map
 }
 
 /// From the back too, `f` of each of what `iter` gives from there.
-impl<
-    U,
-    effect fx,
-    I: DoubleEndedIterator,
-    F: FnMut(I::Item) -> U with fx,
-> DoubleEndedIterator for Map<I, F> {
+impl<U, I: DoubleEndedIterator, F: FnMut(I::Item) -> U> DoubleEndedIterator for Map<I, F> {
     #[blame_caller]
-    fn next_back(&mut self) -> Option<U> with {I::e, fx} {
+    fn next_back(&mut self) -> Option<U> with {I::e, F::e} {
         match self.iter.next_back() {
             Some(x) => Some((self.f)(x)),
             None => None,
@@ -270,23 +263,13 @@ impl<
 }
 
 /// As many as `iter` has yet to give, at most: `f` of each.
-impl<
-    U,
-    effect fx,
-    I: BoundedIterator,
-    F: FnMut(I::Item) -> U with fx,
-> BoundedIterator for Map<I, F> {
+impl<U, I: BoundedIterator, F: FnMut(I::Item) -> U> BoundedIterator for Map<I, F> {
     #[measure]
     fn most(&self) -> usize { self.iter.most() }
 }
 
 /// And no fewer, of one that has no fewer.
-impl<
-    U,
-    effect fx,
-    I: ExactSizeIterator,
-    F: FnMut(I::Item) -> U with fx,
-> ExactSizeIterator for Map<I, F> {}
+impl<U, I: ExactSizeIterator, F: FnMut(I::Item) -> U> ExactSizeIterator for Map<I, F> {}
 
 /// What `Iterator::filter` gives: the values of `iter` that `p` says `true`
 /// of.
@@ -298,15 +281,12 @@ impl<
 export struct Filter<I, P> { iter: I, p: P }
 
 /// `next` throws away what `p` doesn't keep, so those must be `Discard`.
-impl<effect px, I: Iterator, P: FnMut(&I::Item) -> bool with px> Iterator for Filter<I, P>
-where
-    I::Item: Discard,
-{
+impl<I: Iterator, P: FnMut(&I::Item) -> bool> Iterator for Filter<I, P> where I::Item: Discard {
     type Item = I::Item;
-    effect e = {I::e, px};
+    effect e = {I::e, P::e};
 
     #[blame_caller]
-    fn next(&mut self) -> Option<I::Item> with {I::e, px} {
+    fn next(&mut self) -> Option<I::Item> with {I::e, P::e} {
         loop invariant self.iter.most() <= old(self.iter.most()) where I: BoundedIterator {
             match self.iter.next() {
                 Some(x) => {
@@ -321,11 +301,10 @@ where
 }
 
 /// At most as many as `iter` has yet to give: those `p` keeps.
-impl<
-    effect px,
-    I: BoundedIterator,
-    P: FnMut(&I::Item) -> bool with px,
-> BoundedIterator for Filter<I, P> where I::Item: Discard {
+impl<I: BoundedIterator, P: FnMut(&I::Item) -> bool> BoundedIterator for Filter<I, P>
+where
+    I::Item: Discard,
+{
     #[measure]
     fn most(&self) -> usize { self.iter.most() }
 }

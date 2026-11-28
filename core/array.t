@@ -135,9 +135,7 @@ impl<T: Copy, const N: usize> ExactSizeIterator for IntoIter<T, N> {}
 
 /// An array whose value at each index `i` is `f(i)`, made front to back:
 /// so its values needn't be `Copy`. It does what `f` does.
-export fn from_fn<T, const N: usize, effect e, F: FnMut(usize) -> T with e + Discard>(
-    f: F,
-) -> [T; N] with e {
+export fn from_fn<T, const N: usize, F: FnMut(usize) -> T + Discard>(f: F) -> [T; N] with F::e {
     let mut f = f;
     from_fn_mut(&mut f)
 }
@@ -145,5 +143,4 @@ export fn from_fn<T, const N: usize, effect e, F: FnMut(usize) -> T with e + Dis
 /// `from_fn`, calling `f` where it is: so dropping it is `from_fn`'s, not
 /// the intrinsic's.
 #[intrinsic]
-fn from_fn_mut<T, const N: usize, effect e, F: FnMut(usize) -> T with e>(f: &mut F) -> [T; N]
-with e;
+fn from_fn_mut<T, const N: usize, F: FnMut(usize) -> T>(f: &mut F) -> [T; N] with F::e;

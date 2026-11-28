@@ -1,0 +1,4 @@
+libraries = ["alloc", "std"]
+
+[dependencies]
+visits = { path = "visits" }

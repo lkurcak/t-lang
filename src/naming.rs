@@ -237,9 +237,11 @@ fn ident<'a>(id: &'a Ident, what: &'static str, case: Case) -> Decl<'a> {
 }
 
 fn params<'a>(g: &'a Generics, out: &mut Vec<Decl<'a>>) {
+    // Not an open `Fn` bound's effect parameter, `F::e`, which nobody
+    // wrote, and which is named after its type parameter.
     out.extend(
-        g.types
-            .iter()
+        (g.types.iter())
+            .filter(|p| !p.name.contains("::"))
             .map(|p| match (g.is_effect(p), g.is_const(p)) {
                 (true, _) => ident(p, "effect parameter", Case::Snake),
                 // A constant, as a global would be.

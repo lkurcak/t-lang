@@ -794,7 +794,10 @@ impl Checker {
     /// Notes the effect parameters in effects `e`, if there are any.
     fn effect_param_notes(&mut self, e: Option<&EffectSet>, params: &[Ident]) {
         for item in e.iter().flat_map(|e| &e.items) {
+            // Not an open `Fn` bound's, `F::e`, which nobody wrote
+            // (`modules::Rewrite::open_effects`).
             if let EffectKind::Named(n) = &item.kind
+                && !n.name.contains("::")
                 && let Some(p) = params.iter().find(|p| p.name == n.name)
             {
                 let kind = NoteKind::EffectParam(n.name.clone());
@@ -834,7 +837,9 @@ impl Checker {
     }
 
     fn param_notes(&mut self, g: &Generics) {
-        for p in &g.types {
+        // Not an open `Fn` bound's effect parameter, `F::e`, which nobody
+        // wrote (`modules::Rewrite::open_effects`).
+        for p in g.types.iter().filter(|p| !p.name.contains("::")) {
             let kind = match (g.is_effect(p), g.is_const(p)) {
                 (true, _) => NoteKind::EffectParam(p.name.clone()),
                 (_, true) => NoteKind::ConstParam(p.name.clone()),

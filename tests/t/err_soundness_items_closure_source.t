@@ -5,9 +5,9 @@ struct Fill<I, F> { iter: I, f: F }
 
 impl<I: Iterator, F: FnMut() -> I::Item> Iterator for Fill<I, F> where I::Item: Discard {
     type Item = I::Item;
-    effect e = I::e;
+    effect e = {I::e, F::e};
 
-    fn next(&mut self) -> Option<I::Item> with I::e {
+    fn next(&mut self) -> Option<I::Item> with {I::e, F::e} {
         match self.iter.next() {
             Some(_x) => Some((self.f)()),
             None => None,
