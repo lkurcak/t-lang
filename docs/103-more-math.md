@@ -18,15 +18,15 @@ panics.
 ```rust
 fn main(os: std::Os) -> Result<(), std::io::Error> {
     let mut out = os.stdout;
-    out.line(&1.0f64.atan2(-1.0))?;     // expect: 2.356194490192345
-    out.line(&0.5f64.asin())?;          // expect: 0.5235987755982989
-    out.line(&(-27.0f64).cbrt())?;      // expect: -3.0
-    out.line(&3.0f64.hypot(4.0))?;      // expect: 5.0
-    out.line(&1e300f64.hypot(1e300))?;  // expect: 1.4142135623730952e300
-    out.line(&0.5f64.atanh())?;         // expect: 0.5493061443340549
-    out.line(&0.25f64.cos_pi())?;       // expect: 0.7071067811865476
+    out.line(&1.0f64.atan2(-1.0))?;    // expect: 2.356194490192345
+    out.line(&0.5f64.asin())?;         // expect: 0.5235987755982989
+    out.line(&(-27.0f64).cbrt())?;     // expect: -3.0
+    out.line(&3.0f64.hypot(4.0))?;     // expect: 5.0
+    out.line(&1e300f64.hypot(1e300))?; // expect: 1.4142135623730952e300
+    out.line(&0.5f64.atanh())?;        // expect: 0.5493061443340549
+    out.line(&0.25f64.cos_pi())?;      // expect: 0.7071067811865476
     let x: f64 = 1e15 + 0.5;
-    out.line(&x.sin_pi())?;                   // expect: 1.0
+    out.line(&x.sin_pi())?;                    // expect: 1.0
     out.line(&(x * 3.141592653589793).sin())?; // expect: 0.9525593659368664
     Ok(())
 }
@@ -75,7 +75,7 @@ What IEEE 754-2019 says (§9.2.1), which C's Annex F says too:
 On step 102's machinery: a fast path in double-double, about 106 bits,
 within a bound each function states of the exact value, and `decide64`
 or `decide32` to say whether that bound is enough to know the nearest
-float; where it isn't, about once in 2^34 calls, a slow path in fixed
+float; where it isn't, about once in 2^22 calls, a slow path in fixed
 point, to 288 bits and then 1056.
 
 - **`atan`** has a table of `atan(j/64)`, `j` from 0 to 64. Of a `t` from
@@ -123,8 +123,8 @@ point, to 288 bits and then 1056.
   round it there.
 
 An `f32`'s function is its `f64`'s fast path, rounded to an `f32`, as in
-step 102, but for `hypot` and the comparisons of `cbrt` and `hypot`,
-which for `f32`s are exact in `f64`s and double-doubles alone.
+step 102, but for `hypot`, whose squares and their sum are exact as
+double-doubles, and whose comparison is then exact in `f64`s alone.
 
 ## How it's checked
 
@@ -163,8 +163,11 @@ Step 102's lemmas hold of these functions as they're written there: M2
 (the rounding test), M3 (the slow paths add up their errors), M5 (no
 panic) and M6 (the same bits everywhere). Of their own:
 
-- **M1 (fast paths).** Each fast path's error is below its stated bound,
-  with a margin of at least 32, the bound `ARC_EPS`, 2^-90: `atan_core`'s
+- **M1 (fast paths).** Each fast path's error is below the bound it
+  decides with, `ARC_EPS`, 2^-76, by far more than step 102's margin of 8:
+  so that the hardest of random inputs, which the tests carry, are
+  decided by the slow paths and the comparisons, and test them, as step
+  102's do theirs. Each fast path's own: `atan_core`'s
   2^-97, from the series it leaves out, 2^-101, and its operations'
   roundings; `asin_pos`'s and `atan2`'s, the quotient's 2^-100 and the
   square root's 2^-103 more, as `atan`'s relative error is at most its

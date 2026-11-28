@@ -174,5 +174,58 @@ int main(int argc, char **argv) {
         line(to_bits(-1.0), to_bits(9007199254740992.0));
         line(to_bits(-1.0), to_bits(1e300));
     }
+    /* Of step 103's, what no random draw finds either (docs/103-more-math.md):
+     * `hypot`'s halfway values, of `a = m^2 - n^2` and `b = 2mn`, whose
+     * `m^2 + n^2`, odd and just past 2^p, is halfway between two floats; the
+     * exact cube roots; `atan2`'s quotients halfway between two subnormals,
+     * whose angle, a little less, rounds down; and `sin_pi` and `cos_pi` at
+     * multiples of 1/2, of big and tiny values, and of integers past 2^52. */
+    f = function_named("hypot");
+    for (type = F32; type <= F64; type++) {
+        int p = type == F64 ? 53 : 24, scale = type == F64 ? -900 : -100;
+        uint64_t top = 1ull << p;
+        int found = 0;
+        for (uint64_t m = (uint64_t)sqrt((double)top); found < 12 && m > 1; m--)
+            for (uint64_t n = 1; n < m; n++) {
+                if ((m + n) % 2 == 0) continue;
+                if (m * m + n * n <= top) continue;
+                uint64_t a = m * m - n * n, b = 2 * m * n;
+                if (a < top && b < top) {
+                    line(to_bits((double)a), to_bits((double)b));
+                    line(to_bits(-ldexp((double)b, scale)), to_bits(ldexp((double)a, scale)));
+                    found++;
+                }
+                break;
+            }
+    }
+    f = function_named("cbrt");
+    for (type = F32; type <= F64; type++) {
+        int bits = type == F64 ? 17 : 8;
+        uint64_t s = 0xCB27 + type;
+        for (int k = 0; k < 12; k++) {
+            double r = (double)((next(&s) >> 40) % (1u << bits) | 1);
+            line(to_bits(r * r * r), 0);
+            line(to_bits(-ldexp(r * r * r, type == F64 ? -990 : -120)), 0);
+        }
+    }
+    f = function_named("atan2");
+    for (type = F32; type <= F64; type++) {
+        double least = type == F64 ? 0x1p-1074 : 0x1p-149;
+        for (int k = 0; k < 6; k++) {
+            line(to_bits((2 * k + 1) * least), to_bits(2.0));
+            line(to_bits(-(2 * k + 3) * least), to_bits(2.0));
+        }
+    }
+    static const double HALVES[] = {0.5, 1.0, 1.5, 2.0, 2.5, 0.25, 0.75, 1e15 + 0.5, 0x1p52,
+                                    0x1p52 + 1.0, 0x1p53, 1e300, 1e-300, 5e-324, 0x1p-52,
+                                    0x1p-53, 1.0 / 3.0, 1.0 / 6.0};
+    for (int g = 0; g < 2; g++) {
+        f = function_named(g == 0 ? "sin_pi" : "cos_pi");
+        for (type = F32; type <= F64; type++)
+            for (unsigned i = 0; i < sizeof HALVES / sizeof HALVES[0]; i++) {
+                line(to_bits(HALVES[i]), 0);
+                line(to_bits(-HALVES[i]), 0);
+            }
+    }
     return 0;
 }

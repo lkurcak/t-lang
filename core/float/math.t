@@ -2218,11 +2218,13 @@ const PIO2_L: f64 = 6.123233995736766e-17;
 const PIO4_H: f64 = 0.78539816339744828;
 const PIO4_L: f64 = 3.061616997868383e-17;
 
-/// 2^-90: the error the functions of step 103 decide with, but for the
-/// inverse hyperbolic ones, which are `ln`'s and decide with `LN_EPS`. Each
-/// says its own, which is below 2^-95 (lemma M1), so with a margin of more
-/// than 32.
-const ARC_EPS: f64 = 8.077935669463161e-28;
+/// 2^-76: the error the functions of step 103 decide with, but for the
+/// inverse hyperbolic ones, which are `ln`'s and decide with `LN_EPS`, and
+/// `sin_pi` and `cos_pi`, which are `sin`'s and decide with `TRIG_EPS`. Each
+/// says its own, which is below 2^-95 (lemma M1): this is far wider, so
+/// that the hardest of random inputs, which the tests carry, go the slow
+/// way and check it, at a cost of once in about 2^22 calls.
+const ARC_EPS: f64 = 1.3234889800848443e-23;
 
 /// `x` as `m · 2^e`, `m` from 1 to below 2, exactly, of a finite `x` above
 /// 0, a subnormal one too, which is scaled up by 2^54 first.

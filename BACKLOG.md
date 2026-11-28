@@ -7,10 +7,9 @@
    full). In a private function, either the rest is inferred beside a written `e`, or an `F:
    FnMut(..)` bound that names no effect gets an inferred one (see "Generic helpers over
    closures" in t-fmt's `FRICTION.md`).
-1. Step 103, the rest of the math functions, correctly rounded on step 102's machinery
-   (`docs/102-math.md`): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`
-   (glibc's `cbrt(-27.0)` is `-3.0000000000000004`) and `hypot`, then `sin_pi` and `cos_pi`;
-   then the [ML and GPU path](backlog/ml-path.md).
+1. Step 104, CPU float speed, measured before it's tuned: n-body, spectral-norm, mandelbrot, a
+   dot product and matrix multiplies in T, Rust and C, then what the numbers show (item 3 of
+   [the ML and GPU path](backlog/ml-path.md)).
 
 ## Later
 
@@ -37,10 +36,12 @@
 - Keywords that are ordinary words (`sealed`, `law`, `ensures`, `invariant`, `effect`,
   `with`) as names wherever they can't be read as the keyword. t-fmt's `FRICTION.md` says
   they bite constantly; step 100 only makes the message say it's a keyword.
-- [The ML and GPU path](backlog/ml-path.md), after math functions: CPU float speed measured
-  against Rust and C and then tuned; a matrix and neural-network library in t-libs, tested on
-  MNIST from a linear model to a small residual net; an agent that learns to play a T game
-  such as t-maze; then FFI with pointers and linking shared libraries; GPU kernels later.
+- [The ML and GPU path](backlog/ml-path.md), after CPU float speed: a matrix and
+  neural-network library in t-libs, tested on MNIST from a linear model to a small residual
+  net; an agent that learns to play a T game such as t-maze; then FFI with pointers and
+  linking shared libraries; GPU kernels later.
+- IEEE 754's other functions in turns, `tan_pi`, `asin_pi`, `acos_pi`, `atan_pi` and
+  `atan2_pi`, once a program wants one (D3 of `docs/103-more-math.md`).
 - Floats, what step 101 left out (`docs/101-floats.md`): refinements of floats (measures like
   `is_finite` first, so `{ x: f64 | x.is_finite() }`), `%` (exact, as C's `fmod`), `mul_add`,
   hex float literals, a wrapper that's `Eq` and `Ord` by `total_cmp`, atomics of floats, and
@@ -129,6 +130,9 @@
 
 ## Done
 
+- Step 103 (0.111.0): `asin`, `acos`, `atan`, `atan2`, `asinh`, `acosh`, `atanh`, `cbrt`,
+  `hypot`, `sin_pi` and `cos_pi`, correctly rounded; `cbrt` and `hypot` decided exactly by a
+  midpoint's cube or square; each slow path checked on its own against MPFR (#PR).
 - Checking a program copies and walks less of the libraries: an empty one's check is half as
   long (52 ms to 27 in the test profile), their notes shared, lints and searches for nested
   items skipping them (#164).
@@ -156,5 +160,3 @@
   the other branch or after the branches meet (a soundness hole since 0.77.0).
 - Step 98 (0.107.2, #150): checking time no longer doubles with each level of nested `if`s
   and `match`es. A function of t-fmt took 28 seconds to check, now a quarter of one.
-- Step 97 (0.107.1, #149): a bound an associated effect hangs on is decided with every impl,
-  derived ones too, the same in every package (a hole since 0.107.0); three crashes fixed.
