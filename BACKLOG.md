@@ -129,6 +129,9 @@
 
 ## Done
 
+- Checking a program copies and walks less of the libraries: an empty one's check is half as
+  long (52 ms to 27 in the test profile), their notes shared, lints and searches for nested
+  items skipping them (#164).
 - A first look at the process: the 32 generated families in one test binary, so they run
   side by side (575 s to 247 s on four cores), sanitizer runs that cancel older ones,
   `scripts/ci_times.py`, and a look at the process at each retrospective (#163).
