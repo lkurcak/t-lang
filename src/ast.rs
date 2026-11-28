@@ -1523,15 +1523,18 @@ impl Program {
     fn fns_of(&self, roots: &[usize]) -> Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> {
         let mut out: Vec<(&FnDecl, Option<usize>, Option<MethodOf>)> = Vec::new();
         for &p in roots {
+            let library = self.libraries.contains(&p);
             let mut i = out.len();
             let fns = self.fns.iter().filter(|f| self.package_of(f.module) == p);
             out.extend(fns.map(|f| (f, None, None)));
             let methods = self.methods_of(p).into_iter();
             out.extend(methods.map(|(f, m)| (f, None, Some(m))));
             while i < out.len() {
-                let mut fns = Vec::new();
-                nested(&out[i].0.body, Stmt::as_fn, &mut fns);
-                out.extend(fns.into_iter().map(|f| (f, Some(i), None)));
+                if !(library && flat(out[i].0)) {
+                    let mut fns = Vec::new();
+                    nested(&out[i].0.body, Stmt::as_fn, &mut fns);
+                    out.extend(fns.into_iter().map(|f| (f, Some(i), None)));
+                }
                 i += 1;
             }
         }
@@ -1554,13 +1557,14 @@ impl Program {
         let fns = self.fns_of(roots);
         let mut out: Vec<(&TypeDecl, Option<usize>)> = Vec::new();
         for &p in roots {
+            let library = self.libraries.contains(&p);
             let types = self
                 .types
                 .iter()
                 .filter(|d| self.package_of(d.module()) == p);
             out.extend(types.map(|d| (d, None)));
             for (i, (f, ..)) in fns.iter().enumerate() {
-                if self.package_of(f.module) != p {
+                if self.package_of(f.module) != p || (library && flat(f)) {
                     continue;
                 }
                 let mut local = Vec::new();
@@ -1570,6 +1574,39 @@ impl Program {
         }
         out
     }
+}
+
+/// The functions of the libraries built into the compiler that declare no
+/// function or type in their bodies, by their names' and bodies' nodes:
+/// `all_fns` and `all_types` needn't look in those for any, which most
+/// of the time they'd spend on a small program goes to. Set once the
+/// libraries are read (`check::Libraries`), from what they are then. Every
+/// program has their functions as they are there, by the same nodes, and
+/// only the parser declares anything in a body, so each stays as it was.
+pub(crate) static FLAT: std::sync::OnceLock<std::collections::HashSet<(NodeId, NodeId)>> =
+    std::sync::OnceLock::new();
+
+/// Whether `f`, of a library's package, is one of `FLAT`'s. Asked only of
+/// those, so a program read without the libraries, whose nodes start
+/// where theirs do, never has one of its own taken for one of theirs.
+fn flat(f: &FnDecl) -> bool {
+    FLAT.get()
+        .is_some_and(|s| s.contains(&(f.name.id, f.body.id)))
+}
+
+/// What goes in `FLAT`, of `prog`, the libraries read: each function that
+/// declares nothing in its body.
+pub(crate) fn flat_fns(prog: &Program) -> std::collections::HashSet<(NodeId, NodeId)> {
+    let declares = |f: &FnDecl| {
+        let (mut fns, mut types) = (Vec::new(), Vec::new());
+        nested(&f.body, Stmt::as_fn, &mut fns);
+        nested(&f.body, Stmt::as_type, &mut types);
+        !fns.is_empty() || !types.is_empty()
+    };
+    let fns = prog.all_fns().into_iter().map(|(f, ..)| f);
+    fns.filter(|f| !declares(f))
+        .map(|f| (f.name.id, f.body.id))
+        .collect()
 }
 
 /// Adds what `item` finds among the statements of the blocks in `e` to

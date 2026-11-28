@@ -171,6 +171,7 @@ impl Libraries {
     /// The libraries, read and checked, `typed` (see `Libraries`) or not.
     fn read(typing: bool) -> Libraries {
         let (sources, prog, cx) = check_libraries(typing);
+        let _ = crate::ast::FLAT.set(crate::ast::flat_fns(&prog));
         let (typed, full) = (std::sync::OnceLock::new(), std::sync::OnceLock::new());
         let _ = match typing {
             true => typed.set(std::sync::Mutex::new(cx)),
